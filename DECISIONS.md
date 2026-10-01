@@ -117,3 +117,28 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Sleep timer promotes the playing slot** from `user` to `sleep` (arbiter
   `move`) instead of restarting the stream; cancelling demotes it back and keeps
   playing. Nothing playing: the last-played source starts at the sleep level.
+
+## Display and brightness
+
+- **The brightness maths is pure** (`display/curve.py`): piecewise-linear
+  interpolation in lux, a percentage hysteresis on the *target*, and a timed
+  glide (slew) of the *applied* value. The 10 Hz loop in `DisplayService` just
+  feeds it lux and time, so cover/uncover timing is unit-tested.
+- **Night palette has its own lux hysteresis** (enter below `night_lux_threshold`,
+  leave above threshold + `night_hysteresis_lux`), independent of the brightness
+  hysteresis, so the palette never flickers at the threshold.
+- **Manual override is runtime state, not config.** The slider sets
+  `display.mode = manual` in SQLite with `manual_until = next sunrise`
+  (astral, from the GPS or configured position); the config only holds the
+  default mode/level and whether overrides end at sunrise or never.
+- **Forced levels bypass the curve but keep the slew**: light-wake forces 100 %,
+  a standby wake tap forces `standby_wake_percent` while `face.wake_until` is in
+  the future. The post-sunset cap applies only in auto mode.
+- **No sensor = schedule mode**: the configured manual level by day and the
+  curve's lowest point after sunset; the face shows a "sensor not found" chip.
+- **HDMI panels dim with a software overlay** (`display.overlay_dim`, drawn by
+  the face). The sim backlight also dims the face a little so the effect is
+  visible on a laptop while the hub prints the level.
+- **VEML6030/VEML7700 run at gain 1/8, 100 ms integration** (0.46 lx/count,
+  ~30 klx range) so one setting covers a dark bedroom and daylight at the 10 Hz
+  sample rate; the datasheet polynomial corrects readings above 1000 lx.

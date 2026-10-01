@@ -6,6 +6,11 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 5: brightness controller (10 Hz, piecewise-linear curve, hysteresis,
+  2 s slew), VEML6030/VEML7700/BH1750 drivers with auto-detect, sysfs/HyperPixel
+  PWM/overlay backlight drivers, sunrise/sunset via astral, night palette with
+  lux and schedule modes, post-sunset cap, manual override until sunrise,
+  standby wake and light-wake levels, Display page with curve editor.
 - Phase 4: alarm engine (pure scheduler with DST/leap/holiday/skip-next/leave
   handling, 1 Hz tick with grace window and missed-alarm log, once-alarms
   self-disable), AU public holidays with regional scope, ring sessions (ramp,
