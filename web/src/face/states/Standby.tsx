@@ -7,12 +7,14 @@ export function Standby() {
   const now = useNow(s.display.low_cpu ? 1000 : 1000);
   const t = fmtTime(now, s.tz, s.settings.clock_24h);
   const w = s.weather;
+  const live = (k: string) => s.time_sources.sources.some((x) => x.kind === k && x.live);
   return (
     <div className="face-screen fade-in">
       <div className="flex items-start justify-between">
-        <div className="face-dots">
-          <span className={`dot ${s.time_sources.gps.fix >= 2 ? 'dot-ok' : 'dot-off'}`} />GPS
-          <span className={`dot ${s.dab.sync ? 'dot-ok' : 'dot-off'}`} />DAB
+        <div className="face-dots" title="time sources: green = live">
+          <span className={`dot ${live('gps') || s.time_sources.gps.fix >= 2 ? 'dot-ok' : 'dot-off'}`} />GPS
+          <span className={`dot ${live('dab') || s.dab.sync ? 'dot-ok' : 'dot-off'}`} />DAB
+          <span className={`dot ${live('ntp') ? 'dot-ok' : 'dot-off'}`} />NTP
           <span className={`dot ${s.system.network.online ? 'dot-ok' : 'dot-off'}`} />NET
         </div>
         {w.available && (

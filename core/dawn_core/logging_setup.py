@@ -37,11 +37,32 @@ class _HumanFormatter(logging.Formatter):
         return s
 
 
+class RingBufferHandler(logging.Handler):
+    """Keeps the last N records in memory for /api/system/logs."""
+
+    def __init__(self, capacity: int = 500):
+        super().__init__()
+        self.capacity = capacity
+        self.records: list[dict] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            msg = record.getMessage()
+        except Exception:  # noqa: BLE001
+            msg = str(record.msg)
+        self.records.append({"ts": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(record.created)), "level": record.levelname, "logger": record.name, "msg": msg})
+        del self.records[: -self.capacity]
+
+
+RING = RingBufferHandler()
+
+
 def setup_logging(level: str = "INFO", human: bool | None = None) -> None:
     root = logging.getLogger()
     root.setLevel(level)
     for h in list(root.handlers):
         root.removeHandler(h)
+    root.addHandler(RING)
     try:
         from systemd.journal import JournalHandler  # type: ignore
 

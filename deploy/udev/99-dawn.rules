@@ -1,0 +1,20 @@
+# Dawn udev rules (/etc/udev/rules.d/99-dawn.rules)
+
+# u-blox 7 GPS (VK-172 / VK-162) -> /dev/gps0, readable by gpsd (dialout)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", ATTRS{idProduct}=="01a7", SYMLINK+="gps0", GROUP="dialout", MODE="0660", TAG+="systemd", ENV{SYSTEMD_WANTS}="gpsd.service"
+# Other u-blox receivers
+SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", SYMLINK+="gps0", GROUP="dialout", MODE="0660"
+
+# RTL-SDR dongles: usable by the 'plugdev' group (welle-cli runs as user dawn)
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0660", TAG+="uaccess"
+# Hot-plug: restart the DAB decoder when the stick (re)appears
+SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", TAG+="systemd", ENV{SYSTEMD_WANTS}="dawn-dab.service"
+
+# Backlight writable by the 'video' group (dawn-core runs as user dawn)
+SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"
+
+# I2C (lux sensor) and GPIO (lgpio) access for the 'i2c' / 'gpio' groups
+SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
+SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
+KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"

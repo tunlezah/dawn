@@ -6,6 +6,11 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 6: time sources. chrony status parsing (sources/tracking, live flags,
+  active reference), gpsd JSON client with serial NMEA fallback, GPS position
+  feeding sunrise/weather, dawn-timed daemon (edge-detected utctime, FIC FIG 0/10
+  fallback, SHM 2 writer), chrony/gpsd/udev deploy configs, Status page with
+  per-source offsets and a logs tail, time-source dots on the face.
 - Phase 5: brightness controller (10 Hz, piecewise-linear curve, hysteresis,
   2 s slew), VEML6030/VEML7700/BH1750 drivers with auto-detect, sysfs/HyperPixel
   PWM/overlay backlight drivers, sunrise/sunset via astral, night palette with

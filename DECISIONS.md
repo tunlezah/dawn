@@ -142,3 +142,27 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **VEML6030/VEML7700 run at gain 1/8, 100 ms integration** (0.46 lx/count,
   ~30 klx range) so one setting covers a dark bedroom and daylight at the 10 Hz
   sample rate; the datasheet polynomial corrects readings above 1000 lx.
+
+## Time sources
+
+- **chrony owns the clock; core only reports.** `TimeSourceService` runs
+  `chronyc -c sources` / `tracking` every 30 s and publishes which reference is
+  selected (`*`), each source's offset, reach and liveness (reach ≠ 0, not `?`/`x`,
+  last sample within `stale_after_s`). Alarm evaluation never looks at this.
+- **gpsd is the primary GPS path**, read over its JSON protocol on 2947 (no
+  python-gps dependency); the simulator speaks the same protocol. A direct
+  NMEA-over-serial reader is the fallback when gpsd is not running, and the same
+  NMEA parser is unit-tested.
+- **dawn-timed uses edge detection on `utctime`**: welle-cli's mux.json carries
+  whole seconds, so a sample is emitted only when the value ticks over, which
+  places it within one poll period (200 ms at 5 Hz) of the true second. If
+  `utctime` is missing or lacks seconds, the daemon switches to parsing FIG 0/10
+  from the `/fic` stream (CRC-checked; the long form has milliseconds). Samples
+  are written only while the decoder reports sync.
+- **SHM 2 is created with perm 0666** (`refclock SHM 2:perm=0666`) so dawn-timed
+  can run unprivileged as user `dawn`; the segment layout follows ntpd's
+  `struct shmTime`, with the `time_t` width chosen for the platform (64-bit, or
+  32-bit builds older than Debian 13) and overridable with `--time-t-bytes`.
+- **GPS SHM 0 is `prefer trust` with `delay 0.2`**: NMEA-only receivers deliver
+  the sentence tens of ms after the second; the fixed delay bounds the error and
+  chrony still steps the clock with `makestep 1 3` on boot.
