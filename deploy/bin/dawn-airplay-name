@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Set the AirPlay advertised name in /etc/shairport-sync.conf and restart shairport-sync.
+# Called by dawn-core via sudo (see deploy/sudoers/dawn).
+set -euo pipefail
+name="${1:-Dawn}"
+name="${name//\"/}"
+conf=/etc/shairport-sync.conf
+[ -f "$conf" ] || exit 0
+sed -i -E "s|^(\s*name\s*=\s*)\"[^\"]*\"|\1\"${name}\"|" "$conf"
+systemctl try-restart shairport-sync.service

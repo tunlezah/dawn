@@ -6,6 +6,12 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 8: AirPlay 2 (shairport-sync metadata pipe parser, title/artist/artwork
+  on the face, sender pause/resume over D-Bus, stream mute) and Bluetooth (BlueZ
+  D-Bus backend with just-works agent, pairing/unpairing from the web UI,
+  auto-reconnect, AVRCP metadata, A2DP playback into the arbiter), sim-hub
+  phone simulation, PipeWire EQ filter chain, WirePlumber Bluetooth policy and
+  shairport-sync configs.
 - Phase 7: weather (Open-Meteo, WMO icon mapping, cache with stale marker),
   Settings page (device, location, holidays, Wi-Fi, backup/restore, update,
   schema-driven editor for every option, power), About page, face polish

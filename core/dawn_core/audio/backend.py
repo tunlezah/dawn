@@ -75,6 +75,9 @@ class AudioBackend:
         """True/False when known, None when the backend cannot tell."""
         return None
 
+    async def set_stream_mute(self, match: str, muted: bool) -> None:
+        """Mute/unmute output streams whose name contains `match` (external sources)."""
+
 
 class PipeWireBackend(AudioBackend):
     name = "pipewire"
@@ -180,6 +183,17 @@ class PipeWireBackend(AudioBackend):
             if any(client_name in x for x in names):
                 return info.get("state") == "running"
         return False
+
+
+    async def set_stream_mute(self, match: str, muted: bool) -> None:
+        for n in await self._dump():
+            info = n.get("info") or {}
+            props = info.get("props") or {}
+            if props.get("media.class") != "Stream/Output/Audio":
+                continue
+            names = " ".join(str(props.get(k, "")) for k in ("application.name", "node.name", "media.name", "application.process.binary")).lower()
+            if match.lower() in names:
+                await run("wpctl", "set-mute", str(n.get("id")), "1" if muted else "0")
 
 
 class AlsaBackend(AudioBackend):

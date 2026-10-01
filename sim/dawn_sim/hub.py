@@ -9,7 +9,7 @@ import json
 from typing import Any
 
 from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
 
 from .simstate import STATE
 
@@ -34,6 +34,10 @@ button.alt{background:#444}.row{display:flex;flex-wrap:wrap;gap:4px}pre{backgrou
 <button onclick="inp('encoder_push')">encoder push</button><button onclick="inp('encoder_long')">encoder hold</button>
 <button onclick="inp('button_short')">big button</button><button onclick="inp('button_long')">big button hold 3s</button>
 <button onclick="inp('touch')">touch face</button></div></section>
+<section><b>Phones</b><div class=row>
+<button onclick="fetch('/airplay/start',{method:'POST'})">iPhone: AirPlay start</button><button class=alt onclick="fetch('/airplay/stop',{method:'POST'})">AirPlay stop</button>
+<button onclick="fetch('/bluetooth/play',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})">Android: Bluetooth play</button><button class=alt onclick="fetch('/bluetooth/stop',{method:'POST',headers:{'content-type':'application/json'},body:'{}'})">Bluetooth stop</button>
+</div></section>
 <section><b>Toggles</b><div class=row>
 <button class=alt onclick="tog('gps_fix')">GPS fix: <span id=gps_fix></span></button>
 <button class=alt onclick="tog('dab_sync')">DAB sync: <span id=dab_sync></span></button>
@@ -174,6 +178,132 @@ def create_app() -> FastAPI:
             "current": {"time": now.strftime("%Y-%m-%dT%H:%M"), "temperature_2m": round(temp, 1), "weather_code": code, "is_day": is_day},
             "daily": {"time": [day], "temperature_2m_max": [round(temp + 3, 1)], "temperature_2m_min": [round(temp - 6, 1)], "sunrise": [f"{day}T05:32"], "sunset": [f"{day}T17:58"], "weather_code": [code]},
         })
+
+    # ---- AirPlay simulation (emits shairport-sync metadata pipe items) ----
+    def _item(typ: str, code: str, data: bytes | None = None) -> bytes:
+        import base64 as _b64
+
+        t, c = typ.encode().hex(), code.encode().hex()
+        if data is None:
+            return f"<item><type>{t}</type><code>{c}</code><length>0</length></item>\n".encode()
+        return f"<item><type>{t}</type><code>{c}</code><length>{len(data)}</length>\n<data encoding=\"base64\">\n{_b64.b64encode(data).decode()}</data></item>\n".encode()
+
+    def _artwork_png() -> bytes:
+        from io import BytesIO
+
+        from PIL import Image, ImageDraw
+
+        img = Image.new("RGB", (300, 300), (40, 60, 110))
+        d = ImageDraw.Draw(img)
+        d.ellipse((60, 60, 240, 240), fill=(240, 180, 60))
+        d.rectangle((0, 230, 300, 300), fill=(20, 20, 30))
+        d.text((16, 250), "sim album art", fill=(230, 230, 230))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        return buf.getvalue()
+
+    @app.post("/airplay/start")
+    async def airplay_start(body: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = body or {}
+        STATE.airplay_session = True
+        STATE.airplay_playing = True
+        for chunk in (
+            _item("ssnc", "snam", body.get("client", "Sam's iPhone").encode()),
+            _item("ssnc", "pbeg"),
+            _item("ssnc", "mdst"),
+            _item("core", "minm", body.get("title", "Golden Hour").encode()),
+            _item("core", "asar", body.get("artist", "Kacey Musgraves").encode()),
+            _item("core", "asal", body.get("album", "Golden Hour").encode()),
+            _item("ssnc", "mden"),
+            _item("ssnc", "PICT", _artwork_png()),
+            _item("ssnc", "pvol", b"-20.0,-144,0,-20"),
+        ):
+            await STATE.airplay_queue.put(chunk)
+        STATE.note("airplay: session started")
+        return {"ok": True}
+
+    @app.post("/airplay/stop")
+    async def airplay_stop() -> dict[str, Any]:
+        STATE.airplay_session = False
+        STATE.airplay_playing = False
+        await STATE.airplay_queue.put(_item("ssnc", "pend"))
+        STATE.note("airplay: session ended")
+        return {"ok": True}
+
+    @app.post("/airplay/remote")
+    async def airplay_remote(body: dict[str, Any]) -> dict[str, Any]:
+        cmd = body.get("command")
+        STATE.note(f"airplay: remote {cmd} (sent to the phone)")
+        if cmd == "Pause" and STATE.airplay_session:
+            STATE.airplay_playing = False
+            await STATE.airplay_queue.put(_item("ssnc", "pfls"))
+        elif cmd == "Play" and STATE.airplay_session:
+            STATE.airplay_playing = True
+            await STATE.airplay_queue.put(_item("ssnc", "prsm"))
+        return {"ok": True}
+
+    @app.get("/airplay/pipe")
+    async def airplay_pipe(timeout: float = 20.0) -> Response:
+        try:
+            chunk = await asyncio.wait_for(STATE.airplay_queue.get(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return Response(status_code=204)
+        while not STATE.airplay_queue.empty():
+            chunk += STATE.airplay_queue.get_nowait()
+        return Response(chunk, media_type="application/octet-stream")
+
+    # ---- Bluetooth simulation ----
+    @app.get("/bluetooth/state")
+    async def bt_state() -> dict[str, Any]:
+        return {"discoverable": STATE.bt_discoverable, "alias": STATE.bt_alias, "devices": STATE.bt_devices, "connected": STATE.bt_connected,
+                "player_status": STATE.bt_player_status, "transport_active": STATE.bt_player_status == "playing", "track": STATE.bt_track}
+
+    @app.post("/bluetooth/{action}")
+    async def bt_action(action: str, body: dict[str, Any] | None = None) -> dict[str, Any]:
+        body = body or {}
+        addr = body.get("address")
+        dev = next((d for d in STATE.bt_devices if d["address"] == addr), None)
+        if action == "alias":
+            STATE.bt_alias = body.get("name", STATE.bt_alias)
+        elif action == "discoverable":
+            STATE.bt_discoverable = bool(body.get("on"))
+        elif action == "pair":
+            if dev is None:
+                dev = {"address": addr, "name": body.get("name", "New phone"), "paired": False, "connected": False, "trusted": False, "icon": "phone", "rssi": -50}
+                STATE.bt_devices.append(dev)
+            dev.update(paired=True, trusted=True, connected=True)
+            STATE.bt_connected = addr
+        elif action == "connect" and dev:
+            for d in STATE.bt_devices:
+                d["connected"] = False
+            dev["connected"] = True
+            STATE.bt_connected = addr
+        elif action == "disconnect" and dev:
+            dev["connected"] = False
+            STATE.bt_connected = None
+            STATE.bt_player_status = None
+            STATE.bt_track = {}
+        elif action == "remove" and dev:
+            STATE.bt_devices.remove(dev)
+            if STATE.bt_connected == addr:
+                STATE.bt_connected = None
+        elif action == "player":
+            cmd = body.get("command")
+            if cmd == "Pause":
+                STATE.bt_player_status = "paused"
+            elif cmd == "Play" and STATE.bt_connected:
+                STATE.bt_player_status = "playing"
+        elif action == "play":  # panel: phone starts playing
+            if not STATE.bt_connected and STATE.bt_devices:
+                STATE.bt_devices[0]["connected"] = True
+                STATE.bt_connected = STATE.bt_devices[0]["address"]
+            STATE.bt_player_status = "playing"
+            STATE.bt_track = {"Title": body.get("title", "Here Comes the Sun"), "Artist": body.get("artist", "The Beatles"), "Album": body.get("album", "Abbey Road"), "Duration": 185000}
+        elif action == "stop":
+            STATE.bt_player_status = "stopped"
+            STATE.bt_track = {}
+        STATE.note(f"bluetooth: {action} {addr or ''}")
+        return {"ok": True}
 
     @app.post("/log")
     async def add_log(request: Request) -> dict[str, bool]:

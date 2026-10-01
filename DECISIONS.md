@@ -183,3 +183,32 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Round display variant is a CSS mode** (`display.layout = round`): a circular
   canvas of `100vmin` centred on the panel, with the face content re-flowed to
   the centre. No separate component tree, so new face features work on both.
+
+## AirPlay and Bluetooth
+
+- **Both are "external" arbiter sources**: audio reaches PipeWire on its own, so
+  the source objects only (a) pause/resume the sender and (b) mute/unmute the
+  stream node. Ducking an external stream means muting it; the 2 s duck before
+  pause still applies so the sender sees a clean pause. The arbiter therefore
+  needs no special cases for them.
+- **AirPlay state comes from the shairport-sync metadata pipe**, parsed as a
+  small state machine (`pbeg`/`pend`/`pfls`/`prsm`, `minm`/`asar`/`asal`,
+  `PICT`, `snam`). Pause/resume of the sender uses shairport-sync's D-Bus
+  `RemoteControl` interface via `busctl`, so no Python D-Bus dependency is
+  needed for AirPlay.
+- **Bluetooth uses BlueZ over D-Bus with dbus-fast**, low-level `Message` calls
+  (no introspection) plus `AddMatch` for property/ObjectManager signals, so a
+  missing interface never raises at import time. A just-works agent
+  (`NoInputNoOutput`) is registered so phones can pair while Dawn is
+  discoverable from the web UI; paired devices are marked trusted and
+  reconnected automatically every 30 s while nothing is connected.
+- **Playback detection uses MediaTransport1 `State == active`** (audio really
+  flowing) with MediaPlayer1 `Status`/`Track` for metadata. A paused phone keeps
+  its slot (paused) so it resumes correctly after an alarm; a disconnect
+  releases it.
+- **The AirPlay name lives in shairport-sync's config file**, so a tiny sudo
+  helper (`deploy/bin/dawn-airplay-name`) rewrites it and restarts the service
+  when `airplay.name` changes. The Bluetooth alias is set directly on the adapter.
+- **The simulator emits real metadata-pipe bytes** for AirPlay and a fake BlueZ
+  snapshot for Bluetooth, so the parser and the priority behaviour (alarm > user
+  > AirPlay > Bluetooth, resume after stop) are exercised on a laptop.

@@ -14,7 +14,18 @@ start() {
   for _ in $(seq 1 40); do curl -sf localhost:8080/api/health >/dev/null 2>&1 && break; sleep 0.5; done
   echo "started (pid $(cat "$PIDFILE"))"
 }
+sweep() {
+  # kill orphaned children of a previous launcher (patterns built at runtime so they never match this script)
+  for pat in "dawn_cor""e" "dawn_time""d" "dawn_si""m"; do
+    for p in $(pgrep -f "python -m $pat" || true); do kill "$p" 2>/dev/null || true; done
+  done
+  sleep 0.5
+  for pat in "dawn_cor""e" "dawn_time""d" "dawn_si""m"; do
+    for p in $(pgrep -f "python -m $pat" || true); do kill -9 "$p" 2>/dev/null || true; done
+  done
+}
 stop() {
+  sweep
   if [ -f "$PIDFILE" ]; then
     pid="$(cat "$PIDFILE")"
     kill "$pid" 2>/dev/null || true

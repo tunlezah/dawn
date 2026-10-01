@@ -24,6 +24,17 @@ class SimState:
     channel: str = "9A"
     tuned_at: float = field(default_factory=time.time)
     input_queue: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)
+    airplay_queue: asyncio.Queue[bytes] = field(default_factory=asyncio.Queue)
+    airplay_session: bool = False
+    airplay_playing: bool = False
+    bt_discoverable: bool = False
+    bt_alias: str = "Dawn"
+    bt_devices: list[dict[str, Any]] = field(default_factory=lambda: [
+        {"address": "AA:BB:CC:DD:EE:01", "name": "Pixel 8", "paired": True, "connected": False, "trusted": True, "icon": "phone", "rssi": None},
+    ])
+    bt_connected: str | None = None
+    bt_player_status: str | None = None
+    bt_track: dict[str, Any] = field(default_factory=dict)
     log: list[str] = field(default_factory=list)
 
     def note(self, msg: str) -> None:

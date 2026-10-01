@@ -19,6 +19,7 @@ PHASE_ROUTERS = [
     "dawn_core.api.router_weather",
     "dawn_core.api.router_system",
     "dawn_core.api.router_bluetooth",
+    "dawn_core.api.router_airplay",
     "dawn_core.api.router_media",
 ]
 
