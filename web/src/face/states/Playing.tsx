@@ -19,7 +19,9 @@ export function Playing() {
         {art ? <img className="logo-tile" src={art} alt="" /> : <div className="logo-tile" />}
         <div className="min-w-0 flex-1">
           <div className="text-[7.5vmin] font-semibold leading-tight truncate">{line1}</div>
-          {line2 && <div className="text-[4.6vmin] text-muted leading-snug mt-[1.5vmin] line-clamp-2">{line2}</div>}
+          {line2 && (line2.length > 70 && !s.display.low_cpu
+            ? <div className="text-[4.6vmin] text-muted leading-snug mt-[1.5vmin] overflow-hidden whitespace-nowrap"><span className="marquee">{line2}<span className="inline-block w-[12vmin]" />{line2}<span className="inline-block w-[12vmin]" /></span></div>
+            : <div className="text-[4.6vmin] text-muted leading-snug mt-[1.5vmin] line-clamp-2">{line2}</div>)}
           {np.title && np.station && <div className="text-[3.6vmin] text-faint mt-[1.5vmin] truncate">{np.station}</div>}
         </div>
       </div>

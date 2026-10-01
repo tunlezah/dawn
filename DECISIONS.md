@@ -166,3 +166,20 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **GPS SHM 0 is `prefer trust` with `delay 0.2`**: NMEA-only receivers deliver
   the sentence tens of ms after the second; the fixed delay bounds the error and
   chrony still steps the clock with `makestep 1 3` on boot.
+
+## Weather and control UI
+
+- **Open-Meteo is fetched every 15 min and cached to `weather.json`**; the face
+  shows the cached forecast with a "stale" marker once it is older than 2 h.
+  Sunrise/sunset for brightness come from astral, not from the forecast, so the
+  display schedule works offline.
+- **The simulator serves a canned Open-Meteo response** from the hub, so `make
+  sim` needs no internet and the "network offline" toggle exercises the stale
+  path.
+- **Settings has a schema-driven "All options" editor.** It renders the pydantic
+  JSON Schema of `config.yaml` and PATCHes single values, so every option in the
+  project is changeable from the web UI without a bespoke form; the curated
+  sections above it cover the common ones.
+- **Round display variant is a CSS mode** (`display.layout = round`): a circular
+  canvas of `100vmin` centred on the panel, with the face content re-flowed to
+  the centre. No separate component tree, so new face features work on both.

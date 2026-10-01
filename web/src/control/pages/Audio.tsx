@@ -50,7 +50,7 @@ export function Audio() {
       </Card>
 
       <Card title="AirPlay" action={<span className={`chip ${s.airplay.available ? '' : 'opacity-60'}`}>{s.airplay.available ? (s.airplay.active ? 'streaming' : 'ready') : 'unavailable'}</span>}>
-        <Row label="Device name" hint="How Dawn appears in the AirPlay menu">
+        <Row label="Device name" hint="How Dawn appears in the AirPlay menu" stack>
           <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); api.patch('/api/config', { airplay: { name: airplayName || null } }); }}>
             <input type="text" value={airplayName} onChange={(e) => setAirplayName(e.target.value)} className="w-40" />
             <button className="btn btn-sm">Save</button>

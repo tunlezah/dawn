@@ -22,14 +22,14 @@ export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boo
   );
 }
 
-export function Row({ label, hint, children }: { label: string; hint?: string; children?: ReactNode }) {
+export function Row({ label, hint, children, stack = false }: { label: string; hint?: string; children?: ReactNode; stack?: boolean }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2.5 border-b border-border last:border-0">
+    <div className={`py-2.5 border-b border-border last:border-0 ${stack ? 'space-y-2' : 'flex items-center justify-between gap-4'}`}>
       <div className="min-w-0">
         <div className="text-fg">{label}</div>
-        {hint && <div className="text-xs text-muted truncate">{hint}</div>}
+        {hint && <div className={`text-xs text-muted ${stack ? '' : 'truncate'}`}>{hint}</div>}
       </div>
-      <div className="shrink-0 flex items-center gap-2">{children}</div>
+      <div className={`flex items-center gap-2 ${stack ? 'flex-wrap' : 'shrink-0'}`}>{children}</div>
     </div>
   );
 }

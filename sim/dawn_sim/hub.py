@@ -152,6 +152,29 @@ def create_app() -> FastAPI:
     async def network() -> dict[str, Any]:
         return {"online": STATE.network_online, "ip": "192.168.1.42" if STATE.network_online else None, "ssid": "HomeWiFi" if STATE.network_online else None}
 
+    @app.get("/openmeteo")
+    async def openmeteo(latitude: float = -33.87, longitude: float = 151.21, temperature_unit: str = "celsius", timezone: str = "Australia/Sydney") -> JSONResponse:
+        """Canned Open-Meteo response so the laptop simulator needs no internet."""
+        import datetime as _dt
+        import zoneinfo
+
+        if not STATE.network_online:
+            return JSONResponse({"error": True, "reason": "offline (sim)"}, status_code=503)
+        tz = zoneinfo.ZoneInfo(timezone)
+        now = _dt.datetime.now(tz)
+        hour = now.hour
+        is_day = 1 if 6 <= hour < 18 else 0
+        code = [0, 1, 2, 3, 61, 80, 95][now.day % 7]
+        temp = 14 + 8 * max(0.0, 1 - abs(hour - 14) / 8)
+        if temperature_unit == "fahrenheit":
+            temp = temp * 9 / 5 + 32
+        day = now.date().isoformat()
+        return JSONResponse({
+            "latitude": latitude, "longitude": longitude, "timezone": timezone,
+            "current": {"time": now.strftime("%Y-%m-%dT%H:%M"), "temperature_2m": round(temp, 1), "weather_code": code, "is_day": is_day},
+            "daily": {"time": [day], "temperature_2m_max": [round(temp + 3, 1)], "temperature_2m_min": [round(temp - 6, 1)], "sunrise": [f"{day}T05:32"], "sunset": [f"{day}T17:58"], "weather_code": [code]},
+        })
+
     @app.post("/log")
     async def add_log(request: Request) -> dict[str, bool]:
         body = await request.body()

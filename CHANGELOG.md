@@ -6,6 +6,11 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 7: weather (Open-Meteo, WMO icon mapping, cache with stale marker),
+  Settings page (device, location, holidays, Wi-Fi, backup/restore, update,
+  schema-driven editor for every option, power), About page, face polish
+  (light-wake screen, DLS marquee, round display variant), canned weather in the
+  simulator.
 - Phase 6: time sources. chrony status parsing (sources/tracking, live flags,
   active reference), gpsd JSON client with serial NMEA fallback, GPS position
   feeding sunrise/weather, dawn-timed daemon (edge-detected utctime, FIC FIG 0/10

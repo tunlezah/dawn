@@ -14,8 +14,20 @@
 .face-menu { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); display: flex; flex-direction: column; padding: 4vmin 6vmin; gap: 3vmin; }
 .face-menu .tile { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 3vmin; padding: 3vmin; font-size: 4.4vmin; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5vmin; min-height: 18vmin; }
 .face-menu .tile:active { background: var(--bg-elev-2); }
-.round .face-screen { padding: 12vmin 14vmin; align-items: center; text-align: center; }
-.round .face-time.huge, .round .face-time.big { font-size: 26vmin; }
+.face-canvas { position: absolute; inset: 0; overflow: hidden; }
+/* Round display variant: a circular canvas centred on the panel; everything else is hidden/black. */
+.round .face-canvas { inset: auto; width: 100vmin; height: 100vmin; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--bg); }
+.round .face-root { background: #000; }
+.round .face-screen { padding: 7vmin 13vmin 9vmin; align-items: center; text-align: center; }
+.round .face-time.huge, .round .face-time.big { font-size: 25vmin; }
+.round .face-date { font-size: 4.6vmin; }
+.round .face-screen > .flex.items-start.justify-between { flex-direction: column; align-items: center; justify-content: flex-start; gap: 1.5vmin; }
+.round .face-screen > .flex.items-start.justify-between .face-dots { font-size: 3vmin; }
+.round .face-screen > .flex.items-start.justify-between .face-dots .dot { width: 1.8vmin; height: 1.8vmin; }
+.round .face-screen > .flex-1 { justify-content: flex-start; padding-top: 1vmin; }
+.round .face-screen > .flex.items-end.justify-between { justify-content: center; gap: 2vmin; flex-wrap: wrap; }
+.round .face-menu { border-radius: 50%; padding: 12vmin 14vmin; }
+.round .face-menu .grid { grid-template-columns: repeat(2, 1fr); }
 .vol-bar { width: 60vmin; height: 2.4vmin; border-radius: 999px; background: var(--bg-elev-2); overflow: hidden; }
 .vol-bar > div { height: 100%; background: var(--accent); transition: width 120ms linear; }
 .lightwake { position: absolute; inset: 0; background: #fff; }
