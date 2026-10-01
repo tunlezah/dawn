@@ -1,0 +1,23 @@
+/* Face-specific layout. 800x480 primary; scales with vmin so HyperPixel (800x480) and HDMI panels work. */
+.face-root { position: fixed; inset: 0; display: grid; place-items: stretch; background: var(--bg); color: var(--fg); overflow: hidden; }
+.face-screen { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 4.5vmin 6vmin; box-sizing: border-box; }
+.face-time { font-weight: 600; letter-spacing: -0.03em; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.face-time.huge { font-size: 36vmin; }
+.face-time.big { font-size: 30vmin; }
+.face-time.small { font-size: 9vmin; }
+.face-date { font-size: 5.2vmin; color: var(--fg-muted); font-weight: 500; }
+.face-chip { display: inline-flex; align-items: center; gap: 1.6vmin; font-size: 4vmin; color: var(--fg-muted); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px; padding: 1.4vmin 3vmin; white-space: nowrap; }
+.face-dots { display: flex; gap: 3vmin; font-size: 3.4vmin; color: var(--fg-muted); align-items: center; }
+.face-dots .dot { width: 2.2vmin; height: 2.2vmin; }
+.face-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
+.face-dim { position: absolute; inset: 0; background: #000; pointer-events: none; transition: opacity 400ms linear; }
+.face-menu { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); display: flex; flex-direction: column; padding: 4vmin 6vmin; gap: 3vmin; }
+.face-menu .tile { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 3vmin; padding: 3vmin; font-size: 4.4vmin; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5vmin; min-height: 18vmin; }
+.face-menu .tile:active { background: var(--bg-elev-2); }
+.round .face-screen { padding: 12vmin 14vmin; align-items: center; text-align: center; }
+.round .face-time.huge, .round .face-time.big { font-size: 26vmin; }
+.vol-bar { width: 60vmin; height: 2.4vmin; border-radius: 999px; background: var(--bg-elev-2); overflow: hidden; }
+.vol-bar > div { height: 100%; background: var(--accent); transition: width 120ms linear; }
+.lightwake { position: absolute; inset: 0; background: #fff; }
+.logo-tile { width: 30vmin; height: 30vmin; border-radius: 4vmin; object-fit: cover; background: var(--bg-elev); }
+.round .logo-tile { width: 22vmin; height: 22vmin; }

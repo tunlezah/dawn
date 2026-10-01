@@ -1,0 +1,351 @@
+# Dawn configuration (/etc/dawn/config.yaml)
+# Generated from dawn_core.config.schema; every value shown is the default.
+# The file is validated on load and hot-reloaded when it changes.
+
+version: 1
+
+general:
+  # Device name, used for AirPlay, Bluetooth and mDNS.
+  name: Dawn
+  # IANA time zone, e.g. Australia/Melbourne.
+  timezone: Australia/Sydney
+  # Linux hostname; advertised as <hostname>.local.
+  hostname: dawn
+  log_level: INFO
+  # Writable state directory (SQLite, caches, media).
+  data_dir: /var/lib/dawn
+  # Runtime directory for sockets and the heartbeat file.
+  runtime_dir: /run/dawn
+
+location:
+  # Fallback latitude when there is no GPS fix.
+  latitude: -33.8688
+  # Fallback longitude when there is no GPS fix.
+  longitude: 151.2093
+  # Elevation in metres (for sunrise/sunset).
+  elevation_m: 0.0
+  # Use the GPS position when a fix is available.
+  prefer_gps: true
+  # Label shown on the face next to the weather.
+  city_label: Sydney
+
+holidays:
+  # Default Australian state for public holidays.
+  region: NSW
+  # Whether regional-only holidays (e.g. Royal Queensland Show) count.
+  scope: statewide
+  # Additional holiday dates (YYYY-MM-DD) that alarms should skip.
+  extra_dates: []
+  # Holiday names (substring match) that should NOT count as holidays.
+  exclude_names: []
+
+inputs:
+  # gpiozero pin factory. lgpio works on Pi 3/4/5/Zero 2 W.
+  pin_factory: lgpio
+  encoder:
+    enabled: true
+    # KY-040 CLK (A) BCM pin.
+    clk_pin: 17
+    # KY-040 DT (B) BCM pin.
+    dt_pin: 27
+    # KY-040 SW (push) BCM pin.
+    sw_pin: 22
+    # Volume change per detent.
+    volume_step: 2
+    # Hold time for the nap-timer picker.
+    long_press_s: 1.0
+    # Swap rotation direction.
+    invert: false
+    bounce_time_s: 0.005
+  big_button:
+    enabled: true
+    # Arcade button BCM pin (to GND, internal pull-up).
+    pin: 23
+    # Hold time for safe shutdown.
+    long_press_s: 3.0
+    bounce_time_s: 0.02
+  # Seconds the face stays bright after a wake tap.
+  standby_wake_s: 20
+  # Face menu auto-close delay.
+  touch_menu_timeout_s: 15
+
+display:
+  panel: auto
+  width: 800
+  height: 480
+  rotation: 0
+  # Face layout variant.
+  layout: rect
+  # Theme for the control UI and daytime face.
+  theme: dark
+  # Reduce face animations (Zero 2 W / 3B+).
+  low_cpu: auto
+  show_seconds: false
+  clock_24h: true
+  backlight:
+    # auto picks sysfs (DSI) > HyperPixel PWM > software overlay (HDMI).
+    driver: auto
+    # Override /sys/class/backlight/<name> directory.
+    sysfs_path: null
+    # HyperPixel backlight PWM BCM pin.
+    pwm_pin: 19
+    pwm_frequency_hz: 1000
+    # Never drive the backlight below this.
+    min_percent: 1
+    max_percent: 100
+    invert: false
+  lux_sensor:
+    driver: auto
+    i2c_bus: 1
+    # Override I2C address (VEML: 0x10 or 0x48, BH1750: 0x23/0x5C).
+    address: null
+    # Lux sampling and brightness loop rate.
+    sample_hz: 10.0
+    # EMA factor for lux (1 = no smoothing).
+    smoothing: 0.3
+  brightness:
+    mode: auto
+    manual_percent: 60
+    # Piecewise-linear lux -> backlight % curve (sorted by lux).
+    curve:
+    - lux: 0.0
+      brightness: 1
+    - lux: 3.0
+      brightness: 6
+    - lux: 20.0
+      brightness: 20
+    - lux: 100.0
+      brightness: 45
+    - lux: 400.0
+      brightness: 80
+    - lux: 1000.0
+      brightness: 100
+    # Ignore target changes smaller than this.
+    hysteresis_percent: 4
+    # Seconds to glide from the current to the target level.
+    slew_s: 2.0
+    # Below this lux the face uses the night palette.
+    night_lux_threshold: 5.0
+    night_hysteresis_lux: 2.0
+    # Brightness cap in the hour after sunset.
+    post_sunset_cap_percent: 40
+    post_sunset_cap_minutes: 60
+    # Use the night palette from sunset to sunrise (schedule).
+    sunset_night_palette: true
+    # Manual slider override lasts until the next sunrise, or forever.
+    manual_override_until: sunrise
+    standby_wake_percent: 100
+  # URL the dawn-face kiosk opens.
+  kiosk_url: http://127.0.0.1:8080/face
+
+audio:
+  backend: auto
+  # Boot-time sink selection order.
+  sink_priority:
+  - usb
+  - hifiberry
+  - headphones
+  - hdmi
+  # PipeWire node.name to always use (null = auto).
+  pinned_sink: null
+  default_volume: 35
+  max_volume: 100
+  # Duck level before pausing a lower-priority source.
+  duck_percent: 20
+  duck_seconds: 2.0
+  volume_overlay_s: 1.5
+  eq:
+    enabled: true
+    bass_db: 0.0
+    treble_db: 0.0
+    bass_hz: 120.0
+    treble_hz: 6000.0
+  mpv_binary: mpv
+  mpv_extra_args: []
+  # Local playlist files.
+  media_dir: /var/lib/dawn/media
+  # Override bundled chime directory.
+  chime_dir: null
+  default_chime: gentle_bell
+
+airplay:
+  enabled: true
+  # Advertised name (null = general.name).
+  name: null
+  metadata_pipe: /tmp/shairport-sync-metadata
+  # Use the shairport-sync D-Bus interface for pause/resume.
+  dbus: true
+
+bluetooth:
+  enabled: true
+  # Advertised name (null = general.name).
+  name: null
+  auto_reconnect: true
+  discoverable_timeout_s: 180
+  adapter: hci0
+
+dab:
+  enabled: true
+  # welle-cli web interface base URL.
+  welle_url: http://127.0.0.1:8000
+  welle_binary: welle-cli
+  # Extra welle-cli args (channel is added by the service).
+  welle_args:
+  - -w
+  - '8000'
+  - -C
+  - -P
+  # systemd unit that runs welle-cli.
+  service_name: dawn-dab
+  # Channel to tune at boot if nothing was played before.
+  default_channel: 9A
+  # Channels scanned first (Australian capitals).
+  scan_priority:
+  - 9A
+  - 9B
+  - 9C
+  - 8A
+  - 8B
+  - 8C
+  - 8D
+  # All Band III channels considered by a scan.
+  scan_channels:
+  - 5A
+  - 5B
+  - 5C
+  - 5D
+  - 6A
+  - 6B
+  - 6C
+  - 6D
+  - 7A
+  - 7B
+  - 7C
+  - 7D
+  - 8A
+  - 8B
+  - 8C
+  - 8D
+  - 9A
+  - 9B
+  - 9C
+  - 9D
+  - 10A
+  - 10B
+  - 10C
+  - 10D
+  - 11A
+  - 11B
+  - 11C
+  - 11D
+  - 12A
+  - 12B
+  - 12C
+  - 12D
+  - 13A
+  - 13B
+  - 13C
+  - 13D
+  - 13E
+  - 13F
+  # Seconds to wait for sync on each channel.
+  scan_dwell_s: 6.0
+  # Seconds to wait for audio after tuning.
+  sync_timeout_s: 12.0
+  # No audio flowing for this long = failure.
+  audio_timeout_s: 15.0
+  # Fixed tuner gain in dB (null = AGC).
+  gain: null
+  # How often /mux.json is read for DLS/MOT.
+  poll_interval_s: 1.0
+
+alarm_defaults:
+  volume: 70
+  ramp_seconds: 60
+  ramp_start_percent: 10
+  snooze_minutes: 9
+  # Switch to the chime after this long without audio.
+  fallback_after_s: 15
+  max_ring_minutes: 30
+  # Fire late if within this window after boot.
+  missed_grace_minutes: 10
+  light_wake_minutes: 10
+  chime: gentle_bell
+
+timers:
+  sleep_choices_min:
+  - 15
+  - 30
+  - 45
+  - 60
+  - 90
+  sleep_fade_s: 30
+  nap_choices_min:
+  - 20
+  - 30
+  - 45
+  - 60
+  nap_default_min: 20
+  nap_volume: 60
+  nap_chime: rising_synth
+
+time_sources:
+  chrony_poll_s: 30
+  chronyc_binary: chronyc
+  # Source considered stale after this long without samples.
+  stale_after_s: 600
+  gps:
+    enabled: true
+    source: auto
+    gpsd_host: 127.0.0.1
+    gpsd_port: 2947
+    serial_device: /dev/ttyACM0
+    serial_baud: 9600
+
+weather:
+  enabled: true
+  provider: open-meteo
+  base_url: https://api.open-meteo.com/v1/forecast
+  interval_minutes: 15
+  stale_after_hours: 2.0
+  units: celsius
+
+network:
+  hotspot:
+    enabled: true
+    # Hotspot SSID (null = <name>-<serial4>).
+    ssid: null
+    password: dawnsetup
+    # Seconds without a network before the hotspot starts.
+    wait_for_network_s: 45
+    interface: wlan0
+  online_check_host: 1.1.1.1
+  online_check_interval_s: 30
+
+web:
+  host: 0.0.0.0
+  port: 8080
+  # Built web assets (null = bundled web/dist).
+  static_dir: null
+  cors_origins:
+  - '*'
+  auth:
+    # Optional PIN for the control UI (null = open on the LAN).
+    pin: null
+    session_hours: 720
+
+system:
+  heartbeat_interval_s: 5
+  # Send systemd watchdog keepalives.
+  watchdog: true
+  cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
+  # Git checkout used by the software updater.
+  update_repo_dir: /opt/dawn
+  update_branch: main
+  sudo_binary: sudo
+  allow_shutdown: true
+  log_tail_lines: 200
+
+sim:
+  # Sim hub base URL (used when DAWN_SIM=1).
+  hub_url: http://127.0.0.1:8099

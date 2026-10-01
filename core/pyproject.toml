@@ -1,0 +1,60 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dawn-core"
+version = "0.1.0"
+description = "Dawn alarm clock radio - core service (state, alarms, audio arbiter, inputs, sensors, API)"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.27",
+  "sqlmodel>=0.0.16",
+  "pydantic>=2.6",
+  "pydantic-settings>=2.2",
+  "pyyaml>=6.0",
+  "httpx>=0.27",
+  "holidays>=0.45",
+  "astral>=3.2",
+  "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+# Hardware extras; installed by deploy/install.sh on the Pi.
+pi = [
+  "gpiozero>=2.0",
+  "lgpio>=0.2",
+  "smbus2>=0.4",
+  "dbus-fast>=2.21",
+  "pyserial>=3.5",
+]
+dev = [
+  "pytest>=8",
+  "pytest-asyncio>=0.23",
+  "ruff>=0.4",
+  "mypy>=1.9",
+]
+
+[project.scripts]
+dawn-core = "dawn_core.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["dawn_core*"]
+
+[tool.setuptools.package-data]
+dawn_core = ["assets/**/*", "py.typed"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC"]
+ignore = ["E501", "B008"]

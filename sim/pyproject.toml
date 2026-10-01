@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dawn-sim"
+version = "0.1.0"
+description = "Dawn: laptop simulators (GPS NMEA, fake welle-cli, lux, inputs, backlight) and the sim launcher"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = ["fastapi>=0.110", "uvicorn[standard]>=0.27", "pillow>=10", "pyyaml>=6.0", "httpx>=0.27"]
+
+[project.scripts]
+dawn-sim = "dawn_sim.launcher:main"
+
+[tool.setuptools.packages.find]
+include = ["dawn_sim*"]
+
+[tool.setuptools.package-data]
+dawn_sim = ["assets/**/*"]
