@@ -7,6 +7,7 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -91,5 +92,6 @@ class Database:
                     d = json.loads(r.detail)
                 except json.JSONDecodeError:
                     d = {"detail": r.detail}
-                out.append({"id": r.id, "at": r.at.isoformat() + "Z", "kind": r.kind, **d})
+                at = r.at if r.at.tzinfo else r.at.replace(tzinfo=UTC)
+                out.append({"id": r.id, "at": at.isoformat(), "kind": r.kind, **d})
             return out

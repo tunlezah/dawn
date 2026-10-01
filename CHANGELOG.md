@@ -6,6 +6,10 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 3: DAB+ via welle-cli (HTTP client, SID normalisation, sync detection),
+  Band III scan with Australian-capital priority and progress, stored ensembles
+  and services, playback through mpv, DLS and MOT slides on the face, slide-based
+  logos with SVG monogram fallback, presets with drag-to-order, Radio page.
 - Phase 2: audio arbiter with strict priorities (alarm > sleep > user > AirPlay >
   Bluetooth), duck-then-pause and resume-previous; PipeWire/ALSA/sim backends;
   mpv player wrapper; bundled chimes (gentle bell, rising synth, birds); master

@@ -68,3 +68,22 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Touch is routed through core** (`POST /api/face/touch`): the face never
   decides what a touch means. The controller applies the same rules to GPIO,
   the simulator and the API.
+
+## DAB+
+
+- **welle-cli runs as its own unit (`dawn-dab`)** and core talks to it over HTTP
+  only. Core writes `/var/lib/dawn/dab.env` (`DAWN_DAB_CHANNEL`, `DAWN_WELLE_ARGS`)
+  so a restart, by us or by systemd, comes back on the last-used channel. The
+  exact welle-cli flags are config (`dab.welle_args`, default `-w 8000 -C`),
+  because the carousel/PAD flags differ between welle.io versions.
+- **Service ids are normalised to lowercase hex without `0x`** (`1002`), whatever
+  welle-cli emits, and that form is used in `dab:<sid>` references, presets and
+  logo URLs.
+- **"Sync" means an ensemble was decoded**: `demodulator.sync` when welle exposes
+  it, otherwise a non-empty ensemble label or service list. SNR is mapped 0–20 dB
+  to a 0–100 signal figure.
+- **The latest MOT slide per service is the station logo** (`/var/lib/dawn/logos/`),
+  served from `/api/dab/logo/<sid>`; with no slide the same URL returns an SVG
+  monogram tile (two letters, colour hashed from the SID). One URL, no client logic.
+- **Scans stop DAB playback** (retuning kills the stream) and refuse to run while
+  a DAB alarm is ringing; afterwards welle is retuned to the channel it was on.

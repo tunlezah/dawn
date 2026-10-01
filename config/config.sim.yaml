@@ -1,258 +1,40 @@
+# Configuration used by `make sim` (DAWN_SIM=1). Hardware backends are swapped
+# for simulators that talk to the sim hub on http://127.0.0.1:8099.
 version: 1
 general:
-  name: Dawn
+  name: Dawn (sim)
   timezone: Australia/Sydney
-  hostname: dawn
   log_level: INFO
-  data_dir: /var/lib/dawn
-  runtime_dir: /run/dawn
+  data_dir: ./var/dawn
+  runtime_dir: ./var/run
 location:
   latitude: -33.8688
   longitude: 151.2093
-  elevation_m: 0.0
-  prefer_gps: true
   city_label: Sydney
-holidays:
-  region: NSW
-  scope: statewide
-  extra_dates: []
-  exclude_names: []
 inputs:
-  pin_factory: lgpio
-  encoder:
-    enabled: true
-    clk_pin: 17
-    dt_pin: 27
-    sw_pin: 22
-    volume_step: 2
-    long_press_s: 1.0
-    invert: false
-    bounce_time_s: 0.005
-  big_button:
-    enabled: true
-    pin: 23
-    long_press_s: 3.0
-    bounce_time_s: 0.02
-  standby_wake_s: 20
-  touch_menu_timeout_s: 15
+  pin_factory: mock
 display:
-  panel: auto
-  width: 800
-  height: 480
-  rotation: 0
-  layout: rect
-  theme: dark
-  low_cpu: auto
-  show_seconds: false
-  clock_24h: true
+  panel: hdmi
   backlight:
-    driver: auto
-    sysfs_path: null
-    pwm_pin: 19
-    pwm_frequency_hz: 1000
-    min_percent: 1
-    max_percent: 100
-    invert: false
+    driver: sim
   lux_sensor:
-    driver: auto
-    i2c_bus: 1
-    address: null
-    sample_hz: 10.0
-    smoothing: 0.3
-  brightness:
-    mode: auto
-    manual_percent: 60
-    curve:
-    - lux: 0.0
-      brightness: 1
-    - lux: 3.0
-      brightness: 6
-    - lux: 20.0
-      brightness: 20
-    - lux: 100.0
-      brightness: 45
-    - lux: 400.0
-      brightness: 80
-    - lux: 1000.0
-      brightness: 100
-    hysteresis_percent: 4
-    slew_s: 2.0
-    night_lux_threshold: 5.0
-    night_hysteresis_lux: 2.0
-    post_sunset_cap_percent: 40
-    post_sunset_cap_minutes: 60
-    sunset_night_palette: true
-    manual_override_until: sunrise
-    standby_wake_percent: 100
-  kiosk_url: http://127.0.0.1:8080/face
+    driver: sim
 audio:
-  backend: auto
-  sink_priority:
-  - usb
-  - hifiberry
-  - headphones
-  - hdmi
-  pinned_sink: null
-  default_volume: 35
-  max_volume: 100
-  duck_percent: 20
-  duck_seconds: 2.0
-  volume_overlay_s: 1.5
-  eq:
-    enabled: true
-    bass_db: 0.0
-    treble_db: 0.0
-    bass_hz: 120.0
-    treble_hz: 6000.0
-  mpv_binary: mpv
-  mpv_extra_args: []
-  media_dir: /var/lib/dawn/media
-  chime_dir: null
-  default_chime: gentle_bell
-airplay:
-  enabled: true
-  name: null
-  metadata_pipe: /tmp/shairport-sync-metadata
-  dbus: true
-bluetooth:
-  enabled: true
-  name: null
-  auto_reconnect: true
-  discoverable_timeout_s: 180
-  adapter: hci0
+  backend: sim
+  media_dir: ./var/dawn/media
 dab:
-  enabled: true
   welle_url: http://127.0.0.1:8000
-  welle_binary: welle-cli
-  welle_args:
-  - -w
-  - '8000'
-  - -C
-  - -P
-  service_name: dawn-dab
-  default_channel: 9A
-  scan_priority:
-  - 9A
-  - 9B
-  - 9C
-  - 8A
-  - 8B
-  - 8C
-  - 8D
-  scan_channels:
-  - 5A
-  - 5B
-  - 5C
-  - 5D
-  - 6A
-  - 6B
-  - 6C
-  - 6D
-  - 7A
-  - 7B
-  - 7C
-  - 7D
-  - 8A
-  - 8B
-  - 8C
-  - 8D
-  - 9A
-  - 9B
-  - 9C
-  - 9D
-  - 10A
-  - 10B
-  - 10C
-  - 10D
-  - 11A
-  - 11B
-  - 11C
-  - 11D
-  - 12A
-  - 12B
-  - 12C
-  - 12D
-  - 13A
-  - 13B
-  - 13C
-  - 13D
-  - 13E
-  - 13F
-  scan_dwell_s: 6.0
-  sync_timeout_s: 12.0
-  audio_timeout_s: 15.0
-  gain: null
-  poll_interval_s: 1.0
-alarm_defaults:
-  volume: 70
-  ramp_seconds: 60
-  ramp_start_percent: 10
-  snooze_minutes: 9
-  fallback_after_s: 15
-  max_ring_minutes: 30
-  missed_grace_minutes: 10
-  light_wake_minutes: 10
-  chime: gentle_bell
-timers:
-  sleep_choices_min:
-  - 15
-  - 30
-  - 45
-  - 60
-  - 90
-  sleep_fade_s: 30
-  nap_choices_min:
-  - 20
-  - 30
-  - 45
-  - 60
-  nap_default_min: 20
-  nap_volume: 60
-  nap_chime: rising_synth
+  scan_dwell_s: 2.5
+  sync_timeout_s: 5
+  # a short list keeps the simulated scan quick
+  scan_channels: [9A, 9B, 9C, 8A, 8B, 8C, 8D, 10A, 10B]
 time_sources:
-  chrony_poll_s: 30
-  chronyc_binary: chronyc
-  stale_after_s: 600
   gps:
-    enabled: true
-    source: auto
-    gpsd_host: 127.0.0.1
-    gpsd_port: 2947
-    serial_device: /dev/ttyACM0
-    serial_baud: 9600
-weather:
-  enabled: true
-  provider: open-meteo
-  base_url: https://api.open-meteo.com/v1/forecast
-  interval_minutes: 15
-  stale_after_hours: 2.0
-  units: celsius
-network:
-  hotspot:
-    enabled: true
-    ssid: null
-    password: dawnsetup
-    wait_for_network_s: 45
-    interface: wlan0
-  online_check_host: 1.1.1.1
-  online_check_interval_s: 30
+    source: sim
 web:
-  host: 0.0.0.0
   port: 8080
-  static_dir: null
-  cors_origins:
-  - '*'
-  auth:
-    pin: null
-    session_hours: 720
 system:
-  heartbeat_interval_s: 5
-  watchdog: true
-  cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
-  update_repo_dir: /opt/dawn
-  update_branch: main
-  sudo_binary: sudo
-  allow_shutdown: true
-  log_tail_lines: 200
+  watchdog: false
+  update_repo_dir: .
 sim:
   hub_url: http://127.0.0.1:8099

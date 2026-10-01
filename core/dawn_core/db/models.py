@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlmodel import Field, SQLModel
+
+
+def utcnow() -> datetime:
+    return datetime.now(UTC)
 
 
 class AlarmRow(SQLModel, table=True):
@@ -29,8 +33,8 @@ class AlarmRow(SQLModel, table=True):
     light_wake: bool = False
     light_wake_minutes: int = 10
     last_fired_occurrence: str | None = None  # ISO local datetime of the last occurrence handled
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class PresetRow(SQLModel, table=True):
@@ -59,7 +63,7 @@ class DabEnsembleRow(SQLModel, table=True):
     eid: str = ""
     label: str = ""
     snr: float | None = None
-    scanned_at: datetime = Field(default_factory=datetime.utcnow)
+    scanned_at: datetime = Field(default_factory=utcnow)
 
 
 class DabServiceRow(SQLModel, table=True):
@@ -77,7 +81,7 @@ class DabServiceRow(SQLModel, table=True):
     pty: str | None = None
     signal: int | None = None
     has_slide: bool = False
-    scanned_at: datetime = Field(default_factory=datetime.utcnow)
+    scanned_at: datetime = Field(default_factory=utcnow)
 
 
 class EventRow(SQLModel, table=True):
@@ -86,6 +90,6 @@ class EventRow(SQLModel, table=True):
     __tablename__ = "event"
 
     id: int | None = Field(default=None, primary_key=True)
-    at: datetime = Field(default_factory=datetime.utcnow, index=True)
+    at: datetime = Field(default_factory=utcnow, index=True)
     kind: str = Field(index=True)
     detail: str = ""

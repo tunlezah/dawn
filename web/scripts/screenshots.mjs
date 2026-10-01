@@ -10,7 +10,6 @@ const out = resolve(process.cwd(), '..', 'docs', 'screenshots');
 mkdirSync(out, { recursive: true });
 
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
-const put = (url, body) => fetch(url, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
 const del = (url) => fetch(url, { method: 'DELETE' }).catch(() => {});
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,7 +68,6 @@ await sleep(3500);
 await face('night-standby');
 await post(`${hub}/set`, { lux: 150 });
 
-await put(`${base}/api/config`, {}).catch(() => {});
 await post(`${base}/api/face/demo`, { mode: 'setup' });
 await sleep(800);
 await face('setup');
