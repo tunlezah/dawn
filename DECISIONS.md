@@ -35,3 +35,36 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **The fake welle-cli mirrors the real HTTP surface** (`/mux.json`,
   `/channel`, `/mp3/<sid>`, `/slide/<sid>`, `/fic`) so core and `dawn-timed`
   run unchanged against it.
+
+## Audio
+
+- **Priority levels are fixed integers** (alarm 100 > sleep 80 > user 60 >
+  AirPlay 40 > Bluetooth 20) and one slot exists per level. A new source at a
+  level replaces the previous one at that level; there is never a queue of user
+  sources. Preemption ducks the lower source to 20 % for 2 s *per source gain*
+  (mpv `volume`, stream mute for AirPlay/Bluetooth), not the master volume, so
+  the alarm ramp and the duck never fight over the sink volume.
+- **One mpv process per source family** (`dawn-chime`, `dawn-media`, `dawn-dab`),
+  controlled over the JSON IPC socket. PipeWire then shows separately named
+  streams, which is what the "audio flowing" detection keys on.
+- **PipeWire is driven with the CLI tools** (`wpctl`, `pw-dump`, `pw-cli`,
+  `pw-metadata`) instead of Python bindings: no compiled dependency, trivially
+  replaceable, and the ALSA fallback (`amixer`) is the same shape.
+- **"Mute and go to standby"** (big button while playing) stops the user source
+  and pauses AirPlay/Bluetooth via their remote-control interface. It does not
+  leave the sink muted, otherwise the next alarm would ring silently.
+- **Chimes are synthesized** (`scripts/gen_chimes.py`) and committed as small
+  OGG files, so the alarm works with no network and nothing to download.
+- **EQ lives in a PipeWire filter-chain sink (`dawn_eq`).** When present it
+  becomes the default sink and its output stream is re-targeted to the selected
+  hardware sink; master volume still applies to the hardware sink. Without the
+  filter chain everything works, just without tone control.
+
+## Inputs
+
+- **Short vs long press is decided on release**, with the shutdown countdown
+  shown after 0.5 s of holding. Releasing while the countdown is visible cancels
+  and does nothing else, so a 2 s press can never be mistaken for a tap.
+- **Touch is routed through core** (`POST /api/face/touch`): the face never
+  decides what a touch means. The controller applies the same rules to GPIO,
+  the simulator and the API.
