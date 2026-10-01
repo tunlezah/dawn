@@ -116,6 +116,24 @@ class Arbiter:
                     slot.was_playing = True
         self._changed()
 
+    async def move(self, src_level: str, dst_level: str) -> None:
+        """Re-file a slot at another level without touching its source (sleep timer promotion)."""
+        async with self._lock:
+            slot = self.slots.pop(src_level, None)
+            if slot is None:
+                return
+            old = self.slots.pop(dst_level, None)
+            if old is not None:
+                await self._stop_slot(old)
+            slot.level, slot.priority = dst_level, LEVELS[dst_level]
+            self.slots[dst_level] = slot
+            top = self._top()
+            if top is slot and slot.state in ("playing", "starting", "ducked"):
+                for other in self.slots.values():
+                    if other is not slot and other.state in ("playing", "starting", "ducked"):
+                        await self._preempt(other)
+        self._changed()
+
     async def release_all(self, below: int | None = None) -> None:
         for level in list(self.slots):
             if below is None or LEVELS[level] < below:

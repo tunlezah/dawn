@@ -6,6 +6,11 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 4: alarm engine (pure scheduler with DST/leap/holiday/skip-next/leave
+  handling, 1 Hz tick with grace window and missed-alarm log, once-alarms
+  self-disable), AU public holidays with regional scope, ring sessions (ramp,
+  chime fallback with DAB restart-once, snooze, max ring, volume restore),
+  light-wake, nap and sleep timers, alarm/timer API, Alarms and Timers pages.
 - Phase 3: DAB+ via welle-cli (HTTP client, SID normalisation, sync detection),
   Band III scan with Australian-capital priority and progress, stored ensembles
   and services, playback through mpv, DLS and MOT slides on the face, slide-based

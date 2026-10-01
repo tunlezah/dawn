@@ -12,7 +12,7 @@ export function Ringing() {
       <div className={`face-time huge ${snoozed ? '' : 'pulse'} text-accent`}>{t.hm}{t.ampm && <span className="text-[8vmin] ml-[2vmin]">{t.ampm}</span>}</div>
       <div className="mt-[3vmin] text-[6vmin] font-medium">{r?.label || 'Alarm'}{r?.fallback && <span className="text-muted text-[3.5vmin] ml-[2vmin]">chime fallback</span>}</div>
       <div className="mt-[2vmin] text-[4.2vmin] text-muted">
-        {snoozed ? `Snoozed until ${fmtTime(new Date(r!.snoozed_until!), s.tz, s.settings.clock_24h).hm}` : 'Tap anywhere to snooze · hold the button to stop'}
+        {snoozed ? `Snoozed until ${fmtTime(new Date(r!.snoozed_until!), s.tz, s.settings.clock_24h).hm}` : 'Tap anywhere to snooze · press the button to stop'}
       </div>
     </div>
   );

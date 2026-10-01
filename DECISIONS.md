@@ -87,3 +87,33 @@ each section. Every entry says what was decided and why, so it can be revisited.
   monogram tile (two letters, colour hashed from the SID). One URL, no client logic.
 - **Scans stop DAB playback** (retuning kills the stream) and refuse to run while
   a DAB alarm is ringing; afterwards welle is retuned to the channel it was on.
+
+## Alarms and timers
+
+- **Scheduling is a pure function** (`alarms/scheduler.py`) over an `AlarmSpec`,
+  a time zone and a holiday predicate, so DST, leap days, holidays, skip-next and
+  leave can be unit-tested without a clock. Non-existent local times
+  (spring-forward gap) are normalised through UTC and ring an hour later on the
+  wall clock; ambiguous times (fall-back) use the first occurrence. Either way an
+  alarm rings exactly once per scheduled day.
+- **No double fire, no skip, on clock steps.** Each alarm remembers the last
+  occurrence it handled (`last_fired_occurrence`); the 1 Hz tick only fires an
+  occurrence that is newer than that. A backwards step (chrony `makestep`)
+  therefore cannot re-fire; a forward step fires if within the 10-minute grace
+  window and logs a miss otherwise.
+- **Regional-only holidays are a name table** (`holidays.REGIONAL_ONLY`) layered
+  on the `holidays` package, because the package does not flag which entries
+  are partial-state (e.g. the Royal Queensland Show). `holiday_scope =
+  include_regional` turns them on. Extra dates and name exclusions come from
+  config.
+- **One ring session at a time.** A nap or test ring arriving while an alarm
+  rings replaces it (logged). Snooze pauses the alarm slot (so the previous
+  source does not resume) and re-rings with the ramp again; the max-ring clock
+  counts ringing time only. The big button stops a snoozed session too.
+- **Fallback is decided inside the ring session, not the arbiter.** It watches
+  "audio flowing" every second; a DAB source whose welle-cli is unreachable gets
+  one restart attempt after 3 s, and whatever happens the chime takes over at
+  `fallback_after_s` (15 s). With no SDR present the chime starts immediately.
+- **Sleep timer promotes the playing slot** from `user` to `sleep` (arbiter
+  `move`) instead of restarting the stream; cancelling demotes it back and keeps
+  playing. Nothing playing: the last-played source starts at the sleep level.

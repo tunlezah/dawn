@@ -34,8 +34,9 @@ class _Actions(Actions):
         return self.ctx.svc(FaceService)
 
     async def is_ringing(self) -> bool:
-        r = self.ctx.store.state.alarms.ringing
-        return r is not None and r.snoozed_until is None
+        # A snoozed alarm is still a ring session: the stop control must end it,
+        # while snooze on an already-snoozed alarm is a no-op.
+        return self.ctx.store.state.alarms.ringing is not None
 
     async def is_playing(self) -> bool:
         return self.ctx.store.state.audio.active_source != "none"
