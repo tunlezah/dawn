@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from . import nmea
 from .simstate import STATE
@@ -73,7 +73,7 @@ class GpsSim:
 
     async def _tick(self) -> None:
         while True:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if self._master_fd is not None:
                 data = nmea.burst(now, STATE.gps_lat, STATE.gps_lon, STATE.gps_fix, STATE.gps_sats)
                 try:
@@ -95,4 +95,4 @@ class GpsSim:
 
 
 def _iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%S.000Z")

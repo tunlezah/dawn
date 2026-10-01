@@ -7,7 +7,7 @@ FIG 0/10: Rfu(1) MJD(17) LSI(1) ConfInd(1) UTC(1) then hours(5) minutes(6)
 
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta, timezone
+from datetime import UTC, date, datetime, timedelta
 
 MJD_EPOCH = date(1858, 11, 17)
 FIB_LEN = 32
@@ -51,7 +51,7 @@ def parse_fig_0_10(data: bytes) -> tuple[datetime, bool] | None:
         return None
     try:
         d = mjd_to_date(mjd)
-        return datetime(d.year, d.month, d.day, hours, minutes, min(seconds, 59), ms * 1000, tzinfo=timezone.utc), has_ms
+        return datetime(d.year, d.month, d.day, hours, minutes, min(seconds, 59), ms * 1000, tzinfo=UTC), has_ms
     except (ValueError, OverflowError):
         return None
 

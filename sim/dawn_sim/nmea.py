@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 
 def checksum(body: str) -> str:
@@ -79,5 +79,5 @@ def gsv(sats: int) -> list[str]:
 
 
 def burst(now: datetime | None, lat: float, lon: float, fix: bool, sats: int) -> str:
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return "".join([rmc(now, lat, lon, fix), gga(now, lat, lon, fix, sats), gsa(fix, sats), *gsv(sats)])

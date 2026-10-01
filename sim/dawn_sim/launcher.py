@@ -42,7 +42,7 @@ async def _child(name: str, cmd: list[str], env: dict[str, str], stop: asyncio.E
                 proc.terminate()
                 try:
                     await asyncio.wait_for(proc.wait(), 5)
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     proc.kill()
         if not stop.is_set():
             STATE.note(f"{name} exited with {proc.returncode}; restarting in 2 s")

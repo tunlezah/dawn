@@ -212,3 +212,38 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **The simulator emits real metadata-pipe bytes** for AirPlay and a fake BlueZ
   snapshot for Bluetooth, so the parser and the priority behaviour (alarm > user
   > AirPlay > Bluetooth, resume after stop) are exercised on a laptop.
+
+## Deployment
+
+- **One installer, idempotent, marked edits.** `deploy/install.sh` detects the
+  board and panel, writes a `# >>> dawn >>>` block into `config.txt`, installs
+  its own files under `/etc/.../*.d/` or `/etc/dawn`, and builds rtl-sdr-blog,
+  welle.io and shairport-sync (+ nqptp) only when their binaries are missing or
+  `--rebuild` is given. `--update` is what `dawn-update` runs after `git pull`.
+- **Everything runs as the unprivileged `dawn` user**, including welle-cli,
+  shairport-sync (via a drop-in) and the kiosk. Privileged actions go through a
+  short sudoers allow-list (`deploy/sudoers/dawn`) and a polkit rule for
+  NetworkManager/BlueZ/hostname, so the service never needs root.
+- **PipeWire runs in dawn's user session** (`loginctl enable-linger dawn`), and
+  the system units point `XDG_RUNTIME_DIR` at it. mpv, shairport-sync and the
+  Bluetooth A2DP sink all meet in that one session, which is what the arbiter
+  controls.
+- **The kiosk is cage + Chromium on tty1** (`dawn-face.service`,
+  `Conflicts=getty@tty1`), launched by `dawn-face`, which waits for the core
+  health endpoint and applies low-CPU Chromium flags on Zero 2 W / Pi 3.
+- **Watchdogs at two levels**: systemd pets the bcm2835 hardware watchdog
+  (`RuntimeWatchdogSec=15s`), and `dawn-core.service` has `WatchdogSec=60` fed by
+  `sd_notify(WATCHDOG=1)` from the heartbeat loop that also writes
+  `/run/dawn/heartbeat`.
+- **Data on ext4 with `data=journal`** is offered two ways: a dedicated partition
+  (`--data-device`) or a loop-mounted image (`--data-image-mb`), because
+  repartitioning a running SD card in an installer is not something to do
+  automatically. The read-only root (`--readonly`, raspi-config overlayfs) is
+  only enabled together with `--data-device`.
+- **Setup hotspot via NetworkManager** (`nmcli dev wifi hotspot`) after
+  `wait_for_network_s` without a network; the face shows the SSID, password and
+  a Wi-Fi QR code, and the control UI at `http://10.42.0.1/` can join a network.
+  The hotspot stops by itself when connectivity returns.
+- **Backups are one JSON document** (config + alarms, presets, DAB scan results,
+  KV settings, minus auth secrets). Restore replaces the tables and the config
+  atomically enough for a bedside clock and republishes state.

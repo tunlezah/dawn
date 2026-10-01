@@ -1,0 +1,31 @@
+[Unit]
+Description=Dawn core (state, alarms, audio arbiter, API)
+Documentation=https://github.com/tunlezah/dawn
+After=network.target chrony.service bluetooth.service user@@UID@.service
+Wants=user@@UID@.service
+
+[Service]
+Type=notify
+NotifyAccess=all
+User=dawn
+Group=dawn
+SupplementaryGroups=audio video render input gpio i2c dialout plugdev bluetooth netdev
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=DAWN_CONFIG=/etc/dawn/config.yaml
+Environment=GPIOZERO_PIN_FACTORY=lgpio
+Environment=PYTHONUNBUFFERED=1
+WorkingDirectory=@DAWN_DIR@
+ExecStart=@DAWN_DIR@/.venv/bin/dawn-core
+Restart=always
+RestartSec=2
+WatchdogSec=60
+TimeoutStartSec=90
+RuntimeDirectory=dawn
+RuntimeDirectoryMode=0755
+StateDirectory=dawn
+# modest hardening (GPIO/I2C/audio need device access, so no PrivateDevices)
+NoNewPrivileges=false
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

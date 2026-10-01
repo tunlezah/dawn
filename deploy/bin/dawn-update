@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# Software update: git pull + install.sh --update + restart. Called by dawn-core via sudo.
+# Progress is written to /var/log/dawn-update.log which the UI tails.
+set -uo pipefail
+DAWN_DIR="${DAWN_DIR:-/opt/dawn}"
+LOG=/var/log/dawn-update.log
+BRANCH="${1:-main}"
+{
+  echo "=== dawn-update $(date -Is) branch=$BRANCH ==="
+  cd "$DAWN_DIR" || { echo "no $DAWN_DIR"; exit 1; }
+  git config --system --add safe.directory "$DAWN_DIR" 2>/dev/null || true
+  sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed"; exit 1; }
+  BEFORE="$(git rev-parse --short HEAD)"
+  sudo -u dawn git merge --ff-only "origin/$BRANCH" || { echo "fast-forward failed (local changes?)"; exit 1; }
+  AFTER="$(git rev-parse --short HEAD)"
+  echo "updated $BEFORE -> $AFTER"
+  "$DAWN_DIR/deploy/install.sh" --update --no-build || { echo "install.sh failed"; exit 1; }
+  echo "restarting services"
+  systemctl restart dawn-timed dawn-dab || true
+  systemctl restart dawn-face || true
+  echo "=== done $(date -Is) ==="
+  # core restarts last so the UI sees 'done'
+  (sleep 2; systemctl restart dawn-core) &
+} 2>&1 | tee -a "$LOG"

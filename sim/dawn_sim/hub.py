@@ -113,7 +113,7 @@ def create_app() -> FastAPI:
         try:
             ev = await asyncio.wait_for(STATE.input_queue.get(), timeout=timeout)
             return JSONResponse(ev)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return JSONResponse({"event": None})
 
     @app.get("/chrony/sources")
@@ -246,7 +246,7 @@ def create_app() -> FastAPI:
     async def airplay_pipe(timeout: float = 20.0) -> Response:
         try:
             chunk = await asyncio.wait_for(STATE.airplay_queue.get(), timeout=timeout)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             return Response(status_code=204)
         while not STATE.airplay_queue.empty():
             chunk += STATE.airplay_queue.get_nowait()

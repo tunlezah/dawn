@@ -1,0 +1,22 @@
+[Unit]
+Description=Dawn DAB+ decoder (welle-cli web interface)
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+User=dawn
+Group=dawn
+SupplementaryGroups=plugdev audio
+# written by dawn-core: DAWN_DAB_CHANNEL=9A  DAWN_WELLE_ARGS=-w 8000 -C
+EnvironmentFile=-/var/lib/dawn/dab.env
+ExecStart=/bin/sh -c 'exec /usr/local/bin/welle-cli -c "${DAWN_DAB_CHANNEL:-9A}" ${DAWN_WELLE_ARGS:--w 8000 -C}'
+Restart=always
+RestartSec=3
+Nice=-5
+# welle-cli on an unplugged SDR exits quickly; the restart loop keeps trying without flooding
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dawn-dab
+
+[Install]
+WantedBy=multi-user.target

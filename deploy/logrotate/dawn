@@ -1,0 +1,21 @@
+# Dawn log rotation. Services log to journald; these are the few plain files.
+/var/log/dawn-install.log /var/log/dawn-update.log {
+    weekly
+    rotate 4
+    size 2M
+    compress
+    missingok
+    notifempty
+    copytruncate
+}
+/var/log/chrony/*.log {
+    weekly
+    rotate 4
+    compress
+    missingok
+    notifempty
+    sharedscripts
+    postrotate
+        /usr/bin/chronyc cyclelogs > /dev/null 2>&1 || true
+    endscript
+}

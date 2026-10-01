@@ -15,7 +15,7 @@ import asyncio
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import httpx
 
@@ -40,7 +40,7 @@ def utctime_from_mux(j: dict) -> tuple[datetime | None, bool]:
         ms = int(u.get("milliseconds", u.get("ms", 0)))
         if y < 2000:
             return None, False
-        return datetime(y, mo, d, h, mi, min(s, 59), ms * 1000, tzinfo=timezone.utc), has_s
+        return datetime(y, mo, d, h, mi, min(s, 59), ms * 1000, tzinfo=UTC), has_s
     except (KeyError, ValueError, TypeError):
         return None, False
 
@@ -91,7 +91,7 @@ class Timed:
     async def _poll_mux(self) -> None:
         period = 1.0 / self.args.poll_hz
         j = await self._mux()
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         if j is None:
             self.synced = False
             await asyncio.sleep(2)
@@ -129,7 +129,7 @@ class Timed:
                     times = parse_fibs(buf[:usable])
                     buf = buf[usable:]
                     for t, has_ms in times:
-                        now = datetime.now(timezone.utc)
+                        now = datetime.now(UTC)
                         self.synced = True
                         if has_ms:
                             self.shm.write(t, now, precision=-6)

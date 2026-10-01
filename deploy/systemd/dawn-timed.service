@@ -1,0 +1,16 @@
+[Unit]
+Description=Dawn DAB+ time to chrony SHM 2
+After=dawn-dab.service chrony.service
+Wants=chrony.service
+
+[Service]
+User=dawn
+Group=dawn
+ExecStart=@DAWN_DIR@/.venv/bin/dawn-timed --welle-url http://127.0.0.1:8000 --shm-unit 2
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+SyslogIdentifier=dawn-timed
+
+[Install]
+WantedBy=multi-user.target

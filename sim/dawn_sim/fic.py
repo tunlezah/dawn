@@ -6,7 +6,7 @@ exercised. See ETSI EN 300 401, 5.2.1 (FIB) and 8.1.3.1 (FIG 0/10).
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 
 MJD_EPOCH = date(1858, 11, 17)
 
@@ -24,7 +24,7 @@ def crc16_ccitt(data: bytes) -> int:
 
 
 def fig_0_10(now: datetime) -> bytes:
-    now = now.astimezone(timezone.utc)
+    now = now.astimezone(UTC)
     mjd = (now.date() - MJD_EPOCH).days
     ms = now.microsecond // 1000
     # Rfu(1) MJD(17) LSI(1) ConfInd(1) UTCflag(1) hours(5) minutes(6) seconds(6) ms(10) = 48 bits
@@ -56,5 +56,5 @@ def fib(figs: bytes) -> bytes:
 
 def fic_frame(now: datetime | None = None) -> bytes:
     """Three FIBs (one DAB frame worth of FIC in mode I), the first carrying FIG 0/10."""
-    now = now or datetime.now(timezone.utc)
+    now = now or datetime.now(UTC)
     return fib(fig_0_10(now)) + fib(b"") + fib(b"")

@@ -14,7 +14,7 @@ import asyncio
 import hashlib
 import io
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -132,7 +132,7 @@ def _dls(sid: str, label: str) -> str:
 
 
 def mux_json() -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     synced = _synced()
     ens = ENSEMBLES.get(STATE.channel)
     services = []

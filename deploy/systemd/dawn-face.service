@@ -1,0 +1,29 @@
+[Unit]
+Description=Dawn face (Chromium kiosk under cage/Wayland)
+After=dawn-core.service systemd-user-sessions.service plymouth-quit-wait.service
+Wants=dawn-core.service
+Conflicts=getty@tty1.service
+StartLimitIntervalSec=0
+
+[Service]
+User=dawn
+Group=dawn
+SupplementaryGroups=video render input tty
+PAMName=login
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+StandardInput=tty-fail
+StandardOutput=journal
+StandardError=journal
+UtmpIdentifier=tty1
+Environment=XDG_RUNTIME_DIR=/run/user/@UID@
+Environment=XDG_SESSION_TYPE=wayland
+Environment=DAWN_FACE_URL=http://127.0.0.1:8080/face
+ExecStart=/usr/local/bin/dawn-face
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical.target

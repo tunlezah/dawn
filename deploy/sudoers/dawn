@@ -1,0 +1,9 @@
+# Dawn: the dawn service user may run exactly these privileged actions.
+Cmnd_Alias DAWN_SERVICES = /usr/bin/systemctl restart dawn-dab, /usr/bin/systemctl restart dawn-dab.service, \
+    /usr/bin/systemctl restart dawn-face, /usr/bin/systemctl restart dawn-face.service, \
+    /usr/bin/systemctl restart dawn-timed, /usr/bin/systemctl restart shairport-sync, \
+    /usr/bin/systemctl try-restart shairport-sync.service, /usr/bin/systemctl is-active *
+Cmnd_Alias DAWN_POWER = /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot
+Cmnd_Alias DAWN_TOOLS = /usr/local/bin/dawn-update, /usr/local/bin/dawn-airplay-name *, /usr/local/bin/dawn-set-hostname *
+dawn ALL=(root) NOPASSWD: DAWN_SERVICES, DAWN_POWER, DAWN_TOOLS
+Defaults:dawn !requiretty

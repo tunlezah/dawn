@@ -33,3 +33,6 @@ def include_phase_routers(app: FastAPI) -> None:
                 continue
             raise
         app.include_router(mod.router)
+        extra = getattr(mod, "wifi_router", None)
+        if extra is not None:
+            app.include_router(extra)

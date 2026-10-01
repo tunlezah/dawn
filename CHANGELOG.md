@@ -6,6 +6,12 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Added
+- Phase 9: `deploy/install.sh` (board/panel detection, apt packages, rtl-sdr-blog
+  + welle.io + shairport-sync/nqptp builds, config.txt overlays, user/groups,
+  venv, web build, data partition/image with data=journal, optional read-only
+  root), systemd units with watchdogs, cage/Chromium kiosk, sudoers/polkit/
+  udev/logrotate/avahi, setup hotspot with QR, Wi-Fi management, hostname,
+  backup/restore JSON, git-based software update.
 - Phase 8: AirPlay 2 (shairport-sync metadata pipe parser, title/artist/artwork
   on the face, sender pause/resume over D-Bus, stream mute) and Bluetooth (BlueZ
   D-Bus backend with just-works agent, pairing/unpairing from the web UI,

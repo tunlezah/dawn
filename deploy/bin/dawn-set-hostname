@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Set the system hostname (and /etc/hosts) so <name>.local follows the Dawn config. Called via sudo.
+set -euo pipefail
+name="$(echo "${1:-dawn}" | tr -cd 'a-zA-Z0-9-' | cut -c1-63)"
+[ -n "$name" ] || exit 1
+old="$(hostname)"
+hostnamectl set-hostname "$name"
+sed -i -E "s/^(127\.0\.1\.1\s+).*/\1$name/" /etc/hosts
+grep -qE "^127\.0\.1\.1\s" /etc/hosts || echo "127.0.1.1	$name" >>/etc/hosts
+systemctl restart avahi-daemon 2>/dev/null || true
+echo "hostname $old -> $name"
