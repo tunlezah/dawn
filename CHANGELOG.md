@@ -3,9 +3,15 @@
 All notable changes to Dawn are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## [Unreleased]
+## [0.1.0] - 2026-10-02
+
+First complete build: all ten phases of the Dawn specification.
 
 ### Added
+- Phase 10: Playwright smoke tests for the face and the control UI against the
+  simulator, GitHub Actions CI (pytest, ruff, web build, e2e), full README with
+  wiring table, first-boot steps and troubleshooting, acceptance checklist with
+  verification steps, `scripts/simctl.sh`.
 - Phase 9: `deploy/install.sh` (board/panel detection, apt packages, rtl-sdr-blog
   + welle.io + shairport-sync/nqptp builds, config.txt overlays, user/groups,
   venv, web build, data partition/image with data=journal, optional read-only

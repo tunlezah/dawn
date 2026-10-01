@@ -247,3 +247,16 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Backups are one JSON document** (config + alarms, presets, DAB scan results,
   KV settings, minus auth secrets). Restore replaces the tables and the config
   atomically enough for a bedside clock and republishes state.
+
+## Testing
+
+- **Unit tests target the pure cores** (scheduler, arbiter, brightness maths,
+  parsers) and the engine with injected time, so they run in seconds without
+  hardware or a clock. Everything hardware-facing is behind a backend interface
+  with a sim implementation driven by the hub.
+- **Playwright smoke tests run against the simulator stack**, not against mocks,
+  and drive the same hub toggles a developer uses (lux, GPS, SDR). They check the
+  behaviours a bedside user sees: time on the face, snooze by tapping, stop by
+  button, night palette, DAB now-playing, alarm/timer/radio/settings pages.
+- **Screenshots are generated, not hand-made** (`web/scripts/screenshots.mjs`)
+  so the renders in `docs/screenshots/` stay in step with the UI.

@@ -2,11 +2,12 @@
 // Usage: node scripts/screenshots.mjs [baseUrl=http://127.0.0.1:8080] [hubUrl=http://127.0.0.1:8099]
 import { chromium } from '@playwright/test';
 import { mkdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const base = process.argv[2] || process.env.DAWN_URL || 'http://127.0.0.1:8080';
 const hub = process.argv[3] || process.env.DAWN_HUB || 'http://127.0.0.1:8099';
-const out = resolve(process.cwd(), '..', 'docs', 'screenshots');
+const out = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'screenshots');
 mkdirSync(out, { recursive: true });
 
 const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
@@ -32,10 +33,11 @@ async function control(name, path, viewport = { width: 390, height: 844 }, setup
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: 1, isMobile: viewport.width < 600, hasTouch: viewport.width < 600 });
   const page = await ctx.newPage();
   await page.goto(`${base}${path}`, { waitUntil: 'networkidle' });
+  if (viewport.width < 600) await page.addStyleTag({ content: 'nav{display:none !important}' });
   if (setup) await setup(page);
   await sleep(settle);
   const file = `${out}/control-${name}.png`;
-  await page.screenshot({ path: file, fullPage: true });
+  await page.screenshot({ path: file, fullPage: viewport.width < 600 });
   shots.push(file);
   await ctx.close();
 }
@@ -62,6 +64,22 @@ await post(`${base}/api/timers/nap`, { minutes: 20 });
 await sleep(1200);
 await face('nap-countdown');
 await del(`${base}/api/timers/nap`);
+
+await post(`${hub}/airplay/start`, { title: 'Sunrise', artist: 'Norah Jones', album: 'Come Away With Me' });
+await sleep(1800);
+await face('airplay');
+await post(`${hub}/airplay/stop`);
+await sleep(800);
+
+await post(`${base}/api/face/touch`);
+await sleep(600);
+await face('menu');
+await post(`${base}/api/face/menu`, { open: false });
+
+await post(`${base}/api/face/demo`, { mode: 'lightwake' });
+await sleep(600);
+await face('lightwake');
+await post(`${base}/api/face/demo`, { mode: null });
 
 await post(`${hub}/set`, { lux: 0.5 });
 await sleep(3500);
