@@ -80,6 +80,8 @@ class DawnContext:
         st.settings.auth_required = bool(c.web.auth.pin)
         st.display.layout = c.display.layout
         st.display.show_seconds = c.display.show_seconds
+        st.display.ambient_after_s = c.display.ambient_after_s
+        st.display.scene = c.display.scene
         st.timers.sleep_choices = list(c.timers.sleep_choices_min)
         st.timers.nap_choices = list(c.timers.nap_choices_min)
         lat, lon, src = self.position()

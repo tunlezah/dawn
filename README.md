@@ -4,15 +4,27 @@ A bedside DAB+ alarm clock radio for Raspberry Pi: a 4.3" touch face, DAB+ via a
 RTL-SDR, AirPlay 2 and Bluetooth, GPS/DAB/NTP-disciplined time, ambient-light
 brightness, and a mobile control UI at `http://dawn.local/`.
 
-![face standby](docs/screenshots/face-standby.png)
+![face board: AirPlay, DAB, presets, ambient clock](docs/screenshots/face-board.png)
 
 | Face states | Control UI |
 |---|---|
-| ![playing](docs/screenshots/face-playing.png) | ![home](docs/screenshots/control-home.png) |
-| ![ringing](docs/screenshots/face-ringing.png) | ![radio](docs/screenshots/control-radio.png) |
-| ![night](docs/screenshots/face-night-standby.png) | ![alarms](docs/screenshots/control-alarms.png) |
+| ![standby](docs/screenshots/face-standby.png) | ![home](docs/screenshots/control-home.png) |
+| ![DAB playing](docs/screenshots/face-playing.png) | ![radio](docs/screenshots/control-radio.png) |
+| ![AirPlay](docs/screenshots/face-airplay.png) | ![alarms](docs/screenshots/control-alarms.png) |
+| ![ringing](docs/screenshots/face-ringing.png) | ![display](docs/screenshots/control-display.png) |
+| ![night](docs/screenshots/face-night-standby.png) | ![audio](docs/screenshots/control-audio.png) |
 
-More renders in [`docs/screenshots/`](docs/screenshots/).
+![standby scenes across the day, weather and seasons](docs/screenshots/face-scenes.png)
+
+More renders in [`docs/screenshots/`](docs/screenshots/). The face is one small design
+system: the clock always sits top-right, a status line top-left says which mode is active
+and whether audio is flowing, the middle is a 40/60 artwork/identity split, and a
+persistent control bar runs along the bottom. Left alone while playing, the face becomes
+an ambient clock with a now-playing strip (`display.ambient_after_s`); a tap brings the
+player back. Standby sits on a soft procedural scene (sky, sun or moon, stars, clouds,
+rain or snow, hills and trees) drawn from the current time relative to sunrise and sunset,
+the weather feed and the season; it switches off in the night palette and can be disabled
+with `display.scene`.
 
 ## Contents
 
@@ -105,7 +117,8 @@ Never ambiguous; snooze and stop are never on the same control.
 | Encoder rotate | volume (steps of 2, overlay 1.5 s) | volume | volume |
 | Encoder push | **snooze** | next preset | first preset |
 | Encoder hold | — | nap-timer picker | nap-timer picker |
-| Touch anywhere | **snooze** | menu (presets, nap, sleep, brightness) | menu |
+| Control bar (touch) | — | ◀◀ ❚❚ ▶▶ for AirPlay/Bluetooth, ◀ ☆ ▶ (preset prev / star / next) for radio, − 🔊 + | — |
+| Touch anywhere else | **snooze** | menu (presets, nap, sleep, brightness); from the ambient clock: back to the player | menu |
 
 ## Laptop simulator
 

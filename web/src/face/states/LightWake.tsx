@@ -7,8 +7,8 @@ export function LightWake() {
   const now = useNow();
   const t = fmtTime(now, s.tz, s.settings.clock_24h);
   return (
-    <div className="lightwake flex items-end justify-end p-[4vmin] fade-in">
-      <div className="text-[6vmin] font-medium tnum" style={{ color: '#c8c8c8' }}>{t.hm}</div>
+    <div className="lightwake flex items-end justify-end p-[4.2vmin] fade-in">
+      <div className="face-time f-clock" style={{ color: '#c8c8c8' }}>{t.hm}</div>
     </div>
   );
 }

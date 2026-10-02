@@ -214,8 +214,11 @@ def create_app() -> FastAPI:
             _item("core", "minm", body.get("title", "Golden Hour").encode()),
             _item("core", "asar", body.get("artist", "Kacey Musgraves").encode()),
             _item("core", "asal", body.get("album", "Golden Hour").encode()),
+            _item("core", "astm", int(body.get("duration_s", 224) * 1000).to_bytes(4, "big")),
             _item("ssnc", "mden"),
             _item("ssnc", "PICT", _artwork_png()),
+            # progress: start/current/end RTP frames at 44.1 kHz (defaults to 1:42 into a 3:44 track)
+            _item("ssnc", "prgr", f"{1_000_000}/{1_000_000 + int(body.get('position_s', 102) * 44100)}/{1_000_000 + int(body.get('duration_s', 224) * 44100)}".encode()),
             _item("ssnc", "pvol", b"-20.0,-144,0,-20"),
         ):
             await STATE.airplay_queue.put(chunk)

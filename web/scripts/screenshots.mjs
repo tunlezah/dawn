@@ -1,7 +1,7 @@
 // Render the face and control UI to PNGs in docs/screenshots using Playwright.
 // Usage: node scripts/screenshots.mjs [baseUrl=http://127.0.0.1:8080] [hubUrl=http://127.0.0.1:8099]
 import { chromium } from '@playwright/test';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -10,17 +10,20 @@ const hub = process.argv[3] || process.env.DAWN_HUB || 'http://127.0.0.1:8099';
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'screenshots');
 mkdirSync(out, { recursive: true });
 
-const post = (url, body) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
+const json = (method, url, body) => fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
+const post = (url, body) => json('POST', url, body);
+const put = (url, body) => json('PUT', url, body);
 const del = (url) => fetch(url, { method: 'DELETE' }).catch(() => {});
+const config = (patch) => json('PATCH', `${base}/api/config`, patch);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const browser = await chromium.launch();
 const shots = [];
 
-async function face(name, setup, settle = 1200) {
+async function face(name, setup, settle = 1200, query = '') {
   const ctx = await browser.newContext({ viewport: { width: 800, height: 480 }, deviceScaleFactor: 1 });
   const page = await ctx.newPage();
-  await page.goto(`${base}/face`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}/face${query}`, { waitUntil: 'networkidle' });
   if (setup) await setup(page);
   await sleep(settle);
   const file = `${out}/face-${name}.png`;
@@ -42,9 +45,31 @@ async function control(name, path, viewport = { width: 390, height: 844 }, setup
   await ctx.close();
 }
 
-// Baseline sim state
-await post(`${hub}/set`, { lux: 150, gps_fix: true, dab_sync: true, sdr_present: true, network_online: true });
+// Board of face renders (README hero). Pure HTML on a blank page so no extra tooling is needed.
+async function board(name, files, cols = 2) {
+  const rows = Math.ceil(files.length / cols);
+  const ctx = await browser.newContext({ viewport: { width: cols * 820 + 20, height: rows * 500 + 20 }, deviceScaleFactor: 1 });
+  const page = await ctx.newPage();
+  const tiles = files.map((f) => `<img src="data:image/png;base64,${readFileSync(f).toString('base64')}" style="width:800px;height:480px;border-radius:18px;border:1px solid #1d2230;display:block">`).join('');
+  await page.setContent(`<body style="margin:0;background:#05070a;display:grid;grid-template-columns:repeat(${cols}, 800px);gap:20px;padding:20px">${tiles}</body>`);
+  await sleep(500);
+  const file = `${out}/face-${name}.png`;
+  await page.screenshot({ path: file });
+  shots.push(file);
+  await ctx.close();
+}
+
+// Baseline sim state: sensors live, full brightness (the sim's software dimmer would grey the renders), standby.
+await post(`${hub}/set`, { lux: 150, gps_fix: true, dab_sync: true, sdr_present: true, network_online: true, audio_flowing: true });
+await put(`${base}/api/display/mode`, { mode: 'manual' });
+await put(`${base}/api/display/brightness`, { value: 100 });
+await put(`${base}/api/audio/volume`, { volume: 43 });
 await post(`${base}/api/audio/standby`);
+// a couple of presets so the star and the presets page have content
+const presets = await (await fetch(`${base}/api/presets`)).json().catch(() => []);
+for (const [label, source] of [['triple j', 'dab:1002'], ['Double J', 'dab:1005'], ['ABC Radio Sydney', 'dab:1001']]) {
+  if (!presets.some((p) => p.source === source)) await post(`${base}/api/presets`, { label, source });
+}
 await sleep(800);
 
 await face('standby');
@@ -53,6 +78,19 @@ await face('standby');
 await post(`${base}/api/audio/play`, { source: 'dab:1002' });
 await sleep(2500);
 await face('playing');
+
+await config({ display: { ambient_after_s: 2 } });
+await sleep(600);
+await face('ambient-playing', null, 3500);
+await config({ display: { ambient_after_s: 20 } });
+
+await post(`${base}/api/face/touch`);
+await sleep(600);
+await face('menu');
+await post(`${base}/api/face/menu`, { open: true, page: 'presets' });
+await sleep(500);
+await face('presets');
+await post(`${base}/api/face/menu`, { open: false });
 await post(`${base}/api/audio/standby`);
 
 await post(`${base}/api/alarms/test`, { source: 'chime:gentle_bell', label: 'Weekday' });
@@ -71,11 +109,6 @@ await face('airplay');
 await post(`${hub}/airplay/stop`);
 await sleep(800);
 
-await post(`${base}/api/face/touch`);
-await sleep(600);
-await face('menu');
-await post(`${base}/api/face/menu`, { open: false });
-
 await post(`${base}/api/face/demo`, { mode: 'lightwake' });
 await sleep(600);
 await face('lightwake');
@@ -91,11 +124,32 @@ await sleep(800);
 await face('setup');
 await post(`${base}/api/face/demo`, { mode: null });
 
-await fetch(`${base}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { layout: 'round' } }) }).catch(() => {});
+await config({ display: { layout: 'round' } });
 await sleep(2500);
 await face('round-standby');
-await fetch(`${base}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { layout: 'rect' } }) }).catch(() => {});
+await post(`${base}/api/audio/play`, { source: 'dab:1002' });
+await sleep(2000);
+await face('round-playing');
+await post(`${base}/api/audio/standby`);
+await config({ display: { layout: 'rect' } });
 
+await board('board', ['airplay', 'playing', 'presets', 'standby'].map((n) => `${out}/face-${n}.png`));
+
+// Scenic standby across the day, weather and seasons, via the face's demo query (?at=&weather=&temp=).
+const SCENES = [
+  ['dawn', '2026-04-14T06:30:00+10:00', 'clear-day', 12], ['morning', '2026-04-14T10:24:00+10:00', 'clear-day', 18],
+  ['afternoon', '2026-04-14T14:17:00+10:00', 'partly-day', 22], ['dusk', '2026-04-14T17:52:00+10:00', 'clear-day', 20],
+  ['evening', '2026-04-14T19:36:00+10:00', 'cloudy', 16], ['night', '2026-04-14T22:10:00+10:00', 'clear-night', 12],
+  ['winter', '2026-07-15T07:28:00+10:00', 'snow', -1], ['rain', '2026-04-16T08:15:00+10:00', 'rain', 11],
+  ['fog', '2026-04-16T11:50:00+10:00', 'fog', 15], ['autumn', '2026-04-16T15:32:00+10:00', 'clear-day', 19],
+  ['spring', '2026-10-16T18:09:00+11:00', 'partly-day', 17], ['summer', '2026-01-20T13:23:00+11:00', 'clear-day', 29],
+];
+for (const [name, at, weather, temp] of SCENES) {
+  await face(`scene-${name}`, null, 900, `?at=${encodeURIComponent(at)}&weather=${weather}&temp=${temp}&tmin=${temp - 5}&tmax=${temp + 4}`);
+}
+await board('scenes', SCENES.map(([n]) => `${out}/face-scene-${n}.png`), 3);
+
+await put(`${base}/api/display/mode`, { mode: 'auto' });
 for (const [name, path] of [['home', '/'], ['alarms', '/alarms'], ['radio', '/radio'], ['timers', '/timers'], ['display', '/display'], ['audio', '/audio'], ['status', '/status'], ['settings', '/settings'], ['about', '/about']]) {
   await control(name, path);
 }

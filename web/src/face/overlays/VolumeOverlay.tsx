@@ -1,5 +1,6 @@
 import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
+import { IconMuted, IconVolume } from '../components/icons';
 
 export function VolumeOverlay() {
   const s = useState();
@@ -13,12 +14,13 @@ export function VolumeOverlay() {
     return () => clearTimeout(id);
   }, [until, s.audio.volume]);
   if (!visible) return null;
+  const v = s.audio.volume;
   return (
     <div className="face-overlay fade-in">
-      <div className="card px-[5vmin] py-[3vmin] flex flex-col items-center gap-[2vmin] bg-elev/95">
-        <div className="text-[4vmin] text-muted">{s.audio.muted ? 'Muted' : 'Volume'}</div>
-        <div className="text-[10vmin] font-semibold tnum leading-none">{s.audio.muted ? '—' : s.audio.volume}</div>
-        <div className="vol-bar"><div style={{ width: `${s.audio.muted ? 0 : s.audio.volume}%` }} /></div>
+      <div className="f-panel px-[6vmin] py-[3.6vmin] flex flex-col items-center gap-[2vmin]">
+        <div className="f-mode flex items-center gap-[2vmin]">{s.audio.muted ? <IconMuted /> : <IconVolume level={v === 0 ? 0 : v < 50 ? 1 : 2} />}{s.audio.muted ? 'Muted' : 'Volume'}</div>
+        <div className="face-time f-ambient-clock compact" style={{ fontSize: '16vmin' }}>{s.audio.muted ? '—' : v}</div>
+        <div className="vol-bar"><div style={{ width: `${s.audio.muted ? 0 : v}%` }} /></div>
       </div>
     </div>
   );

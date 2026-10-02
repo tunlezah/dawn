@@ -57,6 +57,8 @@ class DisplayState(BaseModel):
     sunset: str | None = None
     schedule_night: bool = False
     show_seconds: bool = False
+    ambient_after_s: int = 20  # playing face -> ambient clock after this many idle seconds (0 = never)
+    scene: bool = True  # scenic ambient background
 
 
 class SinkInfo(BaseModel):
@@ -111,6 +113,9 @@ class NowPlaying(BaseModel):
     bitrate: int | None = None
     url: str | None = None
     started_at: str | None = None
+    position_s: float | None = None  # track progress (AirPlay) sampled at position_at
+    duration_s: float | None = None
+    position_at: str | None = None  # ISO time of the sample; None while paused
 
 
 class AlarmSummary(BaseModel):

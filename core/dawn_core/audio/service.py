@@ -273,7 +273,8 @@ class AudioService(Service):
             out.append(Preset(id=r.id or 0, label=r.label, source=r.source, logo_url=logo, position=r.position))
         return out
 
-    async def play_next_preset(self) -> Preset | None:
+    async def play_next_preset(self, step: int = 1) -> Preset | None:
+        """Cycle presets (step=+1 next, -1 previous). From standby, replays the last one (or the first)."""
         presets = self.presets()
         if not presets:
             return None
@@ -283,7 +284,7 @@ class AudioService(Service):
         if active is None or active.state not in ("playing", "ducked", "starting"):
             nxt = presets[idx if idx >= 0 else 0]
         else:
-            nxt = presets[(idx + 1) % len(presets)]
+            nxt = presets[(idx + step) % len(presets)]
         await self.play(nxt.source)
         return nxt
 

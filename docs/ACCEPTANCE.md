@@ -44,6 +44,13 @@ http://localhost:8099/.
     AirPlay resumes; AirPlay stop → Bluetooth resumes. `test_arbiter.py` and `test_airplay_meta.py`.
   - device: pair the Android phone from *Audio → Bluetooth → Pair new device*; choose "Dawn" in the
     iPhone AirPlay menu.
+- [x] **The face control bar works by touch: ◀◀ ❚❚ ▶▶ control the phone, ◀ ☆ ▶ cycle and star
+  presets, − 🔊 + change volume; left alone for `display.ambient_after_s` the player gives way to
+  the ambient clock and a tap brings it back.**
+  - sim: Playwright `face.spec.ts` "playing: the control bar stars the station…" and "AirPlay:
+    artwork, device, progress and transport; idle switches to the ambient clock".
+  - device: tap the star while a station plays → it appears under *Radio → Presets*; pause from
+    the bar → the phone pauses; wait 20 s → ambient clock with the track in the strip.
 
 - [x] **Face reaches standby within 40 s of power-on with no network.**
   - design: `dawn-core` starts every service independently (failures are logged, not fatal), the
