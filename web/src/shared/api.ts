@@ -58,5 +58,6 @@ export const actions = {
   brightness: (value: number) => api.put('/api/display/brightness', { value }),
   brightnessMode: (mode: 'auto' | 'manual') => api.put('/api/display/mode', { mode }),
   faceMenu: (open: boolean, page?: string) => api.post('/api/face/menu', { open, page: page ?? null }),
+  menuActivity: () => api.post('/api/face/menu/activity'),
   dismissMessage: () => api.post('/api/face/dismiss'),
 };

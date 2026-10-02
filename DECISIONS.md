@@ -68,6 +68,20 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Touch is routed through core** (`POST /api/face/touch`): the face never
   decides what a touch means. The controller applies the same rules to GPIO,
   the simulator and the API.
+- **The encoder and big button are optional; touch is the baseline.** The menu
+  sheet carries their jobs: a volume slider, and a Standby tile that sends the
+  button's own `button_down` / `button_up` events, so a tap is the short press
+  and a 3 s hold is the identical shutdown countdown (one controller, one set
+  of semantics, whether or not the button is wired). Two exceptions live in the
+  face because they are gestures, not semantics: hold 2 s while ringing = stop
+  (tap = snooze, so the two stay on different gestures), and the sheet's
+  keep-alive (`POST /api/face/menu/activity`) that re-arms the auto-close
+  timer while a finger is on the slider or a tile. The GPIO inputs stay
+  supported and auto-detected; nothing in core changed shape for them.
+- **Volume is on demand, not always on.** The control bar lost its − 🔊 + cell;
+  the slider appears with the sheet (a tap anywhere) and the overlay is
+  suppressed while the sheet is up so the two never show the same number
+  twice. The ambient strip keeps its read-only level.
 
 ## DAB+
 

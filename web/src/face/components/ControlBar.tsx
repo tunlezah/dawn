@@ -3,6 +3,8 @@ import { actions } from '../../shared/api';
 import { useState } from '../../shared/store';
 import { IconMinus, IconMuted, IconNext, IconPause, IconPlay, IconPlus, IconPrev, IconStar, IconVolume } from './icons';
 
+// VolumeCell keeps its − / + variant for anyone who wants the old always-on cell back in the bar.
+
 const stop = (e: PointerEvent) => e.stopPropagation();
 const run = (p: Promise<unknown>) => p.catch(() => {});
 
@@ -21,7 +23,8 @@ export function VolumeCell({ readOnly = false }: { readOnly?: boolean }) {
   );
 }
 
-/** Persistent bottom control bar while playing. Transport for phones, preset/star for radio; volume on the right. */
+/** Persistent bottom control bar while playing. Transport for phones, preset/star for radio.
+ *  Volume is not here on purpose: it pops up with the menu sheet (a tap anywhere) instead of being always on. */
 export function ControlBar() {
   const s = useState();
   const np = s.now_playing;
@@ -55,8 +58,6 @@ export function ControlBar() {
   return (
     <div className="f-bar" onPointerDown={stop}>
       {transport}
-      <div className="vsep" />
-      <VolumeCell />
     </div>
   );
 }

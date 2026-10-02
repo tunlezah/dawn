@@ -6,6 +6,17 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Touch-only operation: the encoder and big button are now optional. The face
+  menu is a bottom sheet over the player (the clock and what is playing stay
+  visible) with Presets · Nap · Sleep · Brightness · Standby and a volume
+  slider; from standby the Standby tile reads *Radio on* and plays the first
+  preset. The Standby tile sends the button's own down/up events, so a tap is
+  the short press and a 3 s hold is the same shutdown countdown. While ringing,
+  hold the screen 2 s to stop (a tap still snoozes). A tap outside the sheet
+  closes it; a finger on the slider or a tile holds it open past the auto-close
+  timeout (`POST /api/face/menu/activity`). The control bar no longer carries
+  − 🔊 +: volume pops up with the sheet instead of being always on, and the
+  volume overlay is suppressed while the sheet is open.
 - Face redesign as one coherent design system (800×480 first, vmin-scaled):
   a fixed header slot (mode + live dot + DAB signal bars left, clock right), a
   40/60 artwork/identity layout, three explicit levels of type (primary near-

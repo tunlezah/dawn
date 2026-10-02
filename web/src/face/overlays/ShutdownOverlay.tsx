@@ -4,7 +4,7 @@ export function ShutdownOverlay({ seconds }: { seconds: number }) {
       <div className="text-center">
         <div className="f-sub">Shutting down in</div>
         <div className="face-time f-ambient-clock tnum">{seconds}</div>
-        <div className="f-tiny mt-[2vmin]">release the button to cancel</div>
+        <div className="f-tiny mt-[2vmin]">release to cancel</div>
       </div>
     </div>
   );

@@ -39,6 +39,7 @@ export const IconBack = (p: P) => <S {...p}><path d="M14.5 6l-6 6 6 6" /></S>;
 export const IconPlus = (p: P) => <S {...p}><path d="M12 5v14M5 12h14" /></S>;
 export const IconMinus = (p: P) => <S {...p}><path d="M5 12h14" /></S>;
 export const IconWifiOff = (p: P) => <S {...p}><path d="M2 8.5a15 15 0 0 1 20 0M5.5 12a10 10 0 0 1 13 0M9 15.5a5 5 0 0 1 6 0" /><circle cx="12" cy="19" r="1" fill="currentColor" /><path d="M3 3l18 18" /></S>;
+export const IconPower = (p: P) => <S {...p}><path d="M12 3v8" /><path d="M6.8 6.6a7.5 7.5 0 1 0 10.4 0" /></S>;
 export const IconLight = (p: P) => <S {...p}><path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z" /></S>;
 
 // Four-bar signal meter; `percent` 0..100 lights 0..4 bars.
