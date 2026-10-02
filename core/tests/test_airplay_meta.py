@@ -41,3 +41,28 @@ def test_track_state_machine() -> None:
 def test_artwork_mime() -> None:
     assert artwork_mime(b"\x89PNG\r\n\x1a\nxxx") == "image/png"
     assert artwork_mime(b"nope") == "application/octet-stream"
+
+
+def test_progress_from_prgr_and_astm() -> None:
+    p = MetadataParser()
+    t = AirPlayTrack()
+    raw = item("ssnc", "pbeg") + item("core", "minm", b"Sunrise") + item("core", "astm", (224_000).to_bytes(4, "big"))
+    raw += item("ssnc", "prgr", b"1000000/5498200/10878400")
+    for it in p.feed(raw):
+        t.apply(it)
+    assert t.duration_s == 224.0
+    assert t.position_s is not None and abs(t.position_s - 102.0) < 0.01
+    assert t.position_at is not None and t.position_now() >= 102.0
+    # pause freezes, resume continues, new title clears, end clears
+    for it in p.feed(item("ssnc", "pfls")):
+        t.apply(it)
+    assert t.position_at is None and t.position_now() == t.position_s
+    for it in p.feed(item("ssnc", "prsm")):
+        t.apply(it)
+    assert t.position_at is not None
+    for it in p.feed(item("core", "minm", b"Next song")):
+        t.apply(it)
+    assert t.position_s is None and t.duration_s is None
+    for it in p.feed(item("ssnc", "prgr", b"bad")):
+        t.apply(it)
+    assert t.position_s is None

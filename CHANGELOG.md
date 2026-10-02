@@ -3,6 +3,38 @@
 All notable changes to Dawn are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+- Face redesign as one coherent design system (800×480 first, vmin-scaled):
+  a fixed header slot (mode + live dot + DAB signal bars left, clock right), a
+  40/60 artwork/identity layout, three explicit levels of type (primary near-
+  white, secondary muted blue-grey, tertiary faint), barely-raised cards with a
+  ~20 px radius and hairline dividers, and a persistent bottom control bar.
+  AirPlay/Bluetooth get ◀◀ ❚❚ ▶▶, radio gets previous preset / ☆ star / next
+  preset; both get − volume +. The DAB screen shows ensemble, programme type,
+  codec/bitrate, DLS and a technical line (channel, Band III frequency,
+  ensemble). Standby is an ambient clock with date, place + weather, next alarm
+  and a status strip (time sources or now playing · alarm · volume). Menu tiles
+  use SVG icons instead of emoji. Round layout restyled to match.
+- Face screenshots are rendered at full brightness (the sim's HDMI software
+  dimmer no longer greys the docs renders); new renders for AirPlay, ambient,
+  presets and the round player, plus a 2×2 board for the README.
+
+### Added
+- `display.ambient_after_s` (default 20, 0 = never): while playing, the face
+  becomes the ambient clock with a now-playing strip after this many seconds
+  without a touch; a touch or a new track brings the player back. Editable in
+  *Display → Face*.
+- AirPlay track progress: the shairport-sync `prgr` (RTP start/current/end)
+  and `astm` (duration) metadata items are parsed into `now_playing.position_s`
+  / `duration_s` / `position_at`; the face extrapolates while playing and
+  freezes on pause. The sim phone emits them too.
+- `POST /api/presets/prev` (previous preset) alongside `/next`; the face's star
+  button adds/removes the current station as a preset.
+- Playwright coverage for the control bar (star, next preset, volume), AirPlay
+  progress/transport and the ambient idle switch.
+
 ## [0.1.0] - 2026-10-02
 
 First complete build: all ten phases of the Dawn specification.

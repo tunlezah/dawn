@@ -168,3 +168,9 @@ async def delete_preset(pid: int, ctx: DawnContext = Depends(get_ctx)) -> dict[s
 async def next_preset(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
     p = await ctx.svc(AudioService).play_next_preset()
     return {"preset": p.model_dump() if p else None}
+
+
+@router.post("/presets/prev")
+async def prev_preset(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
+    p = await ctx.svc(AudioService).play_next_preset(step=-1)
+    return {"preset": p.model_dump() if p else None}

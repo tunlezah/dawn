@@ -6,7 +6,7 @@ import { fmtShort } from '../../shared/time';
 
 interface Pt { lux: number; brightness: number }
 interface DisplayCfg {
-  layout: 'rect' | 'round'; theme: 'dark' | 'light'; low_cpu: string; show_seconds: boolean; clock_24h: boolean;
+  layout: 'rect' | 'round'; theme: 'dark' | 'light'; low_cpu: string; show_seconds: boolean; clock_24h: boolean; ambient_after_s: number;
   brightness: { curve: Pt[]; hysteresis_percent: number; slew_s: number; night_lux_threshold: number; night_hysteresis_lux: number; post_sunset_cap_percent: number; post_sunset_cap_minutes: number; sunset_night_palette: boolean; manual_override_until: string; manual_percent: number };
 }
 
@@ -93,6 +93,7 @@ export function Display() {
           <Row label="Theme (day)"><select value={cfg.theme} onChange={(e) => patch({ theme: e.target.value })} className="w-36"><option value="dark">Dark</option><option value="light">Light</option></select></Row>
           <Row label="24-hour clock"><Switch on={cfg.clock_24h} onChange={(v) => patch({ clock_24h: v })} /></Row>
           <Row label="Show seconds"><Switch on={cfg.show_seconds} onChange={(v) => patch({ show_seconds: v })} /></Row>
+          <Row label="Ambient clock while playing" hint="seconds without a touch before the player gives way to the clock · 0 = never"><input type="number" min={0} max={600} value={cfg.ambient_after_s} onChange={(e) => patch({ ambient_after_s: Number(e.target.value) })} className="w-24" /></Row>
           <Row label="Low-CPU animations" hint="auto = on for Zero 2 W / 3B+"><select value={cfg.low_cpu} onChange={(e) => patch({ low_cpu: e.target.value })} className="w-28"><option value="auto">auto</option><option value="on">on</option><option value="off">off</option></select></Row>
         </Card>
       )}

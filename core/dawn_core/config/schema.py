@@ -168,6 +168,7 @@ class DisplayConfig(StrictModel):
     low_cpu: Literal["auto", "on", "off"] = Field("auto", description="Reduce face animations (Zero 2 W / 3B+).")
     show_seconds: bool = False
     clock_24h: bool = True
+    ambient_after_s: int = Field(20, ge=0, le=600, description="While playing, show the ambient clock after this many seconds without a touch (0 = never).")
     backlight: BacklightConfig = BacklightConfig()
     lux_sensor: LuxSensorConfig = LuxSensorConfig()
     brightness: BrightnessConfig = BrightnessConfig()

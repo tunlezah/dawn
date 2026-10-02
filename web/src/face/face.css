@@ -1,35 +1,166 @@
-/* Face-specific layout. 800x480 primary; scales with vmin so HyperPixel (800x480) and HDMI panels work. */
-.face-root { position: fixed; inset: 0; display: grid; place-items: stretch; background: var(--bg); color: var(--fg); overflow: hidden; }
-.face-screen { position: absolute; inset: 0; display: flex; flex-direction: column; padding: 4.5vmin 6vmin; box-sizing: border-box; }
-.face-time { font-weight: 600; letter-spacing: -0.03em; line-height: 0.9; font-variant-numeric: tabular-nums; }
-.face-time.huge { font-size: 36vmin; }
-.face-time.big { font-size: 30vmin; }
-.face-time.small { font-size: 9vmin; }
-.face-date { font-size: 5.2vmin; color: var(--fg-muted); font-weight: 500; }
-.face-chip { display: inline-flex; align-items: center; gap: 1.6vmin; font-size: 4vmin; color: var(--fg-muted); background: var(--bg-elev); border: 1px solid var(--border); border-radius: 999px; padding: 1.4vmin 3vmin; white-space: nowrap; }
-.face-dots { display: flex; gap: 3vmin; font-size: 3.4vmin; color: var(--fg-muted); align-items: center; }
-.face-dots .dot { width: 2.2vmin; height: 2.2vmin; }
-.face-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; }
-.face-dim { position: absolute; inset: 0; background: #000; pointer-events: none; transition: opacity 400ms linear; }
-.face-menu { position: absolute; inset: 0; background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(6px); display: flex; flex-direction: column; padding: 4vmin 6vmin; gap: 3vmin; }
-.face-menu .tile { background: var(--bg-elev); border: 1px solid var(--border); border-radius: 3vmin; padding: 3vmin; font-size: 4.4vmin; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1.5vmin; min-height: 18vmin; }
-.face-menu .tile:active { background: var(--bg-elev-2); }
+/* Face design system. 800x480 primary; everything scales with vmin (1vmin = 4.8 px on the 4.3" panel)
+   so the HyperPixel (800x480) and HDMI panels render the same composition.
+
+   Three levels of information, applied on every screen:
+     primary   .f-clock .f-title .f-ambient-clock      bold, near-white
+     secondary .f-sub .f-date .f-eyebrow               muted blue-grey
+     tertiary  .f-meta .f-tiny                         faint, small
+   Cards are barely lighter than the background, dividers are hairlines, radius ~20 px. */
+
+.face-root {
+  position: fixed; inset: 0; display: grid; place-items: stretch; background: var(--bg); color: var(--fg); overflow: hidden;
+  --f-card: color-mix(in srgb, var(--fg) 4.5%, var(--bg));
+  --f-card-2: color-mix(in srgb, var(--fg) 8%, var(--bg));
+  --f-border: color-mix(in srgb, var(--fg) 9%, transparent);
+  --f-divider: color-mix(in srgb, var(--fg) 12%, transparent);
+  --f-live: var(--ok);
+  --f-radius: 4.2vmin;
+  --f-pad-x: 6vmin;
+  --f-pad-y: 4.2vmin;
+}
 .face-canvas { position: absolute; inset: 0; overflow: hidden; }
-/* Round display variant: a circular canvas centred on the panel; everything else is hidden/black. */
-.round .face-canvas { inset: auto; width: 100vmin; height: 100vmin; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--bg); }
-.round .face-root { background: #000; }
-.round .face-screen { padding: 7vmin 13vmin 9vmin; align-items: center; text-align: center; }
-.round .face-time.huge, .round .face-time.big { font-size: 25vmin; }
-.round .face-date { font-size: 4.6vmin; }
-.round .face-screen > .flex.items-start.justify-between { flex-direction: column; align-items: center; justify-content: flex-start; gap: 1.5vmin; }
-.round .face-screen > .flex.items-start.justify-between .face-dots { font-size: 3vmin; }
-.round .face-screen > .flex.items-start.justify-between .face-dots .dot { width: 1.8vmin; height: 1.8vmin; }
-.round .face-screen > .flex-1 { justify-content: flex-start; padding-top: 1vmin; }
-.round .face-screen > .flex.items-end.justify-between { justify-content: center; gap: 2vmin; flex-wrap: wrap; }
-.round .face-menu { border-radius: 50%; padding: 12vmin 14vmin; }
-.round .face-menu .grid { grid-template-columns: repeat(2, 1fr); }
-.vol-bar { width: 60vmin; height: 2.4vmin; border-radius: 999px; background: var(--bg-elev-2); overflow: hidden; }
-.vol-bar > div { height: 100%; background: var(--accent); transition: width 120ms linear; }
+.face-screen { position: absolute; inset: 0; display: flex; flex-direction: column; padding: var(--f-pad-y) var(--f-pad-x); box-sizing: border-box; gap: 2.5vmin; }
+
+/* ---- type scale ---------------------------------------------------------- */
+.face-time, .f-clock, .f-ambient-clock { font-variant-numeric: tabular-nums; letter-spacing: -0.035em; line-height: 0.9; }
+.f-clock { font-size: 11vmin; font-weight: 700; }
+.f-ambient-clock { font-size: 34vmin; font-weight: 800; letter-spacing: -0.045em; }
+.f-title { font-size: 10vmin; font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; }
+.f-title.xl { font-size: 13.5vmin; letter-spacing: -0.035em; line-height: 0.95; }
+.f-sub { font-size: 5.4vmin; font-weight: 500; color: var(--fg-muted); line-height: 1.2; }
+.f-date { font-size: 5.6vmin; font-weight: 500; color: var(--fg); opacity: 0.9; }
+.f-eyebrow { font-size: 3.5vmin; font-weight: 600; letter-spacing: 0.22em; text-transform: uppercase; color: var(--fg-muted); }
+.f-mode { font-size: 3.3vmin; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--fg-muted); }
+.f-meta { font-size: 3.7vmin; font-weight: 500; color: var(--fg-muted); line-height: 1.3; }
+.f-tiny { font-size: 3.1vmin; font-weight: 500; color: var(--fg-faint); letter-spacing: 0.02em; }
+.f-dls { font-size: 4.3vmin; font-weight: 500; color: var(--fg); opacity: 0.85; line-height: 1.3; }
+.f-sep::before { content: '•'; margin: 0 1.6vmin; color: var(--fg-faint); }
+.f-hr { height: 1px; background: var(--f-divider); border: 0; margin: 0; }
+.f-icon { width: 1em; height: 1em; display: inline-block; flex: none; }
+
+/* ---- header: same slot on every screen ---------------------------------- */
+.f-header { display: flex; align-items: center; justify-content: space-between; min-height: 11vmin; }
+.f-status { display: flex; align-items: center; gap: 2.4vmin; min-width: 0; }
+.f-status .f-icon { width: 4.4vmin; height: 4.4vmin; color: var(--fg); }
+.f-status .pct { font-size: 3.5vmin; color: var(--fg-muted); font-variant-numeric: tabular-nums; font-weight: 500; }
+.dot.dot-live { width: 2.6vmin; height: 2.6vmin; background: var(--f-live); box-shadow: 0 0 8px var(--f-live); }
+.face-dots { display: flex; gap: 2.4vmin; font-size: 3.3vmin; color: var(--fg-muted); align-items: center; letter-spacing: 0.08em; font-weight: 600; }
+.face-dots .dot { width: 2.2vmin; height: 2.2vmin; }
+
+/* ---- content -------------------------------------------------------------- */
+.f-body { flex: 1; display: flex; align-items: center; gap: 6vmin; min-height: 0; }
+.f-art { width: 44vmin; height: 44vmin; border-radius: var(--f-radius); object-fit: contain; background: var(--f-card); border: 1px solid var(--f-border); flex: none; box-shadow: 0 2vmin 6vmin rgba(0, 0, 0, 0.35); }
+.f-art.placeholder { display: grid; place-items: center; color: var(--fg-faint); }
+.f-art.placeholder .f-icon { width: 14vmin; height: 14vmin; }
+.f-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1.4vmin; }
+.f-device { display: flex; align-items: center; gap: 2vmin; color: var(--fg-muted); font-size: 4.2vmin; font-weight: 500; }
+.f-device .f-icon { width: 5vmin; height: 5vmin; }
+.f-progress { height: 1.2vmin; border-radius: 999px; background: var(--f-card-2); overflow: hidden; margin-top: 2.4vmin; }
+.f-progress > div { height: 100%; background: var(--f-live); border-radius: 999px; transition: width 900ms linear; }
+.f-progress.paused > div { background: var(--fg-faint); }
+.f-times { display: flex; justify-content: space-between; margin-top: 1.2vmin; }
+.truncate-2 { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.f-marquee-wrap { overflow: hidden; white-space: nowrap; }
+
+/* ---- control bar / status strip ------------------------------------------ */
+.f-bar { display: flex; align-items: stretch; height: 15vmin; background: var(--f-card); border: 1px solid var(--f-border); border-radius: var(--f-radius); overflow: hidden; flex: none; }
+.f-bar .cell { display: flex; align-items: center; justify-content: center; gap: 2.2vmin; flex: 1 1 0; min-width: 0; padding: 0 2vmin; }
+.f-bar .cell.grow { flex: 2.2 1 0; }
+.f-bar .vsep { width: 1px; background: var(--f-divider); margin: 3.2vmin 0; flex: none; }
+.f-bar button { appearance: none; background: transparent; border: 0; color: var(--fg); display: flex; align-items: center; justify-content: center; gap: 2.2vmin; flex: 1 1 0; min-width: 16vmin; height: 100%; padding: 0; cursor: inherit; font: inherit; }
+.f-bar button:active, .f-bar button.pressed { background: var(--f-card-2); }
+.f-bar button .f-icon { width: 7vmin; height: 7vmin; }
+.f-bar button.primary .f-icon { width: 8.2vmin; height: 8.2vmin; }
+.f-bar button.narrow { flex: 0 0 14vmin; min-width: 14vmin; color: var(--fg-muted); }
+.f-bar button.narrow .f-icon { width: 5vmin; height: 5vmin; }
+.f-bar .starred { color: var(--accent); }
+.f-bar .vol { font-size: 5.4vmin; font-weight: 600; font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 2.4vmin; }
+.f-bar .vol .f-icon { width: 6.2vmin; height: 6.2vmin; }
+.f-bar .cell .label { display: flex; flex-direction: column; gap: 0.8vmin; min-width: 0; }
+.f-bar .cell .label .top { font-size: 3.6vmin; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg); }
+.f-bar .cell .label .bottom { font-size: 3.3vmin; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.f-bar .cell > .f-icon { width: 6vmin; height: 6vmin; color: var(--fg-muted); }
+.f-bar .cell .dot { flex: none; }
+
+/* ---- ambient clock (standby, idle while playing) ------------------------- */
+.f-ambient { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 6vmin var(--f-pad-x) var(--f-pad-y); box-sizing: border-box; text-align: center; gap: 0; }
+.f-horizon { position: absolute; inset: 0; pointer-events: none; z-index: 0;
+  background:
+    radial-gradient(70% 38% at 50% 92%, color-mix(in srgb, var(--accent) 22%, transparent) 0%, transparent 70%),
+    radial-gradient(60% 24% at 22% 100%, color-mix(in srgb, var(--fg) 5%, transparent) 0%, transparent 70%),
+    radial-gradient(60% 24% at 78% 100%, color-mix(in srgb, var(--fg) 5%, transparent) 0%, transparent 70%);
+}
+.low-cpu .f-horizon { display: none; }
+.f-ambient > * { position: relative; z-index: 1; }
+.f-ambient .f-ambient-clock { margin-top: 3vmin; }
+.f-ambient .f-date { margin-top: 2.6vmin; }
+.f-ambient .f-where { margin-top: 1.4vmin; display: flex; align-items: center; justify-content: center; gap: 0; font-size: 4.4vmin; color: var(--fg-muted); font-weight: 500; }
+.f-ambient .f-where .f-icon { width: 6vmin; height: 6vmin; margin-left: 2vmin; }
+.f-ambient .f-hr { width: 40vmin; margin: 2.8vmin auto 0; }
+.f-ambient .f-next { margin-top: 2.6vmin; display: flex; align-items: center; justify-content: center; gap: 2vmin; font-size: 4.2vmin; color: var(--fg); font-weight: 500; }
+.f-ambient .f-next .f-icon { width: 5.2vmin; height: 5.2vmin; color: var(--fg-muted); }
+.f-ambient .f-bar { margin-top: auto; width: 100%; }
+.f-ambient.compact .f-ambient-clock { font-size: 30vmin; }
+
+/* ---- overlays ------------------------------------------------------------- */
+.face-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 20; }
+.f-panel { background: color-mix(in srgb, var(--f-card-2) 92%, transparent); border: 1px solid var(--f-border); border-radius: var(--f-radius); backdrop-filter: blur(8px); box-shadow: 0 3vmin 9vmin rgba(0, 0, 0, 0.5); }
+.face-dim { position: absolute; inset: 0; background: #000; pointer-events: none; transition: opacity 400ms linear; z-index: 30; }
+.vol-bar { width: 60vmin; height: 1.6vmin; border-radius: 999px; background: var(--f-card-2); overflow: hidden; }
+.vol-bar > div { height: 100%; background: var(--f-live); transition: width 120ms linear; border-radius: 999px; }
 .lightwake { position: absolute; inset: 0; background: #fff; }
-.logo-tile { width: 30vmin; height: 30vmin; border-radius: 4vmin; object-fit: cover; background: var(--bg-elev); }
-.round .logo-tile { width: 22vmin; height: 22vmin; }
+
+/* ---- menu ----------------------------------------------------------------- */
+.face-menu { position: absolute; inset: 0; z-index: 10; background: color-mix(in srgb, var(--bg) 90%, transparent); backdrop-filter: blur(10px); display: flex; flex-direction: column; padding: var(--f-pad-y) var(--f-pad-x); gap: 3vmin; box-sizing: border-box; }
+.face-menu .f-header { min-height: 9vmin; }
+.face-menu .f-header .f-mode { color: var(--fg); font-size: 4vmin; letter-spacing: 0.1em; }
+.face-menu .tile { appearance: none; background: var(--f-card); border: 1px solid var(--f-border); color: var(--fg); border-radius: var(--f-radius); padding: 2vmin; font: inherit; font-size: 4.2vmin; font-weight: 500; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2vmin; min-height: 16vmin; cursor: inherit; }
+.face-menu .tile:active { background: var(--f-card-2); }
+.face-menu .tile .f-icon { width: 8vmin; height: 8vmin; color: var(--fg-muted); }
+.face-menu .tile .num { font-size: 9vmin; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; letter-spacing: -0.03em; }
+.face-menu .tile .num + span { color: var(--fg-muted); font-size: 3.6vmin; }
+.face-menu .tile.active { border-color: var(--accent); color: var(--accent); }
+.face-menu .tile.wide { flex-direction: row; min-height: 12vmin; max-height: 14vmin; }
+.face-menu .tile img { width: 9vmin; height: 9vmin; border-radius: 2vmin; object-fit: cover; }
+.face-chip { display: inline-flex; align-items: center; gap: 1.6vmin; font-size: 3.6vmin; font-weight: 600; color: var(--fg); background: var(--f-card); border: 1px solid var(--f-border); border-radius: 999px; padding: 1.4vmin 3.2vmin; white-space: nowrap; }
+.face-chip .f-icon { width: 4.2vmin; height: 4.2vmin; color: var(--fg-muted); }
+.face-chip.quiet { color: var(--fg-muted); }
+button.face-chip { appearance: none; font: inherit; font-size: 3.6vmin; font-weight: 600; cursor: inherit; }
+button.face-chip.active { color: var(--accent); border-color: var(--accent); }
+
+/* ---- ringing -------------------------------------------------------------- */
+.f-ring { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: var(--f-pad-y) var(--f-pad-x); box-sizing: border-box; }
+.f-ring .f-ambient-clock { color: var(--accent); }
+.f-ring .f-label { margin-top: 3.4vmin; font-size: 6.4vmin; font-weight: 600; }
+.f-ring .f-hint { margin-top: 2.2vmin; font-size: 4.2vmin; color: var(--fg-muted); font-weight: 500; }
+.f-ring .f-glow { position: absolute; inset: 0; pointer-events: none; background: radial-gradient(60% 45% at 50% 50%, color-mix(in srgb, var(--accent) 14%, transparent), transparent 70%); }
+
+/* ---- round display variant ------------------------------------------------ */
+.round .face-canvas { inset: auto; width: 100vmin; height: 100vmin; left: 50%; top: 50%; transform: translate(-50%, -50%); border-radius: 50%; background: var(--bg); }
+.round.face-root { background: #000; }
+.round .face-screen, .round .f-ambient, .round .f-ring { padding: 8vmin 12vmin 7vmin; }
+.round .f-header { flex-direction: column; gap: 0.6vmin; align-items: center; min-height: 0; }
+.round .f-clock { font-size: 9vmin; }
+.round .f-ambient-clock, .round .f-ambient.compact .f-ambient-clock { font-size: 24vmin; }
+.round .f-ambient .f-date { font-size: 4.6vmin; margin-top: 1.6vmin; }
+.round .f-ambient .f-where { font-size: 3.8vmin; }
+.round .f-ambient .f-where .f-tiny { display: none; }
+.round .f-ambient .f-hr { width: 24vmin; margin-top: 2vmin; }
+.round .f-ambient .f-next { font-size: 3.6vmin; margin-top: 1.8vmin; }
+.round .f-body { flex-direction: column; justify-content: center; gap: 2vmin; text-align: center; }
+.round .f-info { flex: 0 0 auto; align-items: center; gap: 0.8vmin; }
+.round .f-art { width: 22vmin; height: 22vmin; }
+.round .f-title { font-size: 7vmin; } .round .f-title.xl { font-size: 8.5vmin; }
+.round .f-sub { font-size: 4.2vmin; } .round .f-device { font-size: 3.6vmin; }
+.round .f-progress { width: 50vmin; margin-top: 1.4vmin; } .round .f-times { width: 50vmin; }
+.round .f-tiny, .round .f-eyebrow, .round .f-hr, .round .f-dls, .round .f-meta.truncate { display: none; }
+.round .f-bar { height: 12vmin; margin: 0 9vmin; }
+.round .f-bar button { min-width: 0; }
+.round .f-bar .vol { font-size: 4.6vmin; gap: 1.4vmin; }
+.round .f-bar .vol .f-icon { width: 5vmin; height: 5vmin; }
+.round .f-bar button.narrow, .round .f-bar .cell.grow + .vsep, .round .f-bar .cell.grow ~ .cell:not(:last-child), .round .f-bar .cell.grow ~ .cell:not(:last-child) + .vsep { display: none; }
+.round .f-bar .cell.grow .label .bottom { display: none; }
+.round .f-bar .cell .label .top { font-size: 3.2vmin; }
+.round .face-dots { font-size: 3vmin; gap: 1.8vmin; }
+.round .face-menu { border-radius: 50%; padding: 12vmin 14vmin; }
+.round .face-menu .grid-cols-4, .round .face-menu .grid-cols-3, .round .face-menu .grid-cols-5 { grid-template-columns: repeat(2, 1fr); }

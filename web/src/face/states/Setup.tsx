@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react';
 import QRCode from 'qrcode';
 import { useState } from '../../shared/store';
-import { fmtTime, useNow } from '../../shared/time';
+import { FaceHeader } from '../components/Header';
+import { IconWifiOff } from '../components/icons';
 
 export function Setup() {
   const s = useState();
-  const now = useNow();
-  const t = fmtTime(now, s.tz, s.settings.clock_24h);
   const ref = useRef<HTMLCanvasElement>(null);
   const setup = s.face.setup;
   useEffect(() => {
@@ -14,13 +13,14 @@ export function Setup() {
   }, [setup?.qr_payload]);
   return (
     <div className="face-screen fade-in">
-      <div className="flex items-center justify-between"><div className="face-chip">No network</div><div className="face-time small tnum">{t.hm}</div></div>
-      <div className="flex-1 flex items-center gap-[6vmin]">
-        <canvas ref={ref} className="rounded-[2vmin] bg-white p-[1vmin]" />
-        <div>
-          <div className="text-[6vmin] font-semibold">Connect to set up</div>
-          <div className="text-[4vmin] text-muted mt-[2vmin]">Wi-Fi: <b className="text-fg">{setup?.ssid}</b>{setup?.password && <> · password <b className="text-fg">{setup.password}</b></>}</div>
-          <div className="text-[4vmin] text-muted mt-[1vmin]">then open <b className="text-fg">{setup?.url}</b></div>
+      <FaceHeader left={<span className="face-chip"><IconWifiOff />No network</span>} />
+      <div className="f-body">
+        <canvas ref={ref} className="rounded-[3vmin] bg-white p-[1.5vmin] flex-none" />
+        <div className="f-info">
+          <div className="f-title">Connect to set up</div>
+          <div className="f-sub">Wi-Fi <b className="text-fg">{setup?.ssid}</b></div>
+          {setup?.password && <div className="f-sub">Password <b className="text-fg">{setup.password}</b></div>}
+          <div className="f-sub mt-[1vmin]">then open <b className="text-fg">{setup?.url}</b></div>
         </div>
       </div>
     </div>

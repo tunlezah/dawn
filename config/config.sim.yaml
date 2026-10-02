@@ -45,6 +45,7 @@ display:
   low_cpu: auto
   show_seconds: false
   clock_24h: true
+  ambient_after_s: 20
   backlight:
     driver: sim
     sysfs_path: null

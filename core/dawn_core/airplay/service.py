@@ -54,9 +54,13 @@ class AirPlaySource(AudioSource):
 
     def now_playing(self) -> NowPlaying:
         t = self.svc.track
+        pos = t.position_now()
         return NowPlaying(
             source="airplay", title=t.title or "AirPlay", artist=t.artist, album=t.album, station=t.client,
             artwork_url=f"/api/airplay/artwork?v={t.artwork_version}" if t.artwork else None,
+            position_s=round(pos, 1) if pos is not None else None,
+            duration_s=round(t.duration_s, 1) if t.duration_s else None,
+            position_at=_now() if pos is not None and t.playing else None,
         )
 
 

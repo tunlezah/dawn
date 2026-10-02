@@ -118,6 +118,38 @@ each section. Every entry says what was decided and why, so it can be revisited.
   `move`) instead of restarting the stream; cancelling demotes it back and keeps
   playing. Nothing playing: the last-played source starts at the sleep level.
 
+## Face design system
+
+- **One header slot on every screen.** The clock is always top-right at the same
+  size; the top-left status line answers "which mode, is audio flowing, how good
+  is the signal" (`● DAB ▂▅▇ 72%`, `● AIRPLAY`). Fixed positions across states
+  are what make the face read as an appliance rather than a media player.
+- **Three levels of information, not more graphics.** Primary (clock, track or
+  station name) is bold near-white; secondary (artist, ensemble, device) is the
+  muted blue-grey; tertiary (frequency, bitrate, elapsed time) is faint and
+  small. Components only ever pick from these three (`.f-title/.f-clock`,
+  `.f-sub/.f-eyebrow`, `.f-meta/.f-tiny` in `face.css`).
+- **Cards are derived, not painted.** Card, border and divider colours are
+  `color-mix()` of the palette foreground over the background, so the night
+  (amber-on-black) and light palettes get matching surfaces for free.
+- **The bottom of the screen is the control surface.** A persistent 72 px bar
+  with large targets: transport for phones (shairport `RemoteControl` / BlueZ
+  `MediaPlayer1`), preset prev / star / next for radio, − volume + for both.
+  Buttons stop pointer propagation; a touch anywhere else still opens the menu
+  via core, so the input semantics table is unchanged.
+- **Idle while playing = ambient clock.** After `display.ambient_after_s`
+  without a touch the face shows the standby clock with a now-playing strip.
+  This is purely a face-side timer (a touch or a new track resets it); core's
+  face mode stays `playing`, so alarms, timers and the arbiter are unaffected.
+- **AirPlay progress comes from the metadata pipe**, not from guessing: `prgr`
+  carries start/current/end RTP timestamps at 44.1 kHz, `astm` the duration.
+  Core stores the sample and its wall-clock time; the face extrapolates while
+  `airplay.playing` and freezes on pause, so no polling is needed.
+- **DAB slides are shown whole** (`object-fit: contain` on the card) because
+  MOT slides are 320×240 and cropping loses the text broadcasters put on them.
+- **Docs screenshots are taken at 100 % brightness.** The sim's HDMI overlay
+  dimmer is part of the product, but a greyed render misrepresents the design.
+
 ## Display and brightness
 
 - **The brightness maths is pure** (`display/curve.py`): piecewise-linear
