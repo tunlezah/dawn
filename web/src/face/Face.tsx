@@ -34,13 +34,15 @@ export function Face() {
     return () => clearInterval(id);
   }, [s.face.mode, after, s.face.menu_open]);
 
-  // Whole-screen touch: snooze while ringing, leave ambient, otherwise tell core (it opens the menu / wakes the face).
+  // Whole-screen touch: ringing handles its own tap/hold, leave ambient, close the open sheet,
+  // otherwise tell core (it opens the menu / wakes the face).
   const onPointerDown = () => {
     lastTouch.current = Date.now();
-    if (s.face.mode === 'ringing') actions.snooze().catch(() => {});
-    else if (ambient) setAmbient(false);
+    if (s.face.mode === 'ringing') return;
+    if (ambient) setAmbient(false);
     else if (s.face.mode === 'message' || s.face.mode === 'lightwake') actions.dismissMessage().catch(() => {});
-    else if (!s.face.menu_open) actions.touch().catch(() => {});
+    else if (s.face.menu_open) actions.faceMenu(false).catch(() => {});
+    else actions.touch().catch(() => {});
   };
 
   let screen;

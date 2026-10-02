@@ -6,6 +6,11 @@ Encoder     rotate: volume; push while ringing: snooze; push otherwise: next pre
             hold: nap-timer picker on the face
 Touch       ringing: snooze (whole screen); otherwise: face menu
 Snooze and stop are never on the same control.
+
+The encoder and button are optional. The face's menu sheet carries the same jobs by touch:
+a volume slider, and a Standby tile that sends button_down / button_up so a tap is the
+button's short press and a 3 s hold is the same shutdown countdown. While ringing the face
+holds 2 s to stop (tap = snooze), so snooze and stop stay on different gestures.
 """
 
 from __future__ import annotations

@@ -126,6 +126,16 @@ class FaceService(Service):
             self._menu_opened_at = self.ctx.store.now()
         self.ctx.store.touch()
 
+    def menu_activity(self) -> bool:
+        """Re-arm the menu auto-close timer: the face reports a finger on the sheet (a drag on the
+        volume slider, a tap on a tile) so the menu never closes under someone's hand."""
+        f = self.ctx.store.state.face
+        if not f.menu_open:
+            return False
+        self._menu_opened_at = self.ctx.store.now()
+        self.wake()
+        return True
+
     def toast(self, title: str, body: str = "", level: str = "info", seconds: int | None = 8) -> None:
         until = (self.ctx.store.now() + timedelta(seconds=seconds)).isoformat(timespec="seconds") if seconds else None
         self.ctx.store.state.face.message = FaceMessage(title=title, body=body, level=level, until=until)  # type: ignore[arg-type]

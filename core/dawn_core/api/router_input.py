@@ -51,6 +51,12 @@ async def face_menu(body: MenuBody, ctx: DawnContext = Depends(get_ctx)) -> dict
     return {"ok": True}
 
 
+@router.post("/face/menu/activity")
+async def face_menu_activity(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
+    """A finger is on the open menu (slider drag, tile press): hold the auto-close timer."""
+    return {"ok": True, "open": ctx.svc(FaceService).menu_activity()}
+
+
 @router.post("/face/dismiss")
 async def face_dismiss(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
     face = ctx.svc(FaceService)

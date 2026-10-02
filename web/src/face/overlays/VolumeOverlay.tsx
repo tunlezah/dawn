@@ -13,7 +13,7 @@ export function VolumeOverlay() {
     const id = setTimeout(() => setVisible(false), left);
     return () => clearTimeout(id);
   }, [until, s.audio.volume]);
-  if (!visible) return null;
+  if (!visible || s.face.menu_open) return null;
   const v = s.audio.volume;
   return (
     <div className="face-overlay fade-in">

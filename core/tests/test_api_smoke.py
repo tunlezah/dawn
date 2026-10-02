@@ -35,3 +35,22 @@ async def test_config_schema_and_patch(client: AsyncClient) -> None:
     assert r.status_code == 422
     r = await client.get("/api/state")
     assert r.json()["settings"]["name"] == "Test Clock"
+
+
+async def test_menu_activity_holds_the_sheet_open(client: AsyncClient) -> None:
+    """A finger on the sheet (slider drag, tile press) re-arms the auto-close timer; a closed menu is left closed."""
+    from dawn_core.face.service import FaceService
+
+    app = client._transport.app  # type: ignore[attr-defined]
+    face = app.state.ctx.svc(FaceService)
+    r = await client.post("/api/face/menu/activity")
+    assert r.status_code == 200 and r.json()["open"] is False
+    r = await client.post("/api/face/menu", json={"open": True, "page": None})
+    assert r.status_code == 200
+    armed = face._menu_opened_at
+    assert armed is not None
+    r = await client.post("/api/face/menu/activity")
+    assert r.status_code == 200 and r.json()["open"] is True
+    assert face._menu_opened_at is not None and face._menu_opened_at >= armed
+    s = (await client.get("/api/state")).json()
+    assert s["face"]["menu_open"] is True and s["face"]["wake_until"] is not None

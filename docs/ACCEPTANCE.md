@@ -5,13 +5,14 @@ the on-device procedure. "sim" steps use `scripts/simctl.sh start` and the hub a
 http://localhost:8099/.
 
 - [x] **Weekday alarm set to a DAB+ station rings at 06:30, ramps 10%→70% over 60 s,
-  skips a NSW public holiday, snoozes on screen tap, stops on the big button.**
+  skips a NSW public holiday, snoozes on screen tap, stops on a 2 s hold (or the big button).**
   - sim/tests: `core/tests/test_scheduler.py` (weekday/holiday/DST), `test_alarm_engine.py`
     (`test_holiday_skipped_in_engine`: Labour Day NSW 2026-10-05 is skipped, Tuesday fires),
     `test_snooze_and_stop_restore_volume`; ramp verified live (volume 10 → 36 → 60 over a 4 s test ramp);
-    Playwright `face.spec.ts` "ringing: whole screen snoozes, button stops".
+    Playwright `face.spec.ts` "ringing: a tap snoozes, the button stops" and "ringing: holding the
+    screen for 2 s stops without snoozing".
   - device: create the alarm in *Alarms* with source = station, volume 70, ramp 60, *Skip public
-    holidays* (NSW). Use *Test ring* to hear the ramp; tap the screen (snooze), press the button (stop).
+    holidays* (NSW). Use *Test ring* to hear the ramp; tap the screen (snooze), hold it 2 s (stop).
 
 - [x] **Unplug the SDR: the same alarm rings the chime within 15 s of the trigger.**
   - sim: hub *SDR plugged → off*, then *Alarms → test ring* on the DAB alarm: the chime starts
@@ -45,10 +46,13 @@ http://localhost:8099/.
   - device: pair the Android phone from *Audio → Bluetooth → Pair new device*; choose "Dawn" in the
     iPhone AirPlay menu.
 - [x] **The face control bar works by touch: ◀◀ ❚❚ ▶▶ control the phone, ◀ ☆ ▶ cycle and star
-  presets, − 🔊 + change volume; left alone for `display.ambient_after_s` the player gives way to
-  the ambient clock and a tap brings it back.**
-  - sim: Playwright `face.spec.ts` "playing: the control bar stars the station…" and "AirPlay:
-    artwork, device, progress and transport; idle switches to the ambient clock".
+  presets; a tap opens the menu sheet with the volume slider and the Standby tile (hold 3 s to
+  shut down); left alone for `display.ambient_after_s` the player gives way to the ambient
+  clock and a tap brings it back.**
+  - sim: Playwright `face.spec.ts` "playing: the control bar stars the station…", "menu sheet:
+    the slider sets the volume and the Standby tile is the big button", "menu sheet: holding
+    Standby shows the shutdown countdown…" and "AirPlay: artwork, device, progress and
+    transport; idle switches to the ambient clock".
   - device: tap the star while a station plays → it appears under *Radio → Presets*; pause from
     the bar → the phone pauses; wait 20 s → ambient clock with the track in the strip.
 

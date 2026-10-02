@@ -11,10 +11,14 @@ test('standby shows the time, date and status dots', async ({ page }) => {
   await expect(page.locator('.face-dots')).toContainText('DAB');
 });
 
-test('tapping the face opens the menu and the nap picker starts a countdown', async ({ page }) => {
+test('tapping the face opens the menu sheet and the nap picker starts a countdown', async ({ page }) => {
   await page.goto('/face');
   await page.locator('.face-root').tap();
   await expect(page.locator('.face-menu')).toBeVisible();
+  // the sheet leaves the clock visible above it and carries the volume slider and the power tile
+  await expect(page.locator('.f-ambient .f-ambient-clock')).toBeVisible();
+  await expect(page.locator('#face-volume')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Radio on' })).toBeVisible();
   await page.locator('.face-menu .tile', { hasText: 'Nap' }).first().tap();
   await page.locator('.face-menu .tile', { hasText: 'min' }).first().tap();
   await waitFor((s) => s.timers.nap !== null);
@@ -22,7 +26,7 @@ test('tapping the face opens the menu and the nap picker starts a countdown', as
   await expect(page.locator('.face-chip', { hasText: 'Nap' })).toBeVisible();
 });
 
-test('ringing: whole screen snoozes, button stops', async ({ page }) => {
+test('ringing: a tap snoozes, the button stops', async ({ page }) => {
   await page.goto('/face');
   await post('/api/alarms/test', { source: 'chime:gentle_bell', label: 'E2E alarm', volume: 40 });
   await waitFor((s) => s.face.mode === 'ringing');
@@ -36,6 +40,70 @@ test('ringing: whole screen snoozes, button stops', async ({ page }) => {
   await waitFor((x) => x.alarms.ringing === null && x.face.mode === 'standby');
 });
 
+test('ringing: holding the screen for 2 s stops without snoozing', async ({ page }) => {
+  await page.goto('/face');
+  await post('/api/alarms/test', { source: 'chime:gentle_bell', label: 'E2E hold', volume: 40 });
+  await waitFor((s) => s.face.mode === 'ringing');
+  const box = (await page.locator('.f-ring').boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await expect(page.locator('.face-screen')).toContainText('Keep holding to stop');
+  await page.waitForTimeout(2300);
+  await page.mouse.up();
+  const s = await waitFor((x) => x.alarms.ringing === null && x.face.mode === 'standby');
+  expect(s.alarms.ringing).toBeNull();
+});
+
+test('menu sheet: the slider sets the volume and the Standby tile is the big button', async ({ page }) => {
+  // Radio on plays the first preset, so make sure there is one
+  const presets = await (await fetch(`${BASE}/api/presets`)).json();
+  if (presets.length === 0) await post('/api/presets', { label: 'triple j', source: 'dab:1002' });
+  await page.goto('/face');
+  await post('/api/dab/play', { sid: '1002' });
+  await waitFor((s) => s.face.mode === 'playing' && s.now_playing.station === 'triple j');
+  await page.locator('.f-info').tap();
+  await expect(page.locator('.face-menu')).toBeVisible();
+  // the player is still there above the sheet
+  await expect(page.locator('.f-title')).toContainText('triple j');
+  const slider = page.locator('#face-volume');
+  await slider.fill('65');
+  await waitFor((s) => s.audio.volume === 65);
+  await expect(page.locator('.f-rail .num')).toHaveText('65');
+  // the volume overlay never pops over the sheet
+  await expect(page.locator('.face-overlay')).toHaveCount(0);
+  // a finger on the sheet keeps it open past the timeout (sim config: 15 s is the default)
+  await post('/api/face/menu/activity');
+  // tap = the big button's short press: playing -> standby, and the sheet closes
+  await page.getByRole('button', { name: 'Standby' }).tap();
+  await waitFor((s) => s.face.mode === 'standby' && !s.face.menu_open);
+  // from standby the same tile reads Radio on and plays the first preset
+  await page.locator('.face-root').tap();
+  await page.getByRole('button', { name: 'Radio on' }).tap();
+  await waitFor((s) => s.face.mode === 'playing');
+  // a tap on the player outside the sheet closes it
+  await page.locator('.face-root').tap();
+  await waitFor((s) => s.face.menu_open);
+  await page.locator('.f-info').tap();
+  await waitFor((s) => !s.face.menu_open);
+});
+
+test('menu sheet: holding Standby shows the shutdown countdown and releasing cancels it', async ({ page }) => {
+  await page.goto('/face');
+  await post('/api/dab/play', { sid: '1002' });
+  await waitFor((s) => s.face.mode === 'playing');
+  await page.locator('.f-info').tap();
+  const tile = page.getByRole('button', { name: 'Standby' });
+  const box = (await tile.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await waitFor((s) => s.face.shutdown_countdown !== null, 3000);
+  await expect(page.locator('.face-overlay')).toContainText('Shutting down in');
+  await page.mouse.up();
+  await waitFor((s) => s.face.shutdown_countdown === null);
+  // released during the countdown: cancelled, still playing
+  expect((await (await fetch(`${BASE}/api/state`)).json()).face.mode).toBe('playing');
+});
+
 test('night palette follows the light sensor', async ({ page }) => {
   await page.goto('/face');
   await hub({ lux: 0.5 });
@@ -46,7 +114,7 @@ test('night palette follows the light sensor', async ({ page }) => {
   await expect.poll(async () => page.evaluate(() => document.documentElement.dataset.palette)).toBe('dark');
 });
 
-test('DAB playback shows station, DLS and slide; volume overlay appears', async ({ page }) => {
+test('DAB playback shows station, DLS and slide; the encoder still pops the volume overlay', async ({ page }) => {
   await page.goto('/face');
   await post('/api/dab/play', { sid: '1002' });
   await waitFor((s) => s.face.mode === 'playing' && s.now_playing.station === 'triple j');
@@ -74,8 +142,8 @@ test('playing: the control bar stars the station as a preset and cycles presets'
   await page.getByRole('button', { name: 'Next preset' }).tap();
   await waitFor((s) => s.now_playing.station === 'Double J');
   await expect(page.locator('.f-title')).toContainText('Double J');
-  await page.getByRole('button', { name: 'Volume up' }).tap();
-  await expect(page.locator('.face-overlay')).toContainText('Volume');
+  // volume is not in the bar any more; it pops up with the menu sheet
+  await expect(page.getByRole('button', { name: 'Volume up' })).toHaveCount(0);
 });
 
 test('AirPlay: artwork, device, progress and transport; idle switches to the ambient clock', async ({ page }) => {

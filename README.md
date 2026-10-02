@@ -48,7 +48,7 @@ Primary build (all parts auto-detected at boot; every fallback is supported):
 | Display | Waveshare 4.3" DSI capacitive touch, 800×480, sysfs backlight | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
 | Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10 (0x48 jumper cut) | VEML7700, BH1750; none (sunrise/sunset schedule) |
 | Audio | USB DAC (UAC) → class-D amp | HiFiBerry MiniAmp (`dtoverlay=hifiberry-dac`); 3.5 mm jack; HDMI |
-| Inputs | KY-040 encoder + big arcade button (GPIO, `gpiozero` + `lgpio`) | touch only |
+| Inputs | touch (everything is on the screen) | optional KY-040 encoder + big arcade button (GPIO, `gpiozero` + `lgpio`), auto-detected |
 
 Sink priority at boot is USB DAC › HiFiBerry › headphone jack › HDMI; pin one in
 *Audio* (web UI) or `audio.pinned_sink` in the config.
@@ -108,17 +108,28 @@ BCM numbering. All pins are configurable in `/etc/dawn/config.yaml` (`inputs:`).
 
 ## Controls
 
-Never ambiguous; snooze and stop are never on the same control.
+Never ambiguous; snooze and stop are never on the same control. Touch does everything;
+the encoder and the big button are optional and keep their jobs when fitted.
 
 | Control | Ringing | Playing | Standby |
 |---|---|---|---|
+| Tap the screen | **snooze** | menu sheet; from the ambient clock: back to the player | menu sheet |
+| Hold the screen 2 s | **stop** | — | — |
+| Menu sheet | — | Presets · Nap · Sleep · Brightness · **Standby**, and a volume slider (mute on the speaker) | same, with **Radio on** (first preset) in place of Standby |
+| Standby tile, hold 3 s | — | safe shutdown with on-screen countdown (release to cancel) | same, on the Radio on tile |
+| Control bar | — | ◀◀ ❚❚ ▶▶ for AirPlay/Bluetooth, ◀ ☆ ▶ (preset prev / star / next) for radio | — |
 | Big button, short | **stop** | stop playback → standby | wake face to full for 20 s |
 | Big button, hold 3 s | safe shutdown with on-screen countdown (release to cancel) | | |
 | Encoder rotate | volume (steps of 2, overlay 1.5 s) | volume | volume |
 | Encoder push | **snooze** | next preset | first preset |
 | Encoder hold | — | nap-timer picker | nap-timer picker |
-| Control bar (touch) | — | ◀◀ ❚❚ ▶▶ for AirPlay/Bluetooth, ◀ ☆ ▶ (preset prev / star / next) for radio, − 🔊 + | — |
-| Touch anywhere else | **snooze** | menu (presets, nap, sleep, brightness); from the ambient clock: back to the player | menu |
+
+The menu is a sheet that slides up over the bottom of the screen; the clock and what is
+playing stay visible above it. It closes on a tap outside it or after
+`inputs.touch_menu_timeout_s` (15 s) without a touch; a finger on the slider or a tile holds
+it open. Volume only appears with the sheet rather than sitting in the control bar. The
+Standby tile *is* the big button: a tap is its short press and a hold is the same shutdown
+countdown, so a clock with the button fitted and one without behave the same.
 
 ## Laptop simulator
 
