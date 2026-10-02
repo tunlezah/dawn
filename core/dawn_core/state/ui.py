@@ -58,6 +58,7 @@ class DisplayState(BaseModel):
     schedule_night: bool = False
     show_seconds: bool = False
     ambient_after_s: int = 20  # playing face -> ambient clock after this many idle seconds (0 = never)
+    scene: bool = True  # scenic ambient background
 
 
 class SinkInfo(BaseModel):

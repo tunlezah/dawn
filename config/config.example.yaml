@@ -84,6 +84,8 @@ display:
   clock_24h: true
   # While playing, show the ambient clock after this many seconds without a touch (0 = never).
   ambient_after_s: 20
+  # Soft scenic background behind the ambient clock that follows time of day, weather and season (off in the night palette).
+  scene: true
   backlight:
     # auto picks sysfs (DSI) > HyperPixel PWM > software overlay (HDMI).
     driver: auto

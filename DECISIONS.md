@@ -147,6 +147,16 @@ each section. Every entry says what was decided and why, so it can be revisited.
   `airplay.playing` and freezes on pause, so no polling is needed.
 - **DAB slides are shown whole** (`object-fit: contain` on the card) because
   MOT slides are 320×240 and cropping loses the text broadcasters put on them.
+- **The standby scene is procedural, not photographic.** Photographs would need
+  licensing, storage on the Pi and one per time/weather/season combination;
+  an SVG composed from a few parameters (dayness and twilight from sunrise/
+  sunset, a weather kind from the icon, a season from month and hemisphere)
+  covers every combination for a few kilobytes, stays soft rather than busy,
+  and respects the low-CPU and night-palette modes. Colours are mixed in code
+  from four sky palettes and four hill palettes so the look stays coherent.
+- **Demo parameters live in the URL, not in core.** `?at=`, `?weather=` and
+  `?temp=` shift the face's clock and weather purely client-side, so design
+  review and screenshots never put fake state into the real store.
 - **Docs screenshots are taken at 100 % brightness.** The sim's HDMI overlay
   dimmer is part of the product, but a greyed render misrepresents the design.
 

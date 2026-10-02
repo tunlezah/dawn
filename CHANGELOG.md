@@ -22,6 +22,16 @@ All notable changes to Dawn are recorded here. The format follows
   presets and the round player, plus a 2×2 board for the README.
 
 ### Added
+- Scenic standby background (`display.scene`, default on): a procedural SVG
+  scene behind the ambient clock, composed from the time of day relative to the
+  weather feed's sunrise/sunset (night, dawn, day, dusk sky), the weather icon
+  (sun or moon and stars, soft clouds, fog, rain or snow) and the season for the
+  hemisphere (summer greens, autumn ochres, snowy winter with pines, spring
+  blossoms). A scrim keeps the clock legible; the status strip becomes glass.
+  Off in the night palette; precipitation animation and blur filters are
+  dropped in low-CPU mode. The face accepts `?at=…&weather=…&temp=…` demo
+  parameters so any moment can be rendered; the screenshot script uses them
+  for a 12-scene board.
 - `display.ambient_after_s` (default 20, 0 = never): while playing, the face
   becomes the ambient clock with a now-playing strip after this many seconds
   without a touch; a touch or a new track brings the player back. Editable in

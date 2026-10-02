@@ -14,12 +14,17 @@ brightness, and a mobile control UI at `http://dawn.local/`.
 | ![ringing](docs/screenshots/face-ringing.png) | ![display](docs/screenshots/control-display.png) |
 | ![night](docs/screenshots/face-night-standby.png) | ![audio](docs/screenshots/control-audio.png) |
 
+![standby scenes across the day, weather and seasons](docs/screenshots/face-scenes.png)
+
 More renders in [`docs/screenshots/`](docs/screenshots/). The face is one small design
 system: the clock always sits top-right, a status line top-left says which mode is active
 and whether audio is flowing, the middle is a 40/60 artwork/identity split, and a
 persistent control bar runs along the bottom. Left alone while playing, the face becomes
 an ambient clock with a now-playing strip (`display.ambient_after_s`); a tap brings the
-player back.
+player back. Standby sits on a soft procedural scene (sky, sun or moon, stars, clouds,
+rain or snow, hills and trees) drawn from the current time relative to sunrise and sunset,
+the weather feed and the season; it switches off in the night palette and can be disabled
+with `display.scene`.
 
 ## Contents
 

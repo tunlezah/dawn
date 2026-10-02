@@ -13,7 +13,7 @@ export interface DisplayState {
   brightness: number; target: number; mode: 'auto' | 'manual'; manual_until: string | null; night: boolean;
   palette: 'dark' | 'light' | 'night'; lux: number | null; sensor: string | null; sensor_found: boolean;
   layout: 'rect' | 'round'; low_cpu: boolean; overlay_dim: number; backlight_driver: string;
-  sunrise: string | null; sunset: string | null; schedule_night: boolean; show_seconds: boolean; ambient_after_s: number;
+  sunrise: string | null; sunset: string | null; schedule_night: boolean; show_seconds: boolean; ambient_after_s: number; scene: boolean;
 }
 export interface SinkInfo { id: string; name: string; description: string; kind: 'usb' | 'hifiberry' | 'headphones' | 'hdmi' | 'other'; active: boolean }
 export interface EqState { enabled: boolean; bass_db: number; treble_db: number }
@@ -84,7 +84,7 @@ export interface UIState {
 export const EMPTY_STATE: UIState = {
   version: 0, now: '', tz: 'Australia/Sydney',
   face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, shutdown_countdown: null, setup: null },
-  display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20 },
+  display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0 }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
   alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false },

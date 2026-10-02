@@ -4,6 +4,8 @@ import { WeatherIcon } from '../../shared/icons/weather';
 import { IconAlarm } from './icons';
 import { SOURCE_LABEL } from './Header';
 import { VolumeCell } from './ControlBar';
+import { Scene } from './Scene';
+import { DEMO_WEATHER } from '../../shared/demo';
 
 /** Ambient clock: standby, and the idle view while something plays. Huge clock, date, place + weather, next alarm,
  *  and a status strip along the bottom (what is playing / time sources, alarm, volume). */
@@ -11,16 +13,19 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   const s = useState();
   const now = useNow();
   const t = fmtTime(now, s.tz, s.settings.clock_24h);
-  const w = s.weather;
+  const w = DEMO_WEATHER ? { ...s.weather, available: true, stale: false, ...DEMO_WEATHER } : s.weather;
   const np = s.now_playing;
+  const scene = s.display.scene && s.display.palette !== 'night';
   const live = (k: string) => s.time_sources.sources.some((x) => x.kind === k && x.live);
   const playing = np.source !== 'none';
   const next = s.alarms.next;
   const flowing = s.audio.audio_flowing || s.airplay.playing || s.bluetooth.playing;
   const place = w.location_label || s.settings.name;
   return (
-    <div className={`f-ambient fade-in ${compact ? 'compact' : ''}`}>
-      <div className="f-horizon" />
+    <div className={`f-ambient fade-in ${compact ? 'compact' : ''} ${scene ? 'scenic' : ''}`}>
+      {scene
+        ? <Scene now={now} tz={s.tz} icon={w.available ? w.icon : null} temperature={w.available ? w.temperature : null} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} />
+        : <div className="f-horizon" />}
       <div className="face-time f-ambient-clock">
         {t.hm}
         {s.display.show_seconds && <span className="f-sub ml-[2vmin]" style={{ fontSize: '9vmin' }}>{t.sec}</span>}

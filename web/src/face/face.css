@@ -91,7 +91,25 @@
     radial-gradient(60% 24% at 78% 100%, color-mix(in srgb, var(--fg) 5%, transparent) 0%, transparent 70%);
 }
 .low-cpu .f-horizon { display: none; }
+/* scenic background (Scene.tsx): the SVG fills the panel; text gets a shadow and the strip becomes glass */
+.f-scene { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
+.f-ambient.scenic .f-ambient-clock, .f-ambient.scenic .f-date, .f-ambient.scenic .f-where, .f-ambient.scenic .f-next { text-shadow: 0 0.4vmin 2.4vmin rgba(0, 0, 0, 0.55), 0 0 1vmin rgba(0, 0, 0, 0.35); }
+.f-ambient.scenic .f-ambient-clock, .f-ambient.scenic .f-date, .f-ambient.scenic .f-next { color: #f4f6fa; }
+.f-ambient.scenic .f-where, .f-ambient.scenic .f-where .f-tiny, .f-ambient.scenic .f-next .f-meta { color: #d6dce6; }
+.f-ambient.scenic .f-where .f-tiny { opacity: 0.8; }
+.f-ambient.scenic .f-hr { background: rgba(255, 255, 255, 0.22); }
+.f-ambient.scenic .f-bar { background: rgba(6, 8, 14, 0.55); border-color: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
+.low-cpu .f-ambient.scenic .f-bar { backdrop-filter: none; background: rgba(6, 8, 14, 0.8); }
+.f-ambient.scenic .f-bar .label .top, .f-ambient.scenic .f-bar .vol { color: #f4f6fa; }
+.f-ambient.scenic .f-bar .label .bottom, .f-ambient.scenic .f-bar .cell > .f-icon, .f-ambient.scenic .face-dots { color: #b9c1cf; }
+.f-ambient.scenic .f-bar .vsep { background: rgba(255, 255, 255, 0.12); }
+@keyframes sc-fall { from { transform: translateY(-120px); } to { transform: translateY(0); } }
+@keyframes sc-drift { from { transform: translateY(-120px) translateX(0); } to { transform: translateY(0) translateX(18px); } }
+.f-scene .sc-rain { animation: sc-fall 0.9s linear infinite; }
+.f-scene .sc-snow { animation: sc-drift 5s linear infinite; }
+.f-scene.static .sc-rain, .f-scene.static .sc-snow { animation: none; }
 .f-ambient > * { position: relative; z-index: 1; }
+.f-ambient > .f-horizon, .f-ambient > .f-scene { position: absolute; z-index: 0; }
 .f-ambient .f-ambient-clock { margin-top: 3vmin; }
 .f-ambient .f-date { margin-top: 2.6vmin; }
 .f-ambient .f-where { margin-top: 1.4vmin; display: flex; align-items: center; justify-content: center; gap: 0; font-size: 4.4vmin; color: var(--fg-muted); font-weight: 500; }

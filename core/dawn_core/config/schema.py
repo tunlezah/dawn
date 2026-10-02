@@ -169,6 +169,7 @@ class DisplayConfig(StrictModel):
     show_seconds: bool = False
     clock_24h: bool = True
     ambient_after_s: int = Field(20, ge=0, le=600, description="While playing, show the ambient clock after this many seconds without a touch (0 = never).")
+    scene: bool = Field(True, description="Soft scenic background behind the ambient clock that follows time of day, weather and season (off in the night palette).")
     backlight: BacklightConfig = BacklightConfig()
     lux_sensor: LuxSensorConfig = LuxSensorConfig()
     brightness: BrightnessConfig = BrightnessConfig()

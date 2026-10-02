@@ -1,14 +1,18 @@
 // Clock helpers: tick every second, format in the device time zone.
 import { useEffect, useState } from 'react';
+import { DEMO_OFFSET_MS } from './demo';
+
+/** Current time, shifted by the `?at=` demo offset when one is set (screenshots). */
+export function nowDate(): Date { return new Date(Date.now() + DEMO_OFFSET_MS); }
 
 export function useNow(intervalMs = 1000): Date {
-  const [now, setNow] = useState(() => new Date());
+  const [now, setNow] = useState(() => nowDate());
   useEffect(() => {
     const align = intervalMs >= 1000 ? intervalMs - (Date.now() % intervalMs) : intervalMs;
     let id: number;
     const t = window.setTimeout(() => {
-      setNow(new Date());
-      id = window.setInterval(() => setNow(new Date()), intervalMs);
+      setNow(nowDate());
+      id = window.setInterval(() => setNow(nowDate()), intervalMs);
     }, align);
     return () => { clearTimeout(t); if (id) clearInterval(id); };
   }, [intervalMs]);
