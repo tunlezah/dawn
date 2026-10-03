@@ -1,0 +1,38 @@
+{
+ "today": {
+  "pixels_edge_ge_8h_pct": 6.67,
+  "pixels_edge_ge_16h_pct": 4.74,
+  "pixels_edge_ge_23h_pct": 3.795,
+  "max_edge_hours": 24.0,
+  "p99_lit_hours": 20.0,
+  "max_lit_hours": 20.0,
+  "night_light_vs_today_pct": 100.0
+ },
+ "orbit": {
+  "pixels_edge_ge_8h_pct": 5.17,
+  "pixels_edge_ge_16h_pct": 0.86,
+  "pixels_edge_ge_23h_pct": 0.001,
+  "max_edge_hours": 23.3,
+  "p99_lit_hours": 19.5,
+  "max_lit_hours": 20.0,
+  "night_light_vs_today_pct": 100.0
+ },
+ "orbit + strip auto-hide": {
+  "pixels_edge_ge_8h_pct": 3.84,
+  "pixels_edge_ge_16h_pct": 0.67,
+  "pixels_edge_ge_23h_pct": 0.001,
+  "max_edge_hours": 23.3,
+  "p99_lit_hours": 19.5,
+  "max_lit_hours": 20.0,
+  "night_light_vs_today_pct": 99.6
+ },
+ "recommended": {
+  "pixels_edge_ge_8h_pct": 2.34,
+  "pixels_edge_ge_16h_pct": 0.0,
+  "pixels_edge_ge_23h_pct": 0.0,
+  "max_edge_hours": 16.0,
+  "p99_lit_hours": 15.2,
+  "max_lit_hours": 16.0,
+  "night_light_vs_today_pct": 6.3
+ }
+}
