@@ -119,6 +119,23 @@ await sleep(3500);
 await face('night-standby');
 await post(`${hub}/set`, { lux: 150 });
 
+// sleep mode: the clock alone, with the next alarm and the weather icon under it. The sim's software dimmer
+// stands in for the backlight; it is hidden here so the render shows the pixels as the panel draws them.
+const shotAlarm = (await (await fetch(`${base}/api/alarms`)).json().catch(() => [])).some((a) => a.enabled)
+  ? null : await (await json('POST', `${base}/api/alarms`, { label: 'Weekday', time: '06:30', repeat: 'weekdays' }))?.json();
+await config({ display: { sleep: { enabled: true } } });
+await post(`${base}/api/display/sleep`, { on: true });
+await sleep(1500);
+const noDimmer = (page) => page.addStyleTag({ content: '.face-dim{display:none !important}' });
+await face('sleep', noDimmer, 1200);
+await config({ display: { layout: 'round' } });
+await sleep(1500);
+await face('round-sleep', noDimmer, 1200);
+await config({ display: { layout: 'rect' } });
+await post(`${base}/api/display/sleep`, { on: false });
+await config({ display: { sleep: { enabled: false } } });
+if (shotAlarm?.id) await del(`${base}/api/alarms/${shotAlarm.id}`);
+
 await post(`${base}/api/face/demo`, { mode: 'setup' });
 await sleep(800);
 await face('setup');
@@ -154,6 +171,21 @@ for (const [name, path] of [['home', '/'], ['alarms', '/alarms'], ['radio', '/ra
   await control(name, path);
 }
 await control('home-desktop', '/', { width: 1280, height: 800 });
+
+// Diagnostics: the overview on a phone, and the DAB, GPS and time tabs on a desktop, scrolled to their charts
+const scrollTo = (text) => async (page) => {
+  await page.waitForTimeout(3500);  // live readings and the first plots
+  await page.evaluate((t) => [...document.querySelectorAll('section')].find((x) => x.textContent?.includes(t))?.scrollIntoView({ block: 'start' }), text);
+};
+await post(`${base}/api/diag/run`);
+await control('diagnostics', '/diagnostics');
+await control('diagnostics-dab', '/diagnostics#dab', { width: 1280, height: 900 }, (page) => page.waitForTimeout(3500));
+await control('diagnostics-dab-plots', '/diagnostics#dab', { width: 1280, height: 1000 }, scrollTo('Signal plots'), 1500);
+await control('diagnostics-gps', '/diagnostics#gps', { width: 1280, height: 900 }, scrollTo('Where they are'), 1500);
+await control('diagnostics-time', '/diagnostics#time', { width: 1280, height: 1000 }, scrollTo('From each time source'), 1000);
+await config({ display: { sleep: { enabled: true } } });
+await control('display-sleep', '/display', { width: 1280, height: 1000 }, scrollTo('Sleep mode'), 1000);
+await config({ display: { sleep: { enabled: false } } });
 
 await browser.close();
 console.log(shots.map((s) => s.replace(out + '/', '')).join('\n'));

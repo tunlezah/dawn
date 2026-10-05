@@ -56,12 +56,17 @@ class NetworkService(Service):
     async def _probe(self) -> tuple[bool, str | None, str | None, str | None]:
         """(online, ip, ssid, interface)."""
         if self.ctx.sim:
-            try:
-                r = await self._hub.get(f"{self.ctx.config.sim.hub_url}/network")
-                j = r.json()
-                return bool(j.get("online")), j.get("ip"), j.get("ssid"), "wlan0" if j.get("online") else None
-            except Exception:  # noqa: BLE001
-                return False, None, None, None
+            # one retry: polling every 5 s races the hub's 5 s keep-alive, and a pooled connection closed under
+            # the request made the simulated network flap offline for a poll
+            for attempt in range(2):
+                try:
+                    r = await self._hub.get(f"{self.ctx.config.sim.hub_url}/network")
+                    j = r.json()
+                    return bool(j.get("online")), j.get("ip"), j.get("ssid"), "wlan0" if j.get("online") else None
+                except Exception:  # noqa: BLE001
+                    if attempt:
+                        return False, None, None, None
+            return False, None, None, None
         ip = _local_ip()
         online = await asyncio.to_thread(_tcp_reachable, self.ctx.config.network.online_check_host, 53, 2.0)
         ssid = iface = None

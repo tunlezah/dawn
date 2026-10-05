@@ -2,7 +2,7 @@
 
 A bedside DAB+ alarm clock radio for Raspberry Pi: a 4.3" touch face, DAB+ via an
 RTL-SDR, AirPlay 2 and Bluetooth, GPS/DAB/NTP-disciplined time, ambient-light
-brightness, and a mobile control UI at `http://dawn.local/`.
+brightness, and a mobile control UI at `http://dawn.local:8080/`.
 
 ![face board: AirPlay, DAB, presets, ambient clock](docs/screenshots/face-board.png)
 
@@ -13,6 +13,11 @@ brightness, and a mobile control UI at `http://dawn.local/`.
 | ![AirPlay](docs/screenshots/face-airplay.png) | ![alarms](docs/screenshots/control-alarms.png) |
 | ![ringing](docs/screenshots/face-ringing.png) | ![display](docs/screenshots/control-display.png) |
 | ![night](docs/screenshots/face-night-standby.png) | ![audio](docs/screenshots/control-audio.png) |
+| ![sleep mode](docs/screenshots/face-sleep.png) | ![diagnostics](docs/screenshots/control-diagnostics.png) |
+
+| Diagnostics: DAB radio | Diagnostics: time sync |
+|---|---|
+| ![DAB signal plots](docs/screenshots/control-diagnostics-dab-plots.png) | ![time chains](docs/screenshots/control-diagnostics-time.png) |
 
 ![standby scenes across the day, weather and seasons](docs/screenshots/face-scenes.png)
 
@@ -24,7 +29,11 @@ an ambient clock with a now-playing strip (`display.ambient_after_s`); a tap bri
 player back. Standby sits on a soft procedural scene (sky, sun or moon, stars, clouds,
 rain or snow, hills and trees) drawn from the current time relative to sunrise and sunset,
 the weather feed and the season; it switches off in the night palette and can be disabled
-with `display.scene`.
+with `display.scene`. At night the face goes into [sleep mode](#sleep-mode-and-burn-in): the
+clock alone, small and amber on black, moving every couple of minutes. Anything that can go
+wrong (DAB reception, GPS, each time source into chrony, network, audio, the Pi itself) is
+checked and explained on the control UI's [Diagnostics](#troubleshooting) page, with live
+readings, a week of history and one-tap fixes.
 
 ## Contents
 
@@ -129,8 +138,8 @@ SDR antenna lead: the SHIM's output is unfiltered ~300 kHz PWM.
    calibration matrix (`/etc/udev/rules.d/98-dawn-touch.rules`), then reboot.
 3. The face reaches standby within about 40 s. Without a network it starts a
    setup hotspot and shows its SSID, password and a Wi-Fi QR code; join it and
-   open `http://10.42.0.1/` to pick a Wi-Fi network.
-4. Open `http://dawn.local/`:
+   open `http://10.42.0.1:8080/` to pick a Wi-Fi network.
+4. Open `http://dawn.local:8080/` (core listens on port 8080; nothing answers on 80):
    - **Radio → Scan** to find DAB+ ensembles (Australian capital channels first),
      star stations as presets.
    - **Alarms → Add**.
@@ -179,6 +188,27 @@ it open. Volume only appears with the sheet rather than sitting in the control b
 Standby tile *is* the big button: a tap is its short press and a hold is the same shutdown
 countdown, so a clock with the button fitted and one without behave the same.
 
+### Sleep mode and burn-in
+
+In Standby at night the face shows the clock alone: small, deep amber on black at the lowest
+backlight, with the next alarm and a weather icon under it, fading to a new place every two
+minutes. Set it under *Display → Sleep mode* (`display.sleep`):
+
+- **Goes to sleep** at the bedtime (22:30) *or* when the room goes dark (below 3 lx for a
+  minute) — each on its own switch.
+- **Wakes** at the morning time (06:30), 10 minutes before the next alarm (or its light wake),
+  or when the room gets bright — whichever comes first. An alarm ringing always wakes it.
+- Playing audio stays on screen until it stops; then the sleep clock takes over.
+- A tap shows the full face, dimmed to 15 %, for `inputs.standby_wake_s`; a second tap opens
+  the menu. With *Screen off* the backlight is off on a black screen and the first tap shows
+  the sleep clock for 10 s.
+- *Sleep now* / *Wake now* hold until the next bedtime, morning, alarm or change of light.
+
+The panel is an IPS LCD, so the risk is image retention from things that never move. Besides
+the moving sleep clock: the face's text drifts a few pixels over time (pixel orbit), the
+Standby status strip fades after two minutes without a touch, and the background's hills and
+trees are redrawn from the date each day (*Display → Burn-in protection*, `display.burn_in`).
+
 ## Laptop simulator
 
 ```bash
@@ -188,7 +218,10 @@ make sim       # simulators + core + dawn-timed; web UI on http://localhost:8080
 
 - Face: http://localhost:8080/face · Control UI: http://localhost:8080/
 - Sim hub (lux slider, GPS/DAB/SDR/network toggles, phone buttons for AirPlay and
-  Bluetooth, encoder/button/touch): http://localhost:8099/
+  Bluetooth, encoder/button/touch, and faults for *Diagnostics*: DAB SNR, GPS signal,
+  GPS unplugged, Wi-Fi level, failed services): http://localhost:8099/
+- Sleep mode is off in the simulator's config so the tests do not depend on the hour;
+  turn it on under *Display → Sleep mode*.
 - Keyboard in the `make sim` terminal: `+`/`-` volume, Enter encoder push, `n`
   encoder hold, Space big button, `S` hold, `t` touch, `1`–`9` lux presets,
   `g` GPS, `d` DAB sync, `u` SDR plug, `w` network, `q` quit.
@@ -233,22 +266,41 @@ after 15 s.
 (alarms, presets, scan results, volume, brightness mode) lives in
 `/var/lib/dawn/dawn.db`. Backup/restore of both as one JSON: *Settings*.
 
-REST API docs: `http://dawn.local/api/docs`. Everything the UIs do goes through it.
+REST API docs: `http://dawn.local:8080/api/docs`. Everything the UIs do goes through it.
 
 ## Troubleshooting
+
+Start with **Diagnostics** in the control UI (`http://dawn.local:8080/diagnostics`; on a phone
+under *More*). It checks every link from the hardware up, lists problems first with what to do,
+and offers the fixes that are safe to run from a browser (restart a service, rescan, retune,
+set the tuner gain, poll the time sources, play a test tone):
+
+- **DAB radio**: SNR once a second with a two-minute trace, data-channel (FIC) errors,
+  frequency correction, the spectrum, interference measured in the null symbol, the impulse
+  response (multipath and the transmitters reaching you), the symbol phases, error rates of the
+  station playing, transmitters heard (TII), and the decoder's options and messages.
+- **GPS**: fix, satellites in view and used, a sky plot, the signal per satellite, HDOP, and how
+  late the receiver's time report arrives.
+- **Time sync**: GPS → chrony, DAB → chrony (welle-cli → dawn-timed → FIG 0/10 → shared memory 2)
+  and Network → chrony (internet → DNS → NTP replies) step by step, with chrony's own reason
+  when a source is not used.
+- **Network**, **Audio & devices**, **System**: the rest, plus services, power, disk and logs.
+- Every tab keeps a week of history, so an overnight dropout can be looked at in the morning.
 
 | Symptom | Check |
 |---|---|
 | Face stays black | `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
 | Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
-| No DAB stations after a scan | `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
-| Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync); see *Status → Logs* (`ring_fallback`) |
+| No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR); `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
+| DAB drops out or bubbles | *Diagnostics → DAB radio*: SNR below ~8 dB, FIC errors, decode errors; the spectrum should be a flat block ~1.5 MHz wide, the impulse response one main peak; try a fixed tuner gain a few steps below the AGC's choice near a strong transmitter, and move the antenna away from the Pi and the panel |
+| Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync); *Diagnostics → DAB radio → Last 24 hours* and the history graphs show the signal at that time |
 | No sound | *Audio* page: sink list and active sink; `wpctl status` as user dawn (`sudo -u dawn XDG_RUNTIME_DIR=/run/user/$(id -u dawn) wpctl status`); with the SHIM, `aplay -l` should list `snd_rpi_hifiberry_dac` and `config.txt` must have `gpio=25=op,dh` |
 | Pop when audio starts or stops | `/etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf` present; `wpctl inspect` on the hardware sink shows `session.suspend-timeout-seconds = 0` |
 | Only one side of a stereo track | the mono filter chain is not loaded: re-run `install.sh --audio hifiberry` and check `/etc/pipewire/pipewire.conf.d/dawn-eq.conf` says "mono" |
 | Distortion at high volume | lower `audio.output_ceiling_percent`; keep `audio.eq.bass_max_db` at 0 |
 | Random resets, SD errors, *Status → Hardware → Power and throttling* warns | `vcgencmd get_throttled`: bit 0x10000 = under-voltage since boot; use the 5 V 3 A supply directly, no hub |
-| Time not synced | *Status → Time*; `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
+| Time not synced | *Diagnostics → Time sync* (the first failing step in each chain); `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
+| No GPS fix | *Diagnostics → GPS*: satellites heard and their signal (four or more above 30 dBHz for a reliable fix), the sky plot shows what the window or walls block |
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
@@ -256,7 +308,7 @@ REST API docs: `http://dawn.local/api/docs`. Everything the UIs do goes through 
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
 
 Logs: `journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f`, also
-*Status → Logs* in the UI. Installer log: `/var/log/dawn-install.log`.
+*Diagnostics → System → Logs* in the UI. Installer log: `/var/log/dawn-install.log`.
 
 ## Development
 

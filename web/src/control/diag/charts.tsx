@@ -142,8 +142,8 @@ function Halo({ x, y, children, anchor = 'end', size = 9.5, ink = VIZ.text }: { 
   return <text x={x} y={y} textAnchor={anchor} fontSize={size} fill={ink} stroke={VIZ.surface} strokeWidth={3} strokeLinejoin="round" paintOrder="stroke">{children}</text>;
 }
 
-/** y tick text: the top tick carries the unit, so the axis says what it measures. */
-const tickText = (v: number, top: boolean, unit: string, digits: number) => (top && unit ? withUnit(fmtNum(v, digits), unit) : fmtNum(v, digits));
+/** y tick text: the top tick carries a short unit (dB, ms, %…), so the axis says what it measures. */
+const tickText = (v: number, top: boolean, unit: string, digits: number) => (top && unit && unit.length <= 4 ? withUnit(fmtNum(v, digits), unit) : fmtNum(v, digits));
 
 /** 4 px rounded data end, square at the baseline (columns grow up from `base`). */
 function colPath(x0: number, x1: number, yTop: number, base: number): string {

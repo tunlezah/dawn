@@ -71,6 +71,29 @@ http://localhost:8099/.
   - device: run `sudo ./deploy/install.sh` on each board (`--display hyperpixel4` if the panel is not
     yet attached at install time) and check *Status → Hardware*.
 
+- [x] **Sleep mode: at bedtime or when the room goes dark the face shows the small amber clock
+  with the next alarm and a weather icon; it moves every 2 minutes; a tap wakes the full face
+  dimly; an alarm wakes it; it ends at the morning time, before the alarm or when it is light.**
+  - tests: `core/tests/test_sleep.py` (whole nights minute by minute: bedtime OR dark, each
+    trigger alone, dark winter morning stays awake, wake before the alarm or its light wake,
+    lamp in the night and back to sleep, bright morning, ringing, boot and clock steps, no
+    sensor, manual, the face/backlight/tap/peek path through the API); Playwright
+    "sleep mode: the clock alone; it moves, a tap wakes the full face, ringing wins",
+    "sleep mode with the screen off" and "display: sleep mode can be turned on…".
+  - device: *Display → Sleep mode* on, *Sleep now*: the backlight drops to its minimum and the
+    amber clock appears; tap → full face at 15 %; tap again → menu. Cover the light sensor for
+    a minute in the evening → sleep; switch a lamp on → awake after 20 s.
+
+- [x] **Diagnostics finds and explains a fault in each chain, and the fix buttons work.**
+  - tests: `core/tests/test_diagnostics.py` (every check against canned facts, chains, API
+    isolation, actions); Playwright "diagnostics: from More…" and "an unplugged GPS shows as a
+    problem with its fix, and clears".
+  - sim: on the hub, unplug the SDR, the GPS, set DAB SNR to 6 or GPS signal to 27, take the
+    network down or list `gpsd` as failed: *Diagnostics* names the failing step, and the fix
+    buttons (restart gpsd, poll sources, retune, gain, test tone) report what they did.
+  - device: unplug the GPS and the SDR in turn; *Diagnostics* names them within a minute
+    (*Check again* for at once); *Time sync* shows chrony moving to the next source.
+
 ## On-device checks: reference hardware
 
 For the final build (Pi 4, Waveshare 43H DSI, Audio Amp SHIM + PC68-4, VEML6030, Adafruit
@@ -109,6 +132,19 @@ these need the hardware.
   - run it for 10 minutes; *Status → Hardware → Power and throttling* stays green. Check the
     CPU temperature there too (passive heatsink).
 
+- [ ] **DAB reception readings make sense on the real antenna.**
+  - *Diagnostics → DAB radio*: SNR above 12 dB on the local multiplex, the spectrum a flat
+    block about 1.5 MHz wide, one main peak in the impulse response, four clean peaks in the
+    symbol phases. Move the antenna next to the Pi or the panel and watch SNR and FIC errors
+    react; try *Tuner gain* a few steps below the AGC's choice.
+- [ ] **dawn-timed reaches chrony.**
+  - *Diagnostics → Time sync → DAB → chrony*: FIG 0/10 received, shared memory 2 attached
+    (not a dry run), and chrony lists DAB as a source (`chronyc sources`).
+- [ ] **Sleep mode is dim enough in a dark bedroom, and the burn-in measures are invisible.**
+  - lights off at night: the sleep clock is readable but does not light the room; the backlight
+    floor is the panel's real minimum (measure once). In the day, the pixel orbit is not
+    noticeable and the status strip fades after two minutes in Standby.
+
 ## Automated test inventory
 
 | Area | Tests |
@@ -125,4 +161,8 @@ these need the hardware.
 | Weather WMO mapping | `test_weather.py` |
 | AirPlay metadata pipe | `test_airplay_meta.py` |
 | Wi-Fi parsing, backup/restore | `test_net_backup.py` |
+| Sleep mode planner (bedtime/dark/morning/alarm/bright, DST, boot, steps) and its face path | `test_sleep.py` |
+| Diagnostics: every check, the time chains, history, actions, API | `test_diagnostics.py` |
+| Time sources: chrony selectdata/ntpdata/sourcestats/activity, gpsd SKY/TOFF, NMEA GSV/GSA | `test_timesync.py` |
+| DAB: upstream mux.json (labels, fct0 sync, errors, TII), welle args, gain index | `test_dab.py` |
 | UI smoke (face + control) against the simulator | `web/e2e/*.spec.ts` |

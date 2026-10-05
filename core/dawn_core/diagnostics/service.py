@@ -42,6 +42,7 @@ class DiagnosticsService(Service):
         self.report: dict[str, Any] | None = None
         self._report_at = 0.0
         self._wifi_dbm: float | None = None
+        self._problems: dict[str, Check] = {}  # last published, to log what appears and clears
 
     async def start(self) -> None:
         try:
@@ -128,6 +129,14 @@ class DiagnosticsService(Service):
         return {"generated_at": self.ctx.store.iso(), "facts": f, "checks": [c.as_dict() for c in mod.checks(f)]}
 
     def _publish(self, problems: list[Check]) -> None:
+        # the journal gets a line when a problem appears or clears, so an overnight fault can be found afterwards
+        now = {p.id: p for p in problems}
+        for pid, p in now.items():
+            if pid not in self._problems:
+                log.warning("problem: %s (%s): %s", p.title, pid, p.detail)
+        for pid in self._problems.keys() - now.keys():
+            log.info("cleared: %s", pid)
+        self._problems = now
         st = self.ctx.store.state
         st.diagnostics = DiagnosticsSummary(
             updated_at=self.ctx.store.iso(), fail=sum(1 for p in problems if p.status == "fail"), warn=sum(1 for p in problems if p.status == "warn"),
