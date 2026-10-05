@@ -295,6 +295,9 @@ class AlarmService(Service):
         self._last_summary = summary
         st = self.ctx.store.state.alarms
         st.items = items
-        st.next = NextAlarm(id=nxt[1].id or 0, label=nxt[1].label, at=nxt[0].isoformat(timespec="seconds"), in_seconds=int((nxt[0] - now).total_seconds())) if nxt else None
+        st.next = NextAlarm(
+            id=nxt[1].id or 0, label=nxt[1].label, at=nxt[0].isoformat(timespec="seconds"), in_seconds=int((nxt[0] - now).total_seconds()),
+            light_wake_at=(nxt[0] - timedelta(minutes=nxt[1].light_wake_minutes)).isoformat(timespec="seconds") if nxt[1].light_wake else None,
+        ) if nxt else None
         st.on_leave_until = self.ctx.db.get("alarms.leave_until")
         self.ctx.store.touch()

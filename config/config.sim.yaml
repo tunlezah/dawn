@@ -47,6 +47,29 @@ display:
   clock_24h: true
   ambient_after_s: 20
   scene: true
+  sleep:
+    enabled: false
+    start_at_time: true
+    start: '22:30'
+    start_when_dark: true
+    end_at_time: true
+    end: 06:30
+    end_before_alarm: true
+    alarm_lead_minutes: 10
+    end_when_bright: true
+    dark_lux: 3.0
+    dark_after_s: 60
+    bright_lux: 30.0
+    bright_after_s: 20
+    jump_every_s: 120
+    level_percent: 72
+    backlight_percent: null
+    screen_off: false
+    wake_percent: 15
+  burn_in:
+    pixel_orbit: true
+    strip_autohide_s: 120
+    scene_daily: true
   backlight:
     driver: sim
     sysfs_path: null

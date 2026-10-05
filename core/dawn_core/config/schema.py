@@ -158,6 +158,62 @@ class BrightnessConfig(StrictModel):
         return v
 
 
+def _hhmm(v: str) -> str:
+    try:
+        h, m = (int(x) for x in v.strip().split(":"))
+    except ValueError as e:
+        raise ValueError(f"expected HH:MM, got {v!r}") from e
+    if not (0 <= h < 24 and 0 <= m < 60):
+        raise ValueError(f"expected HH:MM, got {v!r}")
+    return f"{h:02d}:{m:02d}"
+
+
+class SleepConfig(StrictModel):
+    """Sleep mode: the clock alone, small and dim, moving every couple of minutes. Shown in Standby only."""
+
+    enabled: bool = Field(True, description="Use sleep mode at all.")
+    start_at_time: bool = Field(True, description="Go to sleep at the bedtime every night (even with the lights on).")
+    start: str = Field("22:30", description="Bedtime (HH:MM).")
+    start_when_dark: bool = Field(True, description="Also go to sleep whenever the room goes dark (light sensor).")
+    end_at_time: bool = Field(True, description="Wake the face at the morning time every day.")
+    end: str = Field("06:30", description="Morning time (HH:MM).")
+    end_before_alarm: bool = Field(True, description="Wake the face this many minutes before the next alarm (or its light-wake).")
+    alarm_lead_minutes: int = Field(10, ge=0, le=120)
+    end_when_bright: bool = Field(True, description="Wake the face when the room gets bright (light sensor).")
+    dark_lux: float = Field(3.0, ge=0, description="Below this the room is dark.")
+    dark_after_s: int = Field(60, ge=0, le=3600, description="... for this many seconds before the dark trigger counts.")
+    bright_lux: float = Field(30.0, ge=0, description="Above this the room is bright.")
+    bright_after_s: int = Field(20, ge=0, le=3600, description="... for this many seconds (car headlights do not count).")
+    jump_every_s: int = Field(120, ge=10, le=3600, description="The sleep clock moves to a new place this often.")
+    level_percent: int = Field(72, ge=10, le=100, description="Brightness of the sleep clock's amber, in the pixels (on top of the backlight).")
+    backlight_percent: int | None = Field(None, ge=0, le=100, description="Backlight while asleep (null = the backlight minimum).")
+    screen_off: bool = Field(False, description="Backlight fully off on a black screen while asleep; a tap shows the sleep clock for 10 s, a second tap the full face.")
+    wake_percent: int = Field(15, ge=1, le=100, description="Brightness of a tap-to-wake while asleep or in the night palette.")
+
+    @field_validator("start", "end", mode="before")
+    @classmethod
+    def _time(cls, v: object) -> str:
+        if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 24 * 60:
+            v = f"{v // 60}:{v % 60}"  # YAML 1.1 reads an unquoted 22:30 as the number 1350 (base 60)
+        if not isinstance(v, str):
+            raise ValueError(f"expected HH:MM, got {v!r}")
+        return _hhmm(v)
+
+    @model_validator(mode="after")
+    def _distinct(self) -> SleepConfig:
+        if self.start == self.end:
+            raise ValueError("sleep.start and sleep.end must differ")
+        return self
+
+
+class BurnInConfig(StrictModel):
+    """Image-retention protection for the IPS panel (see docs/research/standby-display.md on the research branch)."""
+
+    pixel_orbit: bool = Field(True, description="Drift the face's text a few pixels over time (±8 × 6 px, 1 px a minute): invisible, but no edge stays put.")
+    strip_autohide_s: int = Field(120, ge=0, le=3600, description="In Standby, fade the bottom status strip after this many seconds without a touch (0 = never).")
+    scene_daily: bool = Field(True, description="Redraw the background's hills and trees from the date, so their outline changes every day.")
+
+
 class DisplayConfig(StrictModel):
     panel: Literal["auto", "waveshare_dsi", "hyperpixel4", "hdmi", "none"] = "auto"
     width: int = Field(800, ge=240, le=4096)
@@ -169,7 +225,9 @@ class DisplayConfig(StrictModel):
     show_seconds: bool = False
     clock_24h: bool = True
     ambient_after_s: int = Field(20, ge=0, le=600, description="While playing, show the ambient clock after this many seconds without a touch (0 = never).")
-    scene: bool = Field(True, description="Soft scenic background behind the ambient clock that follows time of day, weather and season (off in the night palette).")
+    scene: bool = Field(True, description="Background image behind the clock in Standby and the ambient clock: sky for the time of day, weather and season (off in the night palette and in sleep mode).")
+    sleep: SleepConfig = SleepConfig()
+    burn_in: BurnInConfig = BurnInConfig()
     backlight: BacklightConfig = BacklightConfig()
     lux_sensor: LuxSensorConfig = LuxSensorConfig()
     brightness: BrightnessConfig = BrightnessConfig()

@@ -13,6 +13,8 @@ from ..state.ui import FaceMessage, UIState
 
 log = logging.getLogger("dawn.face")
 
+PEEK_S = 10  # screen-off sleep: how long a tap shows the sleep clock
+
 
 class FaceService(Service):
     name = "face"
@@ -56,6 +58,8 @@ class FaceService(Service):
             mode = "setup"
         elif f.message is not None and (f.message.until is None or datetime.fromisoformat(f.message.until) > now):
             mode = "message"
+        elif st.display.sleep and not f.menu_open and not (f.wake_until and datetime.fromisoformat(f.wake_until) > now):
+            mode = "sleep"  # sleep mode is Standby with the clock alone; a tap wakes the full face for standby_wake_s
         else:
             mode = "standby"
         if mode != f.mode:
@@ -83,6 +87,9 @@ class FaceService(Service):
         if f.wake_until and datetime.fromisoformat(f.wake_until) <= now:
             f.wake_until = None
             changed = True
+        if f.peek_until and datetime.fromisoformat(f.peek_until) <= now:
+            f.peek_until = None
+            changed = True
         if f.message and f.message.until and datetime.fromisoformat(f.message.until) <= now:
             f.message = None
             changed = True
@@ -102,6 +109,17 @@ class FaceService(Service):
         f = self.ctx.store.state.face
         if f.mode == "message":
             self.dismiss_message()
+            return
+        if f.mode == "sleep":
+            now = self.ctx.store.now()
+            if self.ctx.config.display.sleep.screen_off and not (f.peek_until and datetime.fromisoformat(f.peek_until) > now):
+                # a dark screen: the first tap shows the sleep clock for a few seconds, the next wakes the face
+                f.peek_until = (now + timedelta(seconds=PEEK_S)).isoformat(timespec="seconds")
+                self.ctx.store.touch()
+                return
+            f.peek_until = None
+            self.wake()  # the first tap only wakes the face (dimly at night); the next one opens the menu
+            self.recompute()
             return
         self.wake()
         if f.menu_open:

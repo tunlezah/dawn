@@ -1,19 +1,22 @@
 // Mirrors core/dawn_core/state/ui.py. Keep in sync when the state model changes.
 
-export type FaceMode = 'standby' | 'playing' | 'ringing' | 'countdown' | 'setup' | 'message' | 'lightwake';
+export type FaceMode = 'standby' | 'sleep' | 'playing' | 'ringing' | 'countdown' | 'setup' | 'message' | 'lightwake';
 export type SourceKind = 'dab' | 'chime' | 'url' | 'playlist' | 'airplay' | 'bluetooth' | 'none';
 
 export interface FaceMessage { title: string; body: string; level: 'info' | 'warning' | 'error'; until: string | null }
 export interface SetupInfo { ssid: string; password: string | null; url: string; qr_payload: string }
 export interface FaceState {
   mode: FaceMode; message: FaceMessage | null; hint: string | null; menu_open: boolean; menu_page: string | null;
-  wake_until: string | null; shutdown_countdown: number | null; setup: SetupInfo | null;
+  wake_until: string | null; peek_until: string | null; shutdown_countdown: number | null; setup: SetupInfo | null;
 }
 export interface DisplayState {
   brightness: number; target: number; mode: 'auto' | 'manual'; manual_until: string | null; night: boolean;
   palette: 'dark' | 'light' | 'night'; lux: number | null; sensor: string | null; sensor_found: boolean;
   layout: 'rect' | 'round'; low_cpu: boolean; overlay_dim: number; backlight_driver: string;
   sunrise: string | null; sunset: string | null; schedule_night: boolean; show_seconds: boolean; ambient_after_s: number; scene: boolean;
+  sleep: boolean; sleep_reason: string | null; sleep_enabled: boolean; sleep_next_start: string | null; sleep_next_end: string | null;
+  sleep_screen_off: boolean; sleep_jump_s: number; sleep_level: number; room: 'dark' | 'bright' | 'between' | null;
+  orbit: boolean; strip_autohide_s: number; scene_daily: boolean;
 }
 export interface SinkInfo { id: string; name: string; description: string; kind: 'usb' | 'hifiberry' | 'headphones' | 'hdmi' | 'other'; active: boolean }
 export interface EqState { enabled: boolean; bass_db: number; treble_db: number; bass_max_db: number; highpass_hz: number | null }
@@ -32,7 +35,7 @@ export interface AlarmSummary {
   id: number; label: string; enabled: boolean; time: string; repeat: string; days: number[]; source: string; volume: number;
   skip_next: boolean; skip_public_holidays: boolean; next_at: string | null; light_wake: boolean;
 }
-export interface NextAlarm { id: number; label: string; at: string; in_seconds: number }
+export interface NextAlarm { id: number; label: string; at: string; in_seconds: number; light_wake_at: string | null }
 export interface RingingInfo {
   kind: 'alarm' | 'nap'; alarm_id: number | null; label: string; started_at: string; snoozed_until: string | null;
   snooze_count: number; source: string; fallback: boolean; volume_target: number; ends_at: string | null;
@@ -89,8 +92,10 @@ export interface UIState {
 
 export const EMPTY_STATE: UIState = {
   version: 0, now: '', tz: 'Australia/Sydney',
-  face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, shutdown_countdown: null, setup: null },
-  display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true },
+  face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, peek_until: null, shutdown_countdown: null, setup: null },
+  display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true,
+    sleep: false, sleep_reason: null, sleep_enabled: true, sleep_next_start: null, sleep_next_end: null, sleep_screen_off: false, sleep_jump_s: 120, sleep_level: 72, room: null,
+    orbit: true, strip_autohide_s: 120, scene_daily: true },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
   alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false },
