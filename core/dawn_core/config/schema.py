@@ -244,8 +244,8 @@ class DabConfig(StrictModel):
     welle_url: str = Field("http://127.0.0.1:8000", description="welle-cli web interface base URL.")
     welle_binary: str = "welle-cli"
     welle_args: list[str] = Field(
-        default_factory=lambda: ["-w", "8000", "-C", "-P"],
-        description="Extra welle-cli args (channel is added by the service).",
+        default_factory=lambda: ["-w", "8000"],
+        description="Extra welle-cli args (channel and gain are added by the service). Add -C 1 -P to collect logos for every station in the background (one more programme decoded and MP3-encoded all the time).",
     )
     service_name: str = Field("dawn-dab", description="systemd unit that runs welle-cli.")
     default_channel: str = Field("9A", description="Channel to tune at boot if nothing was played before.")
@@ -262,7 +262,7 @@ class DabConfig(StrictModel):
     scan_dwell_s: float = Field(6.0, ge=2, le=30, description="Seconds to wait for sync on each channel.")
     sync_timeout_s: float = Field(12.0, ge=3, le=60, description="Seconds to wait for audio after tuning.")
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
-    gain: float | None = Field(None, description="Fixed tuner gain in dB (null = AGC).")
+    gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")
     poll_interval_s: float = Field(1.0, ge=0.2, le=10, description="How often /mux.json is read for DLS/MOT.")
 
     @field_validator("scan_channels", "scan_priority")

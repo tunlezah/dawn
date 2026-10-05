@@ -53,3 +53,46 @@ def test_shm_struct_layout() -> None:
     s4 = make_struct(4)
     assert ctypes.sizeof(s4) == 80
     assert s4.receiveTimeStampSec.offset == 16
+
+
+def test_mux_synced_upstream_shape() -> None:
+    # upstream welle-cli: label objects, no sync flag; FIG 0/0's CIF low part 0 is stamped every ~12 s
+    now = 1_790_000_000_000
+    j = {"ensemble": {"label": {"label": "ABC Sydney", "shortlabel": "ABC"}}, "services": [], "demodulator": {"time_last_fct0_frame": now - 5_000}}
+    assert mux_synced(j, now)
+    assert not mux_synced(j, now + 40_000)
+    assert not mux_synced({"ensemble": {"label": {"label": ""}}, "services": [], "demodulator": {"time_last_fct0_frame": now}}, now)
+
+
+def test_status_file_and_shm_failure(tmp_path, monkeypatch) -> None:
+    import argparse
+    import json
+
+    from dawn_timed import main as m
+
+    def fail(self) -> None:
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr(m.ChronyShm, "attach", fail)
+    args = argparse.Namespace(shm_unit=2, dry_run=False, time_t_bytes="auto", status_file=str(tmp_path / "s" / "status.json"),
+                              welle_url="http://127.0.0.1:1", poll_hz=5.0, fic_fallback="auto")
+    t = m.Timed(args)
+    t._attach()  # keeps running and says why, instead of crash-looping under systemd
+    assert not t.shm_attached and "Permission denied" in (t.shm_error or "") and "SHM 2" in (t.shm_error or "")
+    dab = datetime(2026, 10, 5, 9, 0, 0, tzinfo=timezone.utc)
+    t._sample(dab, datetime(2026, 10, 5, 9, 0, 0, 250000, tzinfo=timezone.utc), precision=-3)
+    assert t.written == 0 and t.last_offset_ms == -250.0  # nothing reaches chrony without the segment
+    t.fig010["long"] += 1
+    t._write_status(force=True)
+    st = json.loads((tmp_path / "s" / "status.json").read_text())
+    assert st["shm_attached"] is False and st["last_offset_ms"] == -250.0 and st["fig010_long"] == 1 and st["mode"] == "mux"
+    assert st["samples_written"] == 0 and st["shm_unit"] == 2 and st["updated_at"]
+
+
+def test_fib_stats_count_crc_failures() -> None:
+    good = fic_frame(datetime(2026, 1, 1, tzinfo=timezone.utc))
+    bad = bytearray(good)
+    bad[5] ^= 0xFF
+    stats: dict[str, int] = {}
+    parse_fibs(good + bytes(bad), stats=stats)
+    assert stats == {"fibs": 6, "crc_bad": 1}

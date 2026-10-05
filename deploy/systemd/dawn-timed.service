@@ -6,7 +6,10 @@ Wants=chrony.service
 [Service]
 User=dawn
 Group=dawn
-ExecStart=@DAWN_DIR@/.venv/bin/dawn-timed --welle-url http://127.0.0.1:8000 --shm-unit 2
+ExecStart=@DAWN_DIR@/.venv/bin/dawn-timed --welle-url http://127.0.0.1:8000 --shm-unit 2 --status-file /run/dawn-timed/status.json
+# status.json: what the daemon sees, read by dawn-core for Diagnostics -> Time
+RuntimeDirectory=dawn-timed
+RuntimeDirectoryMode=0755
 Restart=always
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1

@@ -97,6 +97,7 @@ audio:
   pinned_sink: null
   default_volume: 35
   max_volume: 100
+  output_ceiling_percent: 100
   duck_percent: 20
   duck_seconds: 2.0
   volume_overlay_s: 1.5
@@ -106,6 +107,8 @@ audio:
     treble_db: 0.0
     bass_hz: 120.0
     treble_hz: 6000.0
+    bass_max_db: 0.0
+    highpass_hz: 110.0
   mpv_binary: mpv
   mpv_extra_args: []
   media_dir: ./var/dawn/media
@@ -129,8 +132,6 @@ dab:
   welle_args:
   - -w
   - '8000'
-  - -C
-  - -P
   service_name: dawn-dab
   default_channel: 9A
   scan_priority:
@@ -222,6 +223,7 @@ system:
   heartbeat_interval_s: 5
   watchdog: false
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
+  vcgencmd_binary: vcgencmd
   update_repo_dir: .
   update_branch: main
   sudo_binary: sudo

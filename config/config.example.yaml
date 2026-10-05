@@ -201,12 +201,10 @@ dab:
   # welle-cli web interface base URL.
   welle_url: http://127.0.0.1:8000
   welle_binary: welle-cli
-  # Extra welle-cli args (channel is added by the service).
+  # Extra welle-cli args (channel and gain are added by the service). Add -C 1 -P to collect logos for every station in the background (one more programme decoded and MP3-encoded all the time).
   welle_args:
   - -w
   - '8000'
-  - -C
-  - -P
   # systemd unit that runs welle-cli.
   service_name: dawn-dab
   # Channel to tune at boot if nothing was played before.
@@ -266,7 +264,7 @@ dab:
   sync_timeout_s: 12.0
   # No audio flowing for this long = failure.
   audio_timeout_s: 15.0
-  # Fixed tuner gain in dB (null = AGC).
+  # Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).
   gain: null
   # How often /mux.json is read for DLS/MOT.
   poll_interval_s: 1.0
