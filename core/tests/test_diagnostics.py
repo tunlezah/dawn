@@ -68,7 +68,7 @@ def test_dab_playing_and_history() -> None:
     c = by_id(dab.checks(dab_facts(playing={"sid": "1002", "label": "triple j", "flowing": False})))
     assert c["dab.audio"].status == "fail"
     c = by_id(dab.checks(dab_facts(alarms_unknown=["Weekday"], fallbacks_24h=[{"at": "x"}], restarts_24h=["x"])))
-    assert c["dab.alarm_sources"].status == "warn" and "1 alarm(s) fell back" in c["dab.history"].detail
+    assert c["dab.alarm_sources"].status == "warn" and c["dab.history"].detail.startswith("1 alarm fell back to the chime; an alarm found DAB not working")
     assert dab.checks(dab_facts(enabled=False))[0].status == "off"
 
 

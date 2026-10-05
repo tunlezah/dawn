@@ -31,6 +31,22 @@ export function Home() {
         </div>
       </Card>
 
+      {s.diagnostics.problems.length > 0 && (
+        <Card className={s.diagnostics.fail ? 'border-err' : ''}>
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <div className="font-medium">{s.diagnostics.fail ? `${s.diagnostics.fail} problem${s.diagnostics.fail > 1 ? 's' : ''}` : `${s.diagnostics.warn} warning${s.diagnostics.warn > 1 ? 's' : ''}`} found</div>
+              <ul className="text-sm text-muted mt-1 space-y-0.5">
+                {s.diagnostics.problems.slice(0, 3).map((p) => (
+                  <li key={p.id} className="truncate"><span className={p.status === 'fail' ? 'text-err' : 'text-warn'} aria-label={p.status === 'fail' ? 'problem' : 'warning'}>{p.status === 'fail' ? '✕' : '!'}</span> {p.title}: {p.detail}</li>
+                ))}
+              </ul>
+            </div>
+            <button className="btn btn-sm shrink-0" onClick={() => navigate('/diagnostics')}>Diagnostics</button>
+          </div>
+        </Card>
+      )}
+
       {s.alarms.ringing && (
         <Card className="border-accent">
           <div className="flex items-center justify-between gap-3">

@@ -173,10 +173,12 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if f["fallbacks_24h"] or f["restarts_24h"]:
         parts = []
         if f["fallbacks_24h"]:
-            parts.append(f"{len(f['fallbacks_24h'])} alarm(s) fell back to the chime")
+            n = len(f["fallbacks_24h"])
+            parts.append(f"{n} alarm{'s' if n > 1 else ''} fell back to the chime")
         if f["restarts_24h"]:
-            parts.append(f"the decoder was restarted {len(f['restarts_24h'])} time(s)")
-        add("history", "Last 24 hours", "warn", "; ".join(parts) + ".",
-            "Open the history graphs below to see the signal around those times.")
+            n = len(f["restarts_24h"])
+            parts.append(f"an alarm found DAB not working and restarted the decoder{'' if n == 1 else f' ({n} times)'}")
+        add("history", "Last 24 hours", "warn", parts[0][0].upper() + "; ".join(parts)[1:] + ".",
+            "The DAB history graphs show the signal around those times (marked with thin vertical lines).")
     return c
 

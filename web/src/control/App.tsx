@@ -9,6 +9,7 @@ import { Timers } from './pages/Timers';
 import { Display } from './pages/Display';
 import { Audio } from './pages/Audio';
 import { Status } from './pages/Status';
+import { Diagnostics } from './pages/Diagnostics';
 import { Settings } from './pages/Settings';
 import { About } from './pages/About';
 
@@ -20,9 +21,21 @@ const NAV: { path: string; label: string; icon: string }[] = [
   { path: '/display', label: 'Display', icon: '☀' },
   { path: '/audio', label: 'Audio', icon: '🔊' },
   { path: '/status', label: 'Status', icon: '◉' },
+  { path: '/diagnostics', label: 'Diagnostics', icon: '🩺' },
   { path: '/settings', label: 'Settings', icon: '⚙' },
   { path: '/about', label: 'About', icon: 'ⓘ' },
 ];
+
+/** Problems found by the last diagnostics run: a count on the nav entry (red for problems, amber for warnings). */
+function DiagBadge({ fail, warn }: { fail: number; warn: number }) {
+  if (!fail && !warn) return null;
+  return (
+    <span className={`ml-auto min-w-5 h-5 px-1.5 rounded-full text-[11px] font-semibold inline-flex items-center justify-center ${fail ? 'bg-err text-white' : 'bg-warn text-black'}`}
+      aria-label={fail ? `${fail} problems` : `${warn} warnings`}>{fail || warn}</span>
+  );
+}
+
+const MORE = ['/audio', '/status', '/diagnostics', '/settings', '/about'];
 
 function Page({ path }: { path: string }) {
   switch (path) {
@@ -33,6 +46,7 @@ function Page({ path }: { path: string }) {
     case '/display': return <Display />;
     case '/audio': return <Audio />;
     case '/status': return <Status />;
+    case '/diagnostics': return <Diagnostics />;
     case '/settings': return <Settings />;
     case '/about': return <About />;
     default: return <Home />;
@@ -59,6 +73,7 @@ export function App() {
   const { state, connected } = useDawn();
   const path = usePath();
   const [locked, setLocked] = useState<boolean | null>(null);
+  const [more, setMore] = useState(false);
 
   useEffect(() => {
     api.get<{ required: boolean; authenticated: boolean }>('/api/auth/status').then((s) => setLocked(s.required && !s.authenticated)).catch(() => setLocked(false));
@@ -83,6 +98,7 @@ export function App() {
         {NAV.map((n) => (
           <button key={n.path} onClick={() => navigate(n.path)} className={`text-left px-3 py-2 rounded-xl flex items-center gap-3 ${path === n.path ? 'bg-elev-2 text-fg' : 'text-muted hover:text-fg'}`}>
             <span className="w-5 text-center">{n.icon}</span>{n.label}
+            {n.path === '/diagnostics' && <DiagBadge fail={state.diagnostics.fail} warn={state.diagnostics.warn} />}
           </button>
         ))}
         <div className="mt-auto text-xs text-faint px-2 flex items-center gap-2">
@@ -100,10 +116,24 @@ export function App() {
             <span className="text-lg leading-none">{n.icon}</span>{n.label}
           </button>
         ))}
-        <button onClick={() => navigate(['/audio', '/status', '/settings', '/about'].includes(path) ? path : '/settings')} className={`flex flex-col items-center text-[11px] px-2 py-1 rounded-lg ${['/audio', '/status', '/settings', '/about'].includes(path) ? 'text-accent' : 'text-muted'}`}>
+        <button onClick={() => setMore(!more)} aria-expanded={more} className={`relative flex flex-col items-center text-[11px] px-2 py-1 rounded-lg ${MORE.includes(path) ? 'text-accent' : 'text-muted'}`}>
           <span className="text-lg leading-none">⋯</span>More
+          {(state.diagnostics.fail > 0 || state.diagnostics.warn > 0) && <span className={`absolute top-0.5 right-1.5 w-2 h-2 rounded-full ${state.diagnostics.fail ? 'bg-err' : 'bg-warn'}`} aria-label="Diagnostics found something" />}
         </button>
       </nav>
+      {more && (
+        <div className="sm:hidden fixed inset-0 z-40" onClick={() => setMore(false)}>
+          <div className="absolute inset-0 bg-black/40" />
+          <div className="absolute right-2 bottom-[calc(max(env(safe-area-inset-bottom),6px)+64px)] card p-1.5 min-w-48 fade-in" onClick={(e) => e.stopPropagation()}>
+            {NAV.filter((n) => MORE.includes(n.path)).map((n) => (
+              <button key={n.path} onClick={() => { setMore(false); navigate(n.path); }} className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center gap-3 ${path === n.path ? 'bg-elev-2 text-fg' : 'text-muted'}`}>
+                <span className="w-5 text-center">{n.icon}</span>{n.label}
+                {n.path === '/diagnostics' && <DiagBadge fail={state.diagnostics.fail} warn={state.diagnostics.warn} />}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

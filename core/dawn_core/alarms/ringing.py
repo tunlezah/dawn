@@ -121,7 +121,7 @@ class RingSession:
                     if not await dab.healthy():
                         self.restarted_dab = True
                         log.warning("DAB not healthy during ring; restarting welle-cli once")
-                        await dab.restart_welle()
+                        await dab.restart_welle(reason="alarm")
                 except Exception:  # noqa: BLE001
                     log.exception("dab restart attempt failed")
             if elapsed >= self.req.fallback_after_s:
