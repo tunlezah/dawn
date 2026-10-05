@@ -98,6 +98,9 @@ class DabService(Service):
         self.arg_notes: list[str] = []
         self.fic_errors_per_min: float | None = None
         self._crc_prev: tuple[float, int] | None = None
+        # per service: (time, frame, rs, aac) at the start of the window, and the last rates per minute
+        self._err_prev: dict[str, tuple[float, int, int, int]] = {}
+        self.error_rates: dict[str, dict[str, float]] = {}
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -212,6 +215,27 @@ class DabService(Service):
                 self._crc_prev = (now, m.fic_crc_errors)
             elif not self._crc_prev or m.fic_crc_errors < self._crc_prev[1]:  # first read, or welle restarted
                 self._crc_prev = (now, m.fic_crc_errors)
+        for svc in m.services:
+            if svc.frame_errors is None or not svc.decoding:
+                continue
+            cur = (now, svc.frame_errors or 0, svc.rs_errors or 0, svc.aac_errors or 0)
+            prev = self._err_prev.get(svc.sid)
+            if prev is None or any(c < p for c, p in zip(cur[1:], prev[1:], strict=True)):
+                self._err_prev[svc.sid] = cur
+            elif now - prev[0] >= 20:
+                k = 60 / (now - prev[0])
+                self.error_rates[svc.sid] = {"frame": round((cur[1] - prev[1]) * k, 1), "rs": round((cur[2] - prev[2]) * k, 1),
+                                             "aac": round((cur[3] - prev[3]) * k, 1), "at": now}
+                self._err_prev[svc.sid] = cur
+
+    async def fresh_mux(self) -> MuxInfo | None:
+        """A read of mux.json right now (Diagnostics' live meter). welle drains its message log on every read,
+        so every read goes through _diag."""
+        m = await self.client.mux()
+        if m is not None:
+            self._diag(m)
+            m.channel = m.channel or self.channel
+        return m
 
     def _metadata_changed(self, sid: str) -> None:
         if sid == self.active_sid:
@@ -297,13 +321,13 @@ class DabService(Service):
     def mark_active(self, sid: str | None) -> None:
         self.active_sid = sid
 
-    async def restart_welle(self) -> bool:
-        """Restart the dawn-dab unit (at most once per 30 s). Returns True if attempted."""
+    async def restart_welle(self, force: bool = False, reason: str = "unreachable") -> bool:
+        """Restart the dawn-dab unit (at most once per 30 s unless forced from Diagnostics). Returns True if attempted."""
         now = time.monotonic()
-        if now - self._last_restart < 30:
+        if now - self._last_restart < (5 if force else 30):
             return False
         self._last_restart = now
-        self.ctx.db.log_event("dab_restart", channel=self.channel)
+        self.ctx.db.log_event("dab_restart", channel=self.channel, reason=reason)
         if self.ctx.sim:
             log.warning("sim: would restart %s", self.ctx.config.dab.service_name)
             return True

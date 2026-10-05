@@ -17,6 +17,9 @@ class SimState:
     gps_lon: float = 151.2093
     gps_sats: int = 9
     gps_signal: float = 38.0  # dBHz of the strongest satellite; the rest fall off from it
+    gps_present: bool = True  # the USB receiver is plugged in
+    wifi_dbm: float = -58.0
+    units_down: list[str] = field(default_factory=list)  # systemd units the sim reports as failed
     dab_sync: bool = True  # decoder has sync on a tuned channel
     dab_snr: float = 14.5  # dB; below ~8 errors start, below ~3 the ensemble is lost
     sdr_present: bool = True  # fake welle up at all
@@ -56,6 +59,9 @@ class SimState:
             "dab_sync": self.dab_sync,
             "dab_snr": self.dab_snr,
             "gps_signal": self.gps_signal,
+            "gps_present": self.gps_present,
+            "wifi_dbm": self.wifi_dbm,
+            "units_down": self.units_down,
             "sdr_present": self.sdr_present,
             "network_online": self.network_online,
             "audio_flowing": self.audio_flowing,

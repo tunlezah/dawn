@@ -229,5 +229,9 @@ system:
   sudo_binary: sudo
   allow_shutdown: true
   log_tail_lines: 200
+diagnostics:
+  history_days: 7
+  check_interval_s: 60
+  timed_status_file: ./var/run/dawn-timed/status.json
 sim:
   hub_url: http://127.0.0.1:8099

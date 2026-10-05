@@ -358,6 +358,14 @@ system:
   allow_shutdown: true
   log_tail_lines: 200
 
+diagnostics:
+  # Days of signal and timing history kept for the Diagnostics graphs (one row a minute).
+  history_days: 7
+  # How often the checks behind the Diagnostics page run in the background.
+  check_interval_s: 60
+  # Status file written by dawn-timed (DAB time to chrony).
+  timed_status_file: /run/dawn-timed/status.json
+
 sim:
   # Sim hub base URL (used when DAWN_SIM=1).
   hub_url: http://127.0.0.1:8099

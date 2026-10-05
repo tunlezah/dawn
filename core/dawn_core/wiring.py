@@ -25,6 +25,7 @@ def build_services(ctx: DawnContext) -> None:
     _optional(ctx, "dawn_core.net.service", "NetworkService")
     _optional(ctx, "dawn_core.airplay.service", "AirPlayService")
     _optional(ctx, "dawn_core.bluetooth.service", "BluetoothService")
+    _optional(ctx, "dawn_core.diagnostics.service", "DiagnosticsService")
     _optional(ctx, "dawn_core.face.service", "FaceService")
 
 

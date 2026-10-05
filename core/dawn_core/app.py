@@ -40,6 +40,7 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
     cfg_mgr = cfg_mgr or ConfigManager()
     ctx = DawnContext(cfg_mgr)
     hub = ws.WsHub()
+    ctx.ws_hub = hub
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):

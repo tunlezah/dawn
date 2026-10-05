@@ -82,7 +82,7 @@ async def tune(body: ChannelBody, d: DabService = Depends(dab)) -> dict[str, Any
 
 @router.post("/dab/restart")
 async def restart(d: DabService = Depends(dab)) -> dict[str, Any]:
-    return {"restarted": await d.restart_welle()}
+    return {"restarted": await d.restart_welle(reason="manual")}
 
 
 @router.get("/dab/logo/{sid}")

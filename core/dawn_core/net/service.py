@@ -124,7 +124,8 @@ class NetworkService(Service):
                     log.error("hotspot failed: %s", out.strip())
                     return
             self.hotspot_active = True
-            url = f"http://{HOTSPOT_IP}/"
+            port = self.ctx.config.web.port
+            url = f"http://{HOTSPOT_IP}{'' if port == 80 else f':{port}'}/"  # core listens on web.port; nothing serves port 80
             self.ctx.store.state.face.setup = SetupInfo(ssid=ssid, password=cfg.password, url=url, qr_payload=f"WIFI:T:WPA;S:{ssid};P:{cfg.password};;")
             self.ctx.db.log_event("hotspot_start", ssid=ssid)
         else:

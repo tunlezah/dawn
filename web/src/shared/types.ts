@@ -51,7 +51,10 @@ export interface DabState {
 }
 export interface Preset { id: number; label: string; source: string; logo_url: string | null; position: number }
 export interface TimeSource { name: string; kind: 'gps' | 'dab' | 'ntp' | 'other'; state: string; selected: boolean; reach: number; last_rx_s: number | null; offset_ms: number | null; live: boolean }
-export interface GpsInfo { available: boolean; fix: number; lat: number | null; lon: number | null; sats_used: number; sats_seen: number; time: string | null; device: string | null }
+export interface GpsInfo {
+  available: boolean; fix: number; lat: number | null; lon: number | null; sats_used: number; sats_seen: number; time: string | null; device: string | null;
+  source: string; hdop: number | null; snr_avg: number | null;
+}
 export interface TimeSourcesState {
   active: 'GPS' | 'DAB' | 'NTP' | 'none'; synced: boolean; system_offset_ms: number | null; stratum: number | null; sources: TimeSource[];
   gps: GpsInfo; dab_time_live: boolean; chrony_available: boolean; updated_at: string | null;
@@ -76,10 +79,12 @@ export interface SettingsSummary {
   timezone: string; holiday_region: string; holiday_scope: string; latitude: number; longitude: number; location_source: 'gps' | 'config';
   name: string; clock_24h: boolean; theme: string; auth_required: boolean;
 }
+export interface DiagProblem { id: string; area: string; title: string; status: 'warn' | 'fail'; detail: string }
+export interface DiagnosticsSummary { updated_at: string | null; fail: number; warn: number; problems: DiagProblem[] }
 export interface UIState {
   version: number; now: string; tz: string; face: FaceState; display: DisplayState; audio: AudioState; now_playing: NowPlaying;
   alarms: AlarmsState; timers: TimersState; dab: DabState; presets: Preset[]; time_sources: TimeSourcesState; weather: WeatherState;
-  system: SystemState; bluetooth: BluetoothState; airplay: AirPlayState; settings: SettingsSummary;
+  system: SystemState; bluetooth: BluetoothState; airplay: AirPlayState; settings: SettingsSummary; diagnostics: DiagnosticsSummary;
 }
 
 export const EMPTY_STATE: UIState = {
@@ -92,10 +97,11 @@ export const EMPTY_STATE: UIState = {
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
   dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown' },
   presets: [],
-  time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null }, dab_time_live: false, chrony_available: false, updated_at: null },
+  time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null },
   system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },
+  diagnostics: { updated_at: null, fail: 0, warn: 0, problems: [] },
 };

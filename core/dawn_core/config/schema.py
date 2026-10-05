@@ -362,6 +362,12 @@ class SystemConfig(StrictModel):
     log_tail_lines: int = Field(200, ge=20, le=2000)
 
 
+class DiagnosticsConfig(StrictModel):
+    history_days: int = Field(7, ge=1, le=60, description="Days of signal and timing history kept for the Diagnostics graphs (one row a minute).")
+    check_interval_s: int = Field(60, ge=15, le=3600, description="How often the checks behind the Diagnostics page run in the background.")
+    timed_status_file: str = Field("/run/dawn-timed/status.json", description="Status file written by dawn-timed (DAB time to chrony).")
+
+
 class SimConfig(StrictModel):
     hub_url: str = Field("http://127.0.0.1:8099", description="Sim hub base URL (used when DAWN_SIM=1).")
 
@@ -389,6 +395,7 @@ class DawnConfig(StrictModel):
     network: NetworkConfig = NetworkConfig()
     web: WebConfig = WebConfig()
     system: SystemConfig = SystemConfig()
+    diagnostics: DiagnosticsConfig = DiagnosticsConfig()
     sim: SimConfig = SimConfig()
 
     @model_validator(mode="after")

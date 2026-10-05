@@ -30,6 +30,8 @@ class WeatherService(Service):
         self._task: asyncio.Task[None] | None = None
         self._client = httpx.AsyncClient(timeout=10.0)
         self._last_pos: tuple[float, float] | None = None
+        self.last_error: str | None = None  # last failed fetch, for Diagnostics
+        self.last_attempt: str | None = None
 
     async def start(self) -> None:
         self._load_cache()
@@ -86,14 +88,17 @@ class WeatherService(Service):
             "timezone": self.ctx.config.general.timezone, "forecast_days": "1",
             "temperature_unit": cfg.units,
         }
+        self.last_attempt = self.ctx.store.iso()
         try:
             r = await self._client.get(cfg.base_url, params=params)
             r.raise_for_status()
             data = r.json()
         except Exception as e:  # noqa: BLE001
             log.warning("weather fetch failed: %s", e)
+            self.last_error = f"{type(e).__name__}: {e}"
             self.publish()
             return False
+        self.last_error = None
         self.cache = {"fetched_at": self.ctx.store.iso(), "lat": lat, "lon": lon, "data": data}
         try:
             self.cache_path.write_text(json.dumps(self.cache))

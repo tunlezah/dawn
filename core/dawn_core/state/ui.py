@@ -246,6 +246,9 @@ class GpsInfo(BaseModel):
     sats_seen: int = 0
     time: str | None = None
     device: str | None = None
+    source: str = "none"  # gpsd | serial | none
+    hdop: float | None = None
+    snr_avg: float | None = None  # mean C/N0 (dBHz) of the satellites in use
 
 
 class TimeSourcesState(BaseModel):
@@ -342,6 +345,23 @@ class AirPlayState(BaseModel):
     playing: bool = False
 
 
+class DiagProblem(BaseModel):
+    id: str
+    area: str
+    title: str
+    status: Literal["warn", "fail"]
+    detail: str
+
+
+class DiagnosticsSummary(BaseModel):
+    """The latest background check run: counts and the worst few findings (full report at /api/diag)."""
+
+    updated_at: str | None = None
+    fail: int = 0
+    warn: int = 0
+    problems: list[DiagProblem] = Field(default_factory=list)
+
+
 class SettingsSummary(BaseModel):
     timezone: str = "Australia/Sydney"
     holiday_region: str = "NSW"
@@ -373,3 +393,4 @@ class UIState(BaseModel):
     bluetooth: BluetoothState = BluetoothState()
     airplay: AirPlayState = AirPlayState()
     settings: SettingsSummary = SettingsSummary()
+    diagnostics: DiagnosticsSummary = DiagnosticsSummary()

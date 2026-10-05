@@ -93,3 +93,13 @@ class EventRow(SQLModel, table=True):
     at: datetime = Field(default_factory=utcnow, index=True)
     kind: str = Field(index=True)
     detail: str = ""
+
+
+class MetricRow(SQLModel, table=True):
+    """One minute of Diagnostics history: {"dab.snr": [avg, min, max], ...} as JSON. Not part of backups."""
+
+    __tablename__ = "metric"
+
+    id: int | None = Field(default=None, primary_key=True)
+    at: datetime = Field(default_factory=utcnow, index=True)
+    data: str = "{}"

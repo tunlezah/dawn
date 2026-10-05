@@ -15,6 +15,10 @@ router = APIRouter()
 class WsHub:
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
+        self.info: dict[WebSocket, dict] = {}  # remote address, connected_at, role ("face" from the kiosk), user agent
+
+    def connections(self) -> list[dict]:
+        return [dict(v) for v in self.info.values()]
 
     async def broadcast(self, payload: dict) -> None:
         if not self.clients:
@@ -28,6 +32,7 @@ class WsHub:
                 dead.append(ws)
         for ws in dead:
             self.clients.discard(ws)
+            self.info.pop(ws, None)
 
 
 @router.websocket("/ws")
@@ -36,6 +41,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
     hub: WsHub = ws.app.state.ws_hub
     await ws.accept()
     hub.clients.add(ws)
+    hub.info[ws] = {"remote": ws.client.host if ws.client else None, "connected_at": ctx.store.iso(), "role": None,
+                    "agent": ws.headers.get("user-agent", "")[:160]}
     try:
         await ws.send_text(json.dumps({"type": "state", "data": ctx.store.snapshot()}, separators=(",", ":")))
         while True:
@@ -46,6 +53,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
                 continue
             if msg.get("type") == "ping":
                 await ws.send_text(json.dumps({"type": "pong", "now": ctx.store.iso()}))
+            elif msg.get("type") == "hello":
+                hub.info.setdefault(ws, {})["role"] = str(msg.get("role") or "")[:16] or None
             elif msg.get("type") == "refresh":
                 await ws.send_text(json.dumps({"type": "state", "data": ctx.store.snapshot()}, separators=(",", ":")))
     except WebSocketDisconnect:
@@ -54,3 +63,4 @@ async def ws_endpoint(ws: WebSocket) -> None:
         log.debug("ws closed with error", exc_info=True)
     finally:
         hub.clients.discard(ws)
+        hub.info.pop(ws, None)

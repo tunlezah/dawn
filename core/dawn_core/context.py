@@ -33,6 +33,7 @@ class DawnContext:
         self.runtime_dir = self._runtime_dir()
         self.db = Database(self.data_dir / "dawn.db")
         self.registry = ServiceRegistry()
+        self.ws_hub: Any = None  # api.ws.WsHub, set by the app (Diagnostics lists the connected clients)
         self.store.state.system.sim = self.sim
         self.cfg_mgr.on_change(self._on_config)
 
