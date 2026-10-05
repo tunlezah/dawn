@@ -43,6 +43,8 @@ class DiagnosticsService(Service):
         self._report_at = 0.0
         self._wifi_dbm: float | None = None
         self._problems: dict[str, Check] = {}  # last published, to log what appears and clears
+        self._pruned_at = time.monotonic()
+        self._series_cache: dict[tuple[tuple[str, ...], float, int], tuple[float, dict[str, Any]]] = {}
 
     async def start(self) -> None:
         try:
@@ -72,7 +74,7 @@ class DiagnosticsService(Service):
                 log.exception("diagnostics run failed")
             await asyncio.sleep(self.ctx.config.diagnostics.check_interval_s)
 
-    async def collect(self) -> dict[str, Any]:
+    async def collect(self, fresh: bool = False) -> dict[str, Any]:
         ctx, host = self.ctx, self.host
         names = ["dab", "gps", "network", "system"]
         got = await asyncio.gather(dab.collect(ctx, host), gps.collect(ctx, host), network.collect(ctx, host), system.collect(ctx, host),
@@ -82,7 +84,7 @@ class DiagnosticsService(Service):
             g = facts["gps"] if not isinstance(facts["gps"], BaseException) else {"enabled": False, "detail": {}, "unit": None}
             d = facts["dab"] if not isinstance(facts["dab"], BaseException) else {"enabled": False, "mux": None}
             online = facts["network"]["online"] if not isinstance(facts["network"], BaseException) else ctx.store.state.system.network.online
-            facts["time"] = await timepath.collect(ctx, host, g, d, online)
+            facts["time"] = await timepath.collect(ctx, host, g, d, online, fresh=fresh)
         except Exception as e:  # noqa: BLE001
             facts["time"] = e
         return facts
@@ -103,11 +105,12 @@ class DiagnosticsService(Service):
                 out.append(_broken(area, e))
         return sorted(out, key=lambda c: AREAS.index(c.area) if c.area in AREAS else 99)
 
-    async def run(self, max_age_s: float = 3.0) -> dict[str, Any]:
+    async def run(self, max_age_s: float = 3.0, fresh: bool = False) -> dict[str, Any]:
+        """`fresh` (Check again, after a fix) also re-reads what is otherwise reused for a while (sudo chronyc)."""
         async with self._lock:
             if self.report is not None and time.monotonic() - self._report_at < max_age_s:
                 return self.report
-            facts = await self.collect()
+            facts = await self.collect(fresh=fresh)
             checks = self.build_checks(facts)
             s = summarise(checks)
             self.report = {
@@ -121,6 +124,7 @@ class DiagnosticsService(Service):
     def invalidate(self) -> None:
         """After a fix action: the next report re-checks instead of serving the cached one."""
         self._report_at = 0.0
+        self.host.forget()
 
     async def live(self, area: str) -> dict[str, Any]:
         """One area right now, without the rest (the DAB antenna meter polls this every second)."""
@@ -145,11 +149,26 @@ class DiagnosticsService(Service):
         self.ctx.store.touch()
 
     # ---- history -----------------------------------------------------------
+    async def series(self, keys: list[str], hours: float, points: int) -> dict[str, Any]:
+        """History for the graphs. Several open pages poll the same ranges: answers are reused for 20 s."""
+        key = (tuple(sorted(set(keys))), round(hours, 2), points)
+        hit = self._series_cache.get(key)
+        if hit and time.monotonic() - hit[0] < 20:
+            return hit[1]
+        out = await asyncio.to_thread(self.history.series, list(key[0]), hours, points)
+        if len(self._series_cache) > 32:
+            self._series_cache.clear()
+        self._series_cache[key] = (time.monotonic(), out)
+        return out
+
     async def _sample_loop(self) -> None:
         while True:
             try:
                 sample = await self.sample()
                 await asyncio.to_thread(self.history.add, sample)
+                if time.monotonic() - self._pruned_at > 3600:  # keep only history_days, also on a clock that never restarts
+                    self._pruned_at = time.monotonic()
+                    await asyncio.to_thread(self.history.prune, self.ctx.config.diagnostics.history_days)
             except Exception:  # noqa: BLE001
                 log.exception("history sample failed")
             await asyncio.sleep(SAMPLE_S)

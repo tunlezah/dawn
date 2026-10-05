@@ -34,7 +34,7 @@ export function Diagnostics() {
   const [tab, setTab] = useReactState<Tab>(fromHash());
   const [hours, setHours] = useReactState(24);
   const [running, setRunning] = useReactState(false);
-  const report = usePoll<Report>('/api/diag', 10_000);
+  const report = usePoll<Report>('/api/diag', 15_000);
   useEffect(() => {
     const on = () => setTab(fromHash());
     window.addEventListener('hashchange', on);

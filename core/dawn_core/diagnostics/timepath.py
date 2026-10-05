@@ -69,15 +69,16 @@ def _timed_status(path: str) -> tuple[dict[str, Any] | None, float | None, str |
     return d, age, None
 
 
-async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[str, Any], online: bool) -> dict[str, Any]:
+async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[str, Any], online: bool, fresh: bool = False) -> dict[str, Any]:
     cfg = ctx.config
     units = await host.units(["chrony", "dawn-timed"])
     trk, trk_err = await host.chronyc("tracking")
     src, src_err = await host.chronyc("sources")
     stats, _ = await host.chronyc("sourcestats")
     act, _ = await host.chronyc("activity")
-    sel, sel_err = await host.chronyc("selectdata", privileged=True)
-    ntp, ntp_err = await host.chronyc("ntpdata", privileged=True)
+    # the two sudo reads (each one a journal entry) are reused for 5 minutes between "Check again"s
+    sel, sel_err = await host.chronyc("selectdata", privileged=True, max_age_s=0 if fresh else 300)
+    ntp, ntp_err = await host.chronyc("ntpdata", privileged=True, max_age_s=0 if fresh else 300)
     shm = parse_sysvipc_shm(await host.read("/proc/sysvipc/shm") or "")
     conf = await host.read("/etc/chrony/chrony.conf") or ""
     servers = [ln.split()[1] for ln in conf.splitlines() if len(ln.split()) > 1 and ln.split()[0] in ("pool", "server")]

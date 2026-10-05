@@ -226,10 +226,35 @@ def test_history_minutes_and_series() -> None:
     first = out["dab.snr"]["points"][0]
     assert first[1:] == [12.5, 10.0, 15.0] and out["dab.sync"]["points"][0][1] == 50.0
     assert out["dab.snr"]["points"][-1][1] == 20.0  # the open minute is included
+    # asking for a key many times costs (and returns) the same as asking once
+    assert h.series(["dab.snr"] * 500, hours=1, points=60, now=t0 + 90) == {"dab.snr": out["dab.snr"]}
     with db.session() as s:
         s.add(MetricRow(at=datetime.now(UTC) - timedelta(days=9), data="{}"))
         s.commit()
     assert h.prune(7) == 1
+
+
+async def test_privileged_chronyc_is_reused_until_forgotten() -> None:
+    """Every sudo is a journal entry: selectdata/ntpdata are reused for max_age_s; a fix (forget) re-reads them."""
+    from types import SimpleNamespace
+
+    from dawn_core.diagnostics.host import Host
+
+    calls: list[tuple[str, ...]] = []
+
+    class CountingHost(Host):
+        async def sudo(self, *args: str, timeout: float = 5.0) -> tuple[int, str]:
+            calls.append(args)
+            return 0, "csv"
+
+    h = CountingHost(SimpleNamespace(config=SimpleNamespace(time_sources=SimpleNamespace(chronyc_binary="chronyc"))))  # type: ignore[arg-type]
+    for _ in range(3):
+        assert await h.chronyc("selectdata", privileged=True, max_age_s=300) == ("csv", None)
+    assert len(calls) == 1 and calls[0] == ("chronyc", "-n", "-c", "selectdata")
+    await h.chronyc("selectdata", privileged=True)  # max_age_s=0: always asks
+    h.forget()
+    await h.chronyc("selectdata", privileged=True, max_age_s=300)
+    assert len(calls) == 3
 
 
 def test_plot_helpers() -> None:

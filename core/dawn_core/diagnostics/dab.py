@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import timedelta
 from typing import Any
@@ -52,12 +53,14 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
              "frame_errors": s.frame_errors, "rs_errors": s.rs_errors, "aac_errors": s.aac_errors, "rates": dab.error_rates.get(s.sid)}
             for s in m.services
         ]
-    known = _known_sids(dab)
+    # database reads run in a thread: the antenna page asks for these facts once a second
+    known = await asyncio.to_thread(_known_sids, dab)
+    ensembles = await asyncio.to_thread(dab.ensembles)
     presets_unknown = [p.label for p in st.presets if p.source.startswith("dab:") and p.source[4:] not in known]
     alarms_unknown = [a.label for a in st.alarms.items if a.enabled and a.source.startswith("dab:") and a.source[4:] not in known]
     np = st.now_playing
     since = ctx.store.now() - timedelta(hours=24)
-    events = ctx.db.events_since(since, ["dab_restart", "ring_fallback"])
+    events = await asyncio.to_thread(ctx.db.events_since, since, ["dab_restart", "ring_fallback"])
     return {
         "enabled": cfg.enabled,
         "sdr": {"present": st.system.sdr_present, "tuner": st.system.sdr_tuner, "usb": sticks},
@@ -67,7 +70,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "gain_config": cfg.gain,
         "mux": mux, "services": services,
         "playing": {"sid": np.station_sid, "label": np.station, "flowing": st.audio.audio_flowing} if np.source == "dab" else None,
-        "stations": len(known), "ensembles": dab.ensembles(), "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
+        "stations": len(known), "ensembles": ensembles, "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
         "presets_unknown": presets_unknown, "alarms_unknown": alarms_unknown,
         "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") != "manual"],
         "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback"],

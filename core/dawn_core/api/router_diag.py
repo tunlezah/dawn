@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import math
 from datetime import timedelta
 from statistics import median
@@ -58,7 +57,7 @@ async def report(d: DiagnosticsService = Depends(diag)) -> dict[str, Any]:
 
 @router.post("/run")
 async def run_now(d: DiagnosticsService = Depends(diag)) -> dict[str, Any]:
-    return await d.run(max_age_s=0)
+    return await d.run(max_age_s=0, fresh=True)
 
 
 @router.get("/live/{area}")
@@ -98,7 +97,7 @@ async def history(metrics: str = "", hours: float = 24, points: int = 240, ctx: 
     keys = [k for k in metrics.split(",") if k] or list(METRICS)
     hours = max(0.25, min(hours, ctx.config.diagnostics.history_days * 24))
     points = max(20, min(points, 1000))
-    series = await asyncio.to_thread(d.history.series, keys, hours, points)
+    series = await d.series(keys, hours, points)
     events = ctx.db.events_since(ctx.store.now() - timedelta(hours=hours), TIMELINE)
     return {"hours": hours, "metrics": series, "events": events}
 

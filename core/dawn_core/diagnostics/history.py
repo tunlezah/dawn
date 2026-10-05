@@ -108,37 +108,40 @@ class History:
         The minute in progress is included, so a fresh page has something to show."""
         now = now if now is not None else time.time()
         start = now - hours * 3600
-        keys = [k for k in keys if k in METRICS]
-        with self.db.session() as s:
-            rows = s.exec(select(MetricRow).where(MetricRow.at >= datetime.fromtimestamp(start, UTC)).order_by(MetricRow.at)).all()  # type: ignore[arg-type]
-        minutes: list[tuple[float, dict[str, list[float]]]] = []
-        for r in rows:
-            at = r.at if r.at.tzinfo else r.at.replace(tzinfo=UTC)
-            try:
-                minutes.append((at.timestamp(), json.loads(r.data)))
-            except ValueError:
-                continue
-        if self._minute is not None and self._acc:
-            minutes.append((self._minute * 60.0, self._fold(self._acc)))
+        keys = list(dict.fromkeys(k for k in keys if k in METRICS))  # each key once, whatever was asked
         width = max(60.0, hours * 3600 / max(1, points))
-        out: dict[str, Any] = {}
-        for k in keys:
-            buckets: dict[int, list[float]] = {}
-            for t, data in minutes:
+        buckets: dict[str, dict[int, list[float]]] = {k: {} for k in keys}
+
+        def fold(t: float, data: dict[str, list[float]]) -> None:
+            for k, per in buckets.items():
                 v = data.get(k)
                 if not v:
                     continue
                 b = int((t - start) // width)
-                cur = buckets.get(b)
+                cur = per.get(b)
                 if cur is None:
-                    buckets[b] = [v[0], 1, v[1], v[2]]
+                    per[b] = [v[0], 1, v[1], v[2]]
                 else:
                     cur[0] += v[0]
                     cur[1] += 1
                     cur[2] = min(cur[2], v[1])
                     cur[3] = max(cur[3], v[2])
+
+        # one pass over (at, data) pairs, folded as they stream in: memory stays at the size of the answer
+        with self.db.session() as s:
+            q = select(MetricRow.at, MetricRow.data).where(MetricRow.at >= datetime.fromtimestamp(start, UTC)).order_by(MetricRow.at)  # type: ignore[arg-type]
+            for at, raw in s.exec(q):
+                at = at if at.tzinfo else at.replace(tzinfo=UTC)
+                try:
+                    fold(at.timestamp(), json.loads(raw))
+                except ValueError:
+                    continue
+        if self._minute is not None and self._acc:
+            fold(self._minute * 60.0, self._fold(self._acc))
+        out: dict[str, Any] = {}
+        for k, per in buckets.items():
             pts = [[datetime.fromtimestamp(start + (b + 0.5) * width, UTC).isoformat(timespec="seconds"), round(c[0] / c[1], 3), c[2], c[3]]
-                   for b, c in sorted(buckets.items())]
+                   for b, c in sorted(per.items())]
             label, unit = METRICS[k]
             out[k] = {"label": label, "unit": unit, "points": pts}
         return out

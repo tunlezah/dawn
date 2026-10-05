@@ -106,6 +106,22 @@ def test_nmea_gsv_gsa_satellites() -> None:
     assert [s.prn for s in fix.satellites if s.used] == [5, 12, 18]
 
 
+def test_nmea_multi_gnss_gsa_adds_up() -> None:
+    """A GPS+GLONASS receiver sends one GNGSA per system in a burst: the second must not unmark the first."""
+    fix, gsv = GpsFix(), {}
+    parse_nmea(_nmea("GPGSV,1,1,04,01,40,120,41,03,22,250,33,06,10,080,30,09,05,200,28"), fix, gsv)
+    parse_nmea(_nmea("GLGSV,1,1,03,65,50,100,35,66,30,200,31,67,20,300,27"), fix, gsv)
+    assert len(fix.satellites) == 7
+    parse_nmea(_nmea("GNGSA,A,3,01,03,06,09,,,,,,,,,1.8,1.0,1.5"), fix, gsv)
+    parse_nmea(_nmea("GNGSA,A,3,65,66,67,,,,,,,,,,1.8,1.0,1.5"), fix, gsv)
+    assert sorted(s.prn for s in fix.satellites if s.used) == [1, 3, 6, 9, 65, 66, 67]
+    # the next epoch starts afresh after other sentences
+    parse_nmea(_nmea("GNRMC,123519,A,3352.128,S,15112.558,E,0.0,0.0,061026,,"), fix, gsv)
+    parse_nmea(_nmea("GNGSA,A,3,01,03,,,,,,,,,,,2.0,1.2,1.6"), fix, gsv)
+    parse_nmea(_nmea("GNGSA,A,3,65,,,,,,,,,,,,2.0,1.2,1.6"), fix, gsv)
+    assert sorted(s.prn for s in fix.satellites if s.used) == [1, 3, 65]
+
+
 def test_chrony_diagnostic_commands() -> None:
     from dawn_core.timesync.chrony import (
         NTP_SHM_KEY,

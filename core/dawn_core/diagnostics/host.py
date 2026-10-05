@@ -13,6 +13,7 @@ import logging
 import os
 import shutil
 import socket
+import time
 from pathlib import Path
 from typing import Any
 
@@ -30,9 +31,26 @@ def _read(path: str) -> str | None:
         return None
 
 
+def _cmdline_of(name: str) -> str | None:
+    for d in glob.glob("/proc/[0-9]*"):
+        if (_read(os.path.join(d, "comm")) or "").strip() == name:
+            raw = _read(os.path.join(d, "cmdline")) or ""
+            return " ".join(p for p in raw.split("\x00") if p) or None
+    return None
+
+
 class Host:
     def __init__(self, ctx: DawnContext):
         self.ctx = ctx
+        self._cache: dict[tuple[Any, ...], tuple[float, Any]] = {}  # slow reads that change slowly (process list, sudo chronyc)
+
+    def forget(self) -> None:
+        """After a fix: read everything afresh."""
+        self._cache.clear()
+
+    def _cached(self, key: tuple[Any, ...], max_age_s: float) -> tuple[bool, Any]:
+        hit = self._cache.get(key)
+        return (True, hit[1]) if hit and time.monotonic() - hit[0] < max_age_s else (False, None)
 
     async def close(self) -> None:
         pass
@@ -60,12 +78,21 @@ class Host:
         states = out.split()
         return dict(zip(names, states, strict=True)) if len(states) == len(names) else {n: "unknown" for n in names}
 
-    async def chronyc(self, *args: str, privileged: bool = False) -> tuple[str | None, str | None]:
+    async def chronyc(self, *args: str, privileged: bool = False, max_age_s: float = 0) -> tuple[str | None, str | None]:
         """(csv output, error). -n: no reverse DNS (it hangs exactly when DNS is what is broken). selectdata and
-        ntpdata need chronyd's Unix socket, i.e. root, on chrony 4.6; deploy/sudoers/dawn allows these exact lines."""
+        ntpdata need chronyd's Unix socket, i.e. root, on chrony 4.6; deploy/sudoers/dawn allows these exact lines.
+        Every sudo writes to the journal, so privileged answers may be reused for `max_age_s`."""
+        key = ("chronyc", *args)
+        if privileged and max_age_s > 0:
+            hit, value = self._cached(key, max_age_s)
+            if hit:
+                return value  # type: ignore[no-any-return]
         binary = self.ctx.config.time_sources.chronyc_binary
         rc, out = await (self.sudo(binary, "-n", "-c", *args) if privileged else self.run(binary, "-n", "-c", *args))
-        return (out, None) if rc == 0 else (None, out.strip() or f"exit status {rc}")
+        res = (out, None) if rc == 0 else (None, out.strip() or f"exit status {rc}")
+        if privileged:
+            self._cache[key] = (time.monotonic(), res)
+        return res
 
     async def read(self, path: str) -> str | None:
         return _read(path)
@@ -84,12 +111,14 @@ class Host:
         return out
 
     async def process_cmdline(self, name: str) -> str | None:
-        """The command line of the first running process called `name` (e.g. welle-cli)."""
-        for d in glob.glob("/proc/[0-9]*"):
-            if (_read(os.path.join(d, "comm")) or "").strip() == name:
-                raw = _read(os.path.join(d, "cmdline")) or ""
-                return " ".join(p for p in raw.split("\x00") if p) or None
-        return None
+        """The command line of the first running process called `name` (e.g. welle-cli). Scanning /proc reads every
+        process (a few hundred on the Pi), so it runs in a thread and is reused for 30 s."""
+        hit, value = self._cached(("cmdline", name), 30)
+        if hit:
+            return value  # type: ignore[no-any-return]
+        value = await asyncio.to_thread(_cmdline_of, name)
+        self._cache[("cmdline", name)] = (time.monotonic(), value)
+        return value
 
     async def resolve(self, host: str) -> tuple[list[str], str | None]:
         try:
@@ -134,7 +163,7 @@ class SimHost(Host):
         r = await self._get("/systemctl", units=",".join(names))
         return r.json() if r is not None and r.status_code == 200 else {n: "unknown" for n in names}
 
-    async def chronyc(self, *args: str, privileged: bool = False) -> tuple[str | None, str | None]:
+    async def chronyc(self, *args: str, privileged: bool = False, max_age_s: float = 0) -> tuple[str | None, str | None]:
         r = await self._get(f"/chrony/{args[-1]}")
         return (r.text, None) if r is not None and r.status_code == 200 else (None, "chronyc: sim hub unreachable")
 

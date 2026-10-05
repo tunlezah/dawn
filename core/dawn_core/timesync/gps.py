@@ -14,6 +14,7 @@ import logging
 import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
+from typing import Any
 
 log = logging.getLogger("dawn.gps")
 
@@ -254,11 +255,12 @@ def _fnum(v: str) -> float | None:
         return None
 
 
-def parse_nmea(line: str, fix: GpsFix, gsv: dict[str, list[Satellite]] | None = None) -> bool:
+def parse_nmea(line: str, fix: GpsFix, gsv: dict[str, Any] | None = None) -> bool:
     """Update `fix` from one NMEA sentence; returns True when something changed.
 
-    `gsv` collects a GSV cycle per talker (satellites arrive over several sentences); pass the same dict
-    every call to get per-satellite signal in `fix.satellites`."""
+    `gsv` is the parser's memory between sentences; pass the same dict every call. It collects a GSV cycle per
+    talker (satellites arrive over several sentences) for per-satellite signal in `fix.satellites`, and the
+    satellites used across a run of GSA sentences ("_gsa"; multi-GNSS receivers send one GNGSA per system)."""
     line = line.strip()
     if not nmea_checksum_ok(line):
         return False
@@ -266,6 +268,9 @@ def parse_nmea(line: str, fix: GpsFix, gsv: dict[str, list[Satellite]] | None = 
     f = body.split(",")
     talker = f[0][:2]
     talker_type = f[0][2:] if len(f[0]) >= 5 else f[0]
+    prev = gsv.get("_last") if gsv is not None else None
+    if gsv is not None:
+        gsv["_last"] = talker_type
     fix.last_msg_at = time.time()
     if talker_type == "GGA" and len(f) >= 10:
         quality = int(f[6] or 0)
@@ -301,6 +306,10 @@ def parse_nmea(line: str, fix: GpsFix, gsv: dict[str, list[Satellite]] | None = 
         fix.mode = m if m >= 2 else min(fix.mode, 1) if fix.mode else 1
         if len(f) >= 18:
             used = {int(p) for p in f[3:15] if p.isdigit()}
+            if gsv is not None:
+                if prev == "GSA":
+                    used |= gsv.get("_gsa", set())  # the next system's GSA in the same burst adds to the last
+                gsv["_gsa"] = used
             for s in fix.satellites:
                 s.used = s.prn in used
             fix.pdop, fix.hdop, fix.vdop = _fnum(f[15]), _fnum(f[16]), _fnum(f[17])
@@ -322,7 +331,7 @@ def parse_nmea(line: str, fix: GpsFix, gsv: dict[str, list[Satellite]] | None = 
                     cycle.append(Satellite(prn=prn, gnss=TALKER_GNSS.get(talker, "GNSS"), el=_fnum(f[i + 1]), az=_fnum(f[i + 2]),
                                            ss=_fnum(f[i + 3]), used=prn in used))
             if num == total:
-                fix.satellites = [s for t, c in gsv.items() if t != talker for s in c] + cycle
+                fix.satellites = [s for t, c in gsv.items() if t != talker and not t.startswith("_") for s in c] + cycle
         return True
     return False
 
@@ -334,7 +343,7 @@ class SerialNmeaClient:
         self.device, self.baud, self.on_fix = device, baud, on_fix
         self.fix = GpsFix(device=device, bps=baud, driver="NMEA0183 (direct)")
         self._task: asyncio.Task[None] | None = None
-        self._gsv: dict[str, list[Satellite]] = {}
+        self._gsv: dict[str, Any] = {}
         self.connected = False
         self.connect_error: str | None = None
 
