@@ -40,6 +40,7 @@ class DisplayService(Service):
         self._last_publish = 0.0
         self.sleep = SleepPlanner()
         self._sleep_at = 0.0
+        self._forced = False  # the last tick forced a level (sleep, tap, light-wake)
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -165,12 +166,16 @@ class DisplayService(Service):
         elif st.face.wake_until and datetime.fromisoformat(st.face.wake_until) > now and st.face.mode == "standby":
             # a tap at night (or out of sleep mode) must not be a torch in the face
             forced = sl.wake_percent if (night or st.display.sleep) else b.standby_wake_percent
+        was_forced, self._forced = self._forced, forced is not None
         if forced is not None:
             self.controller.set_target(forced, mono)
         elif self.mode == "manual":
             self.controller.set_target(self.manual_percent, mono)
         elif self.sensor and self.lux is not None:
-            self.controller.target_from_lux(self.lux, mono)
+            if was_forced:
+                self.controller.retarget(self.lux, mono)
+            else:
+                self.controller.target_from_lux(self.lux, mono)
             self._apply_sunset_cap(now, mono)
         else:
             # schedule fallback: config manual level by day, curve minimum at night

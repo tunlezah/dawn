@@ -144,7 +144,8 @@ All notable changes to Dawn are recorded here. The format follows
   now `0x…`); the unit's fallback `-w 8000 -C` made welle-cli exit at first boot.
 - An alarm created, edited or switched on after its time counted that morning's occurrence:
   a one-off alarm set in the evening for the next morning was logged as missed and disabled at
-  once, and a repeating one set a few minutes after its time rang straight away.
+  once, and a repeating one set a few minutes after its time rang straight away. (An alarm set
+  while the clock was fast still rings at the real time once chrony corrects the clock.)
 - The face's Standby tile could shut the clock down: its button-down and button-up requests
   raced, and an up that arrived first left the hold timer running into the shutdown countdown.
 - A GPS fix lingered after the receiver was unplugged; it now expires 10 s after the last report.

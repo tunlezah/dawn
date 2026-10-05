@@ -160,3 +160,14 @@ async def test_switching_an_alarm_on_counts_from_then(svc) -> None:
     await a.tick(now=datetime(2026, 10, 3, 6, 30, 2, tzinfo=SYD))
     assert a.ring is not None
     await a.stop_ringing()
+
+
+async def test_an_alarm_set_while_the_clock_was_fast_still_rings(svc) -> None:
+    """Set at what the clock said was 07:30 (90 min fast); chrony steps it back: the real 07:00 still rings."""
+    a, ctx = svc
+    a.create(AlarmIn(label="Fast", time="07:00", repeat="daily", source="chime:birds", ramp_seconds=0), now=datetime(2026, 10, 2, 7, 30, tzinfo=SYD))
+    await a.tick(now=datetime(2026, 10, 2, 6, 0, tzinfo=SYD))
+    assert a.ring is None and not _events(ctx, "alarm_missed")
+    await a.tick(now=datetime(2026, 10, 2, 7, 0, 2, tzinfo=SYD))
+    assert a.ring is not None
+    await a.stop_ringing()

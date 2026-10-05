@@ -165,7 +165,9 @@ each section. Every entry says what was decided and why, so it can be revisited.
   on**: those moments are stored as handled. Without this a one-off alarm set in
   the evening for 06:30 found that morning's 06:30 in the 26-hour look-back,
   logged it as missed and disabled itself. The grace window for a clock that was
-  off at alarm time is unchanged.
+  off at alarm time is unchanged. If that stamp is later found more than 10 minutes in
+  the future (the clock was fast when the alarm was set, and chrony has stepped it back),
+  it is pulled back to the present so the real occurrence still rings.
 - **Regional-only holidays are a name table** (`holidays.REGIONAL_ONLY`) layered
   on the `holidays` package, because the package does not flag which entries
   are partial-state (e.g. the Royal Queensland Show). `holiday_scope =
@@ -392,7 +394,14 @@ each section. Every entry says what was decided and why, so it can be revisited.
     `dark_after_s`, even with the dark trigger off.
   - After a morning, alarm or ring wake the dark trigger waits until the room has
     been bright once, so a dark winter morning does not put it straight back.
-  - Anything ringing (an alarm, a nap, light wake) ends sleep mode.
+  - Anything ringing (an alarm, a nap, light wake) ends sleep mode. A bedtime that passes
+    while something rings still applies once it stops.
+  - Inside the alarm lead window (`alarm_lead_minutes` before the alarm until 5 minutes
+    after it) nothing puts the face back to sleep, not even a restart or a clock step.
+  - Each light state is entered *and left* only after its dwell time, so a hand over the
+    sensor or someone walking past is not "the room got bright" again.
+  - All of its timing is in real (UTC) seconds: Python subtracts two times in the same
+    zone as wall-clock times, which made each DST change look like a one-hour clock step.
   - At boot, or when the clock steps by more than 10 minutes (chrony at boot), it
     takes the state the schedule says it should be in; the room's first reading
     after boot settles to dark (which counts) or bright (which does not count as

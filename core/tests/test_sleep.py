@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, time, timedelta
+from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -130,6 +130,62 @@ def test_boot_in_a_lit_room_is_not_a_bright_edge() -> None:
     assert r[at(5, 13, 1)]
 
 
+def instants(start: datetime, end: datetime, step_s: int = 30):
+    """Real time steps (in UTC), shown on the local clock: across a DST change the wall clock jumps, time does not."""
+    t = start.astimezone(UTC)
+    while t <= end.astimezone(UTC):
+        yield t.astimezone(TZ)
+        t += timedelta(seconds=step_s)
+
+
+def test_dst_changes_are_not_clock_steps() -> None:
+    s = SleepSettings()
+    # spring forward, Sun 4 Oct 2026 02:00 -> 03:00: woken by hand at 23:00, it stays awake through the jump
+    p, woke = SleepPlanner(), datetime(2026, 10, 3, 23, 0, tzinfo=TZ)
+    for now in instants(datetime(2026, 10, 3, 22, 0, tzinfo=TZ), datetime(2026, 10, 4, 4, 0, tzinfo=TZ)):
+        if now.timestamp() == woke.timestamp():
+            p.manual(False)
+        asleep = p.update(s, now, None, None, False)
+        assert not (asleep and now.timestamp() >= woke.timestamp()), now
+    # fall back, Sun 5 Apr 2026 03:00 -> 02:00: a lamp on at 02:30 (daylight time) keeps it awake through the repeat
+    p, lamp = SleepPlanner(), datetime(2026, 4, 4, 15, 30, tzinfo=UTC)  # 02:30+11:00
+    for now in instants(datetime(2026, 4, 4, 22, 0, tzinfo=TZ), datetime(2026, 4, 5, 4, 0, tzinfo=TZ)):
+        asleep = p.update(s, now, LAMP if now >= lamp else DARK, None, False)
+        assert not (asleep and now.timestamp() >= lamp.timestamp() + 30), now
+
+
+def test_restart_inside_the_alarm_lead_stays_awake() -> None:
+    p, s, alarm = SleepPlanner(), SleepSettings(), at(6, 6, 0)
+    assert not p.update(s, at(6, 5, 55), None, alarm, False)  # core restarted at 05:55, inside the window
+    assert not p.update(s, at(6, 5, 59, 59), None, alarm, False)
+    assert p.next_end(s, at(6, 5, 55), alarm) == at(6, 6, 30)  # not 05:50, which has passed
+
+
+def test_a_ring_at_bedtime_does_not_cancel_it() -> None:
+    ring = (at(5, 22, 29, 50), at(5, 22, 31))
+    for light in (None, LAMP):
+        n = Night()
+        r = n.run(at(5, 22), at(5, 22, 40), lambda t, light=light: light, ringing=lambda t: ring[0] <= t < ring[1], step_s=10)
+        assert not r[at(5, 22, 30, 50)] and r[at(5, 22, 31)], light
+    # but a morning alarm that rings past a quarter of an hour does not send it back to sleep
+    n = Night(alarm=at(6, 6, 0))
+    r = n.run(at(6, 5, 0), at(6, 6, 40), lambda t: None, ringing=lambda t: at(6, 6, 0) <= t < at(6, 6, 20), step_s=10)
+    assert not any(v for t, v in r.items() if t >= at(6, 5, 50))
+
+
+def test_a_passing_shadow_is_not_a_bright_morning() -> None:
+    """Asleep with the lights on: a hand over the sensor for 2 s must not count as the room getting bright again."""
+    shadow = (at(5, 23, 0), at(5, 23, 0, 2))
+    r = Night().run(at(5, 22), at(5, 23, 5), lambda t: 2.0 if shadow[0] <= t < shadow[1] else LAMP, step_s=1)
+    assert r[at(5, 22, 30)] and all(v for t, v in r.items() if t >= at(5, 22, 30))
+
+
+def test_dark_only_sleep_says_dark() -> None:
+    n = Night(SleepSettings(start_at_time=False))
+    n.run(at(5, 23), at(5, 23, 3), lambda t: DARK)
+    assert n.p.asleep and n.p.reason == "dark"
+
+
 def test_no_sensor_means_schedule_only() -> None:
     r = Night().run(at(5, 22), at(6, 7), lambda t: None)
     assert r[at(5, 22, 30)] and r[at(6, 6, 29, 30)] and not r[at(6, 6, 30)]
@@ -220,6 +276,32 @@ async def test_screen_off_tap_peeks_then_wakes(client: AsyncClient) -> None:
     await client.post("/api/face/touch")  # second tap: the full face
     s = await until(client, lambda s: s["face"]["mode"] == "standby")
     assert s["face"]["peek_until"] is None and not s["face"]["menu_open"]
+
+
+async def test_backlight_comes_back_after_screen_off_sleep_in_a_dim_room(client: AsyncClient) -> None:
+    """Screen-off sleep holds the target at 0; afterwards the curve's 1-5 % in a dim room is within the 4 %
+    hysteresis of 0, so the target must be taken from the curve again, or the ringing screen stays black."""
+    from dawn_core.display.service import DisplayService
+
+    class Dim:
+        name = "dim"
+
+        async def read(self) -> float:
+            return 0.5
+
+        async def stop(self) -> None:
+            pass
+
+    d = client._transport.app.state.ctx.svc(DisplayService)  # type: ignore[attr-defined]
+    d.sensor, d.lux = Dim(), 0.5
+    await client.patch("/api/config", json={"display": {"sleep": {**MANUAL_ONLY, "screen_off": True}}})
+    await client.post("/api/display/sleep", json={"on": True})
+    await until(client, lambda s: s["display"]["brightness"] == 0)
+    assert (await client.post("/api/alarms/test", json={"source": "chime"})).status_code == 200
+    await until(client, lambda s: s["face"]["mode"] == "ringing")
+    s = await until(client, lambda s: s["display"]["brightness"] >= 1)
+    assert s["display"]["target"] >= 1
+    await client.post("/api/alarms/stop")
 
 
 async def test_turning_sleep_off_wakes_and_logs(client: AsyncClient) -> None:

@@ -188,6 +188,9 @@ class AlarmService(Service):
         for row in self.rows():
             if not row.enabled:
                 continue
+            if row.last_fired_occurrence and datetime.fromisoformat(row.last_fired_occurrence) > now + timedelta(minutes=10):
+                # stamped while the clock was fast, and it has been stepped back since: only up to now is handled
+                row = self.patch(row.id or 0, last_fired_occurrence=now.isoformat(timespec="seconds")) or row
             spec = self.spec_for(row)
             hol = self._holiday_fn(row)
             # a pending skip whose occurrence has now passed: consume it
