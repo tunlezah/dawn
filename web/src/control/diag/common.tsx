@@ -184,7 +184,9 @@ export interface ChartSpec {
 export function HistorySection({ specs, hours, onHours, tz, h24, area }: { specs: ChartSpec[]; hours: number; onHours: (h: number) => void; tz: string; h24: boolean; area: keyof typeof EVENTS }) {
   const keys = useMemo(() => [...new Set(specs.flatMap((s) => s.metrics.map((m) => m.key)))].join(','), [specs]);
   const { data, busy, error } = usePoll<History>(`/api/diag/history?metrics=${keys}&hours=${hours}&points=240`, 60_000);
-  const t1 = Date.now(), t0 = t1 - hours * 3_600_000;
+  // the axis follows the data on screen: while a new range loads, the old one stays drawn on its own axis
+  const shownHours = data?.hours ?? hours;
+  const t1 = Date.now(), t0 = t1 - shownHours * 3_600_000;
   const events = (data?.events ?? []).filter(EVENTS[area]);
   return (
     <div className="space-y-5">

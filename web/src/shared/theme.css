@@ -124,7 +124,7 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--ring); }
 .viz:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
 .viz text { font-family: var(--font-sans); }
 .viz-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 10px;
-  padding: 6px 9px; font-size: 12px; line-height: 1.35; white-space: nowrap; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); color: var(--fg); }
+  padding: 6px 9px; font-size: 12px; line-height: 1.35; width: max-content; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); color: var(--fg); }
 .viz-tip .k { display: inline-block; width: 12px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
 .viz-tip .m { color: var(--fg-muted); }
 .viz-table { width: 100%; font-size: 12px; border-collapse: collapse; }

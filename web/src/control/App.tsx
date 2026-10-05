@@ -74,6 +74,13 @@ export function App() {
   const path = usePath();
   const [locked, setLocked] = useState<boolean | null>(null);
   const [more, setMore] = useState(false);
+  useEffect(() => setMore(false), [path]);  // Back, or any navigation, closes the More menu
+  useEffect(() => {
+    if (!more) return;
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setMore(false); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [more]);
 
   useEffect(() => {
     api.get<{ required: boolean; authenticated: boolean }>('/api/auth/status').then((s) => setLocked(s.required && !s.authenticated)).catch(() => setLocked(false));

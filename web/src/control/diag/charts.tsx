@@ -1,7 +1,7 @@
 // Small SVG charts for the Diagnostics page, built to the data-viz method: thin marks, solid hairline grid, one
 // y-axis per chart (different units get their own chart), a crosshair tooltip on lines, per-mark tooltips on
 // columns and dots, a legend whenever there are two series, and a table view behind every chart.
-import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
+import { Component, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from 'react';
 
 export const VIZ = { s1: 'var(--viz-1)', s2: 'var(--viz-2)', dim: 'var(--viz-dim)', grid: 'var(--viz-grid)', axis: 'var(--viz-axis)', surface: 'var(--bg-elev)', text: 'var(--fg-muted)', faint: 'var(--fg-faint)' };
 
@@ -71,14 +71,15 @@ export function clockLabel(t: number, tz: string, h24: boolean, withDay = false)
   const hm = h24 ? `${String(p.h).padStart(2, '0')}:${String(p.mi).padStart(2, '0')}` : `${p.h % 12 || 12}:${String(p.mi).padStart(2, '0')}${p.h < 12 ? 'am' : 'pm'}`;
   return withDay ? `${p.wd} ${p.d} · ${hm}` : hm;
 }
-/** Tick instants on local-time boundaries (15 min, 1 h, 4 h or a day, by the span). */
-function timeTicks(t0: number, t1: number, tz: string): { t: number; day: boolean }[] {
+/** Tick instants on local-time boundaries, as many as fit: `maxTicks` comes from the chart's width. */
+function timeTicks(t0: number, t1: number, tz: string, maxTicks: number): { t: number; day: boolean }[] {
   const span = t1 - t0, H = 3_600_000;
-  const step = span <= 1.6 * H ? H / 4 : span <= 6.5 * H ? H : span <= 26 * H ? 4 * H : 24 * H;
+  const steps = [H / 4, H / 2, H, 2 * H, 3 * H, 4 * H, 6 * H, 12 * H, 24 * H, 48 * H];
+  const step = steps.find((s) => span / s <= Math.max(1, maxTicks)) ?? 48 * H;
   const out: { t: number; day: boolean }[] = [];
   const off0 = offsetMs(t0, tz);
   let local = Math.ceil((t0 + off0) / step) * step;
-  for (let i = 0; i < 40; i++) {
+  for (let i = 0; i < 60; i++) {
     const guess = local - offsetMs(local - off0, tz);
     if (guess > t1) break;
     if (guess >= t0) out.push({ t: guess, day: step >= 24 * H });
@@ -104,6 +105,19 @@ export function Legend({ items }: { items: Key[] }) {
   );
 }
 
+/** Keeps one broken chart (bad data, a bug) from blanking the whole page. */
+export class ChartBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
+  state = { error: null as string | null };
+  static getDerivedStateFromError(e: unknown) {
+    return { error: e instanceof Error ? e.message : String(e) };
+  }
+  render() {
+    return this.state.error
+      ? <div className="text-sm text-muted py-4">This chart could not be drawn ({this.state.error}); the table view still has the numbers.</div>
+      : this.props.children;
+  }
+}
+
 export function Figure({ title, sub, legend, table, busy, children }: { title: string; sub?: ReactNode; legend?: Key[]; table: () => ReactNode; busy?: boolean; children: ReactNode }) {
   const [asTable, setAsTable] = useState(false);
   return (
@@ -118,23 +132,38 @@ export function Figure({ title, sub, legend, table, busy, children }: { title: s
         </button>
       </figcaption>
       {legend && legend.length >= 2 && <Legend items={legend} />}
-      <div className="transition-opacity" style={{ opacity: busy ? 0.55 : 1 }}>{asTable ? <div className="max-h-72 overflow-auto">{table()}</div> : children}</div>
+      <div className="transition-opacity" style={{ opacity: busy ? 0.55 : 1 }}>
+        {asTable ? <div className="max-h-72 overflow-auto">{table()}</div> : <ChartBoundary>{children}</ChartBoundary>}
+      </div>
     </figure>
   );
 }
 
 export function Table({ head, rows }: { head: string[]; rows: (string | number)[][] }) {
   return (
-    <table className="viz-table">
-      <thead><tr>{head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
-      <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
-    </table>
+    <div className="overflow-x-auto max-w-full">
+      <table className="viz-table">
+        <thead><tr>{head.map((h) => <th key={h}>{h}</th>)}</tr></thead>
+        <tbody>{rows.map((r, i) => <tr key={i}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody>
+      </table>
+    </div>
   );
 }
 
+/** The tooltip sits beside the point and is pushed back inside the chart when it would stick out. */
 function Tip({ x, y, w, children }: { x: number; y: number; w: number; children: ReactNode }) {
-  const flip = x > w * 0.55;
-  return <div className="viz-tip" style={{ top: Math.max(0, y), left: flip ? undefined : x + 14, right: flip ? w - x + 14 : undefined }}>{children}</div>;
+  const ref = useRef<HTMLDivElement>(null);
+  const [left, setLeft] = useState<number | null>(null);
+  useLayoutEffect(() => {
+    const tw = ref.current?.offsetWidth ?? 0;
+    const want = x > w * 0.55 ? x - 14 - tw : x + 14;
+    setLeft(Math.max(0, Math.min(w - tw, want)));
+  });
+  return (
+    <div ref={ref} className="viz-tip" style={{ top: Math.max(0, y), left: left ?? 0, maxWidth: Math.max(120, w), visibility: left === null ? 'hidden' : 'visible' }}>
+      {children}
+    </div>
+  );
 }
 
 /** A label drawn over data: a ring of the card colour keeps it legible where it crosses a line. */
@@ -144,6 +173,8 @@ function Halo({ x, y, children, anchor = 'end', size = 9.5, ink = VIZ.text }: { 
 
 /** y tick text: the top tick carries a short unit (dB, ms, %…), so the axis says what it measures. */
 const tickText = (v: number, top: boolean, unit: string, digits: number) => (top && unit && unit.length <= 4 ? withUnit(fmtNum(v, digits), unit) : fmtNum(v, digits));
+/** Room for the longest y tick label (10 px text is about 6 px a character). */
+const leftFor = (labels: string[]) => Math.min(96, Math.max(34, Math.max(0, ...labels.map((l) => l.length)) * 6 + 12));
 
 /** 4 px rounded data end, square at the baseline (columns grow up from `base`). */
 function colPath(x0: number, x1: number, yTop: number, base: number): string {
@@ -152,6 +183,9 @@ function colPath(x0: number, x1: number, yTop: number, base: number): string {
   const r = Math.min(4, h, (x1 - x0) / 2);
   return `M${x0},${base}V${yTop + r}Q${x0},${yTop} ${x0 + r},${yTop}H${x1 - r}Q${x1},${yTop} ${x1},${yTop + r}V${base}Z`;
 }
+
+let clipSeq = 0;
+const useClipId = () => useState(() => `viz-clip-${++clipSeq}`)[0];
 
 // ---- time series ---------------------------------------------------------------------------------------------
 export interface TPoint { t: number; v: number; lo: number; hi: number }
@@ -176,52 +210,53 @@ export function TimeChart({ series, unit, t0, t1, tz, h24, height = 132, yMin, y
   yMin?: number; yMax?: number; refs?: TRef[]; markers?: TMarker[]; digits?: number;
 }) {
   const [ref, w] = useWidth<HTMLDivElement>();
-  const [hi, setHi] = useState<number | null>(null); // index into `times`
-  const M = { l: 50, r: 52, t: 8, b: 20 };
+  // the hovered instant, not a position in the list: the list is replaced on every refresh
+  const [hoverT, setHoverT] = useState<number | null>(null);
+  const clip = useClipId();
   const all = series.flatMap((s) => s.points);
   const sc = useMemo(() => {
     const lo = Math.min(...all.map((p) => p.lo), ...refs.map((r) => r.y));
     const hiV = Math.max(...all.map((p) => p.hi), ...refs.map((r) => r.y));
     return niceScale(yMin ?? lo, yMax ?? hiV, 3, [yMin, yMax]);
   }, [all.length, series, refs, yMin, yMax]); // eslint-disable-line react-hooks/exhaustive-deps
+  const labels = sc.ticks.map((v, i) => tickText(v, i === sc.ticks.length - 1, unit, sc.digits));
+  const M = { l: leftFor(labels), r: 52, t: 8, b: 20 };
   const times = useMemo(() => [...new Set(all.map((p) => p.t))].sort((a, b) => a - b), [series]); // eslint-disable-line react-hooks/exhaustive-deps
   const pw = Math.max(10, w - M.l - M.r), ph = height - M.t - M.b;
   const x = (t: number) => M.l + ((t - t0) / Math.max(1, t1 - t0)) * pw;
   const y = (v: number) => M.t + (1 - (v - sc.lo) / Math.max(1e-9, sc.hi - sc.lo)) * ph;
-  const ticks = useMemo(() => timeTicks(t0, t1, tz), [t0, t1, tz]);
+  const ticks = useMemo(() => timeTicks(t0, t1, tz, Math.floor(pw / (h24 ? 46 : 58))), [t0, t1, tz, pw, h24]);
   const bucket = times.length > 1 ? (times[times.length - 1] - times[0]) / (times.length - 1) : 60_000;
+  const nearest = (t: number) => times.reduce((best, c) => (Math.abs(c - t) < Math.abs(best - t) ? c : best), times[0]);
 
-  const pick = (px: number) => {
-    if (!times.length) return null;
-    const t = t0 + ((px - M.l) / pw) * (t1 - t0);
-    let best = 0;
-    for (let i = 1; i < times.length; i++) if (Math.abs(times[i] - t) < Math.abs(times[best] - t)) best = i;
-    return best;
-  };
   const onKey = (e: KeyboardEvent) => {
     if (!times.length) return;
     if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
       e.preventDefault();
-      setHi((i) => Math.max(0, Math.min(times.length - 1, (i ?? times.length - 1) + (e.key === 'ArrowLeft' ? -1 : 1))));
-    } else if (e.key === 'Escape') setHi(null);
+      const cur = hoverT === null ? -1 : times.indexOf(nearest(hoverT));
+      // the first press lands on the newest point; then one step at a time
+      const i = cur < 0 ? times.length - 1 : Math.max(0, Math.min(times.length - 1, cur + (e.key === 'ArrowLeft' ? -1 : 1)));
+      setHoverT(times[i]);
+    } else if (e.key === 'Escape') setHoverT(null);
   };
 
   // end labels only when they do not collide (otherwise the legend and the tooltip carry identity)
   const ends = series.map((s) => s.points[s.points.length - 1]).map((p) => (p ? y(p.v) : null));
   const collide = ends.some((a, i) => a !== null && ends.some((b, j) => j > i && b !== null && Math.abs(a - b) < 12));
-  const ht = hi !== null ? times[hi] : null;
+  const ht = hoverT !== null && times.length ? nearest(hoverT) : null;
   const near = ht !== null ? markers.filter((m) => Math.abs(m.t - ht) <= bucket / 2 + 30_000) : [];
 
   return (
-    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHi(null)} aria-label={`${series.map((s) => s.label).join(', ')} over time`}
-      onPointerLeave={() => setHi(null)}>
+    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHoverT(null)} aria-label={`${series.map((s) => s.label).join(', ')} over time`}
+      onPointerLeave={() => setHoverT(null)}>
       {w > 0 && (
         <svg width={w} height={height} role="img" aria-hidden="true"
-          onPointerMove={(e) => { const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); setHi(pick(e.clientX - r.left)); }}>
-          {sc.ticks.map((v) => (
+          onPointerMove={(e) => { const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); setHoverT(t0 + ((e.clientX - r.left - M.l) / pw) * (t1 - t0)); }}>
+          <defs><clipPath id={clip}><rect x={M.l} y={0} width={pw + M.r} height={height} /></clipPath></defs>
+          {sc.ticks.map((v, i) => (
             <g key={v}>
               <line x1={M.l} x2={M.l + pw} y1={y(v)} y2={y(v)} stroke={VIZ.grid} strokeWidth={1} shapeRendering="crispEdges" />
-              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{tickText(v, v === sc.ticks[sc.ticks.length - 1], unit, sc.digits)}</text>
+              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{labels[i]}</text>
             </g>
           ))}
           <line x1={M.l} x2={M.l + pw} y1={M.t + ph} y2={M.t + ph} stroke={VIZ.axis} strokeWidth={1} shapeRendering="crispEdges" />
@@ -230,31 +265,33 @@ export function TimeChart({ series, unit, t0, t1, tz, h24, height = 132, yMin, y
               {k.day ? clockLabel(k.t, tz, h24, true).split(' · ')[0] : clockLabel(k.t, tz, h24)}
             </text>
           ))}
-          {markers.map((m, i) => m.t >= t0 && m.t <= t1 && (
-            <line key={i} x1={x(m.t)} x2={x(m.t)} y1={M.t} y2={M.t + ph} stroke={VIZ.faint} strokeWidth={1} shapeRendering="crispEdges" />
-          ))}
-          {refs.map((r) => <line key={r.label} x1={M.l} x2={M.l + pw} y1={y(r.y)} y2={y(r.y)} stroke={VIZ.faint} strokeWidth={1} shapeRendering="crispEdges" />)}
-          {series.map((s) => segments(s.points).map((seg, i) => (
-            <g key={`${s.key}-${i}`}>
-              {seg.some((p) => p.hi - p.lo > 1e-9) && (
-                <path d={`M${seg.map((p) => `${x(p.t).toFixed(1)},${y(p.hi).toFixed(1)}`).join('L')}L${[...seg].reverse().map((p) => `${x(p.t).toFixed(1)},${y(p.lo).toFixed(1)}`).join('L')}Z`}
-                  fill={s.color} opacity={0.1} />
-              )}
-              {seg.length > 1
-                ? <path d={`M${seg.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('L')}`} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
-                : <circle cx={x(seg[0].t)} cy={y(seg[0].v)} r={2} fill={s.color} />}
-            </g>
-          )))}
-          {series.map((s) => {
-            const p = s.points[s.points.length - 1];
-            if (!p) return null;
-            return (
-              <g key={`end-${s.key}`}>
-                <circle cx={x(p.t)} cy={y(p.v)} r={4} fill={s.color} stroke={VIZ.surface} strokeWidth={2} />
-                {!collide && <text x={x(p.t) + 8} y={y(p.v) + 3.5} fontSize={10.5} fill="var(--fg)" className="tnum" stroke={VIZ.surface} strokeWidth={3} strokeLinejoin="round" paintOrder="stroke">{fmtNum(p.v, digits)}</text>}
+          <g clipPath={`url(#${clip})`}>
+            {markers.map((m, i) => m.t >= t0 && m.t <= t1 && (
+              <line key={i} x1={x(m.t)} x2={x(m.t)} y1={M.t} y2={M.t + ph} stroke={VIZ.faint} strokeWidth={1} shapeRendering="crispEdges" />
+            ))}
+            {refs.map((r) => <line key={r.label} x1={M.l} x2={M.l + pw} y1={y(r.y)} y2={y(r.y)} stroke={VIZ.faint} strokeWidth={1} shapeRendering="crispEdges" />)}
+            {series.map((s) => segments(s.points).map((seg, i) => (
+              <g key={`${s.key}-${i}`}>
+                {seg.some((p) => p.hi - p.lo > 1e-9) && (
+                  <path d={`M${seg.map((p) => `${x(p.t).toFixed(1)},${y(p.hi).toFixed(1)}`).join('L')}L${[...seg].reverse().map((p) => `${x(p.t).toFixed(1)},${y(p.lo).toFixed(1)}`).join('L')}Z`}
+                    fill={s.color} opacity={0.1} />
+                )}
+                {seg.length > 1
+                  ? <path d={`M${seg.map((p) => `${x(p.t).toFixed(1)},${y(p.v).toFixed(1)}`).join('L')}`} fill="none" stroke={s.color} strokeWidth={2} strokeLinejoin="round" strokeLinecap="round" />
+                  : <circle cx={x(seg[0].t)} cy={y(seg[0].v)} r={2} fill={s.color} />}
               </g>
-            );
-          })}
+            )))}
+            {series.map((s) => {
+              const p = s.points[s.points.length - 1];
+              if (!p) return null;
+              return (
+                <g key={`end-${s.key}`}>
+                  <circle cx={x(p.t)} cy={y(p.v)} r={4} fill={s.color} stroke={VIZ.surface} strokeWidth={2} />
+                  {!collide && <text x={x(p.t) + 8} y={y(p.v) + 3.5} fontSize={10.5} fill="var(--fg)" className="tnum" stroke={VIZ.surface} strokeWidth={3} strokeLinejoin="round" paintOrder="stroke">{fmtNum(p.v, digits)}</text>}
+                </g>
+              );
+            })}
+          </g>
           {refs.map((r) => <Halo key={r.label} x={M.l + pw - 2} y={y(r.y) - 3}>{r.label}</Halo>)}
           {ht !== null && (
             <g pointerEvents="none">
@@ -308,37 +345,38 @@ export function LineChart({ xs, ys, xUnit, yUnit, xTitle, height = 166, xDigits 
   refs?: TRef[]; dots?: { x: number; y: number; label: string }[]; color?: string; yMin?: number; yMax?: number; label: string;
 }) {
   const [ref, w] = useWidth<HTMLDivElement>();
-  const [hi, setHi] = useState<number | null>(null);
-  const M = { l: 48, r: 12, t: 8, b: 34 };
+  const [hoverX, setHoverX] = useState<number | null>(null);  // a value on the x axis, not an index
+  const sc = niceScale(yMin ?? Math.min(...ys, ...refs.map((r) => r.y)), yMax ?? Math.max(...ys, ...refs.map((r) => r.y)), 3, [yMin, yMax]);
+  const labels = sc.ticks.map((v, i) => tickText(v, i === sc.ticks.length - 1, yUnit, sc.digits));
+  const M = { l: leftFor(labels), r: 12, t: 8, b: 34 };
   const pw = Math.max(10, w - M.l - M.r), ph = height - M.t - M.b;
   const xlo = xs[0] ?? 0, xhi = xs[xs.length - 1] ?? 1;
-  const sc = niceScale(yMin ?? Math.min(...ys, ...refs.map((r) => r.y)), yMax ?? Math.max(...ys, ...refs.map((r) => r.y)), 3, [yMin, yMax]);
   const xsc = niceScale(xlo, xhi, Math.max(2, Math.floor(pw / 70)), [xlo, xhi]);
   const x = (v: number) => M.l + ((v - xlo) / Math.max(1e-9, xhi - xlo)) * pw;
   const y = (v: number) => M.t + (1 - (Math.max(sc.lo, Math.min(sc.hi, v)) - sc.lo) / Math.max(1e-9, sc.hi - sc.lo)) * ph;
   const d = xs.map((v, i) => `${i ? 'L' : 'M'}${x(v).toFixed(1)},${y(ys[i]).toFixed(1)}`).join('');
-  const pick = (px: number) => {
-    if (!xs.length) return null;
-    const v = xlo + ((px - M.l) / pw) * (xhi - xlo);
+  const nearestI = (v: number) => {
     let best = 0;
     for (let i = 1; i < xs.length; i++) if (Math.abs(xs[i] - v) < Math.abs(xs[best] - v)) best = i;
     return best;
   };
+  const hi = hoverX !== null && xs.length ? nearestI(hoverX) : null;
   const onKey = (e: KeyboardEvent) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || !xs.length) return;
     e.preventDefault();
     const stepN = Math.max(1, Math.round(xs.length / 64));
-    setHi((i) => Math.max(0, Math.min(xs.length - 1, (i ?? Math.floor(xs.length / 2)) + (e.key === 'ArrowLeft' ? -stepN : stepN))));
+    const i = hi === null ? Math.floor(xs.length / 2) : Math.max(0, Math.min(xs.length - 1, hi + (e.key === 'ArrowLeft' ? -stepN : stepN)));
+    setHoverX(xs[i]);
   };
   return (
-    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHi(null)} onPointerLeave={() => setHi(null)} aria-label={label}>
+    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHoverX(null)} onPointerLeave={() => setHoverX(null)} aria-label={label}>
       {w > 0 && (
         <svg width={w} height={height} role="img" aria-hidden="true"
-          onPointerMove={(e) => { const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); setHi(pick(e.clientX - r.left)); }}>
-          {sc.ticks.map((v) => (
+          onPointerMove={(e) => { const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect(); setHoverX(xlo + ((e.clientX - r.left - M.l) / pw) * (xhi - xlo)); }}>
+          {sc.ticks.map((v, i) => (
             <g key={v}>
               <line x1={M.l} x2={M.l + pw} y1={y(v)} y2={y(v)} stroke={VIZ.grid} strokeWidth={1} shapeRendering="crispEdges" />
-              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{tickText(v, v === sc.ticks[sc.ticks.length - 1], yUnit, sc.digits)}</text>
+              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{labels[i]}</text>
             </g>
           ))}
           <line x1={M.l} x2={M.l + pw} y1={M.t + ph} y2={M.t + ph} stroke={VIZ.axis} strokeWidth={1} shapeRendering="crispEdges" />
@@ -382,10 +420,11 @@ export function ColumnChart({ cols, unit, height = 150, yMax, refs = [], xLabel,
   cols: Col[]; unit: string; height?: number; yMax?: number; refs?: TRef[]; xLabel?: (c: Col, i: number) => string | null; xTitle?: string; label: string; digits?: number;
 }) {
   const [ref, w] = useWidth<HTMLDivElement>();
-  const [hi, setHi] = useState<number | null>(null);
-  const M = { l: 48, r: 8, t: 10, b: (xLabel ? 20 : 6) + (xTitle ? 14 : 0) };
-  const pw = Math.max(10, w - M.l - M.r), ph = height - M.t - M.b;
+  const [hoverKey, setHoverKey] = useState<string | null>(null);  // by key: the columns may be re-sorted on refresh
   const sc = niceScale(0, yMax ?? Math.max(1, ...cols.map((c) => c.value ?? 0), ...refs.map((r) => r.y)), 3, [0, yMax]);
+  const labels = sc.ticks.map((v, i) => tickText(v, i === sc.ticks.length - 1, unit, sc.digits));
+  const M = { l: leftFor(labels), r: 8, t: 10, b: (xLabel ? 20 : 6) + (xTitle ? 14 : 0) };
+  const pw = Math.max(10, w - M.l - M.r), ph = height - M.t - M.b;
   const band = pw / Math.max(1, cols.length);
   const bw = Math.max(1, Math.min(24, band - 2));
   const y = (v: number) => M.t + (1 - (Math.min(v, sc.hi) - sc.lo) / Math.max(1e-9, sc.hi - sc.lo)) * ph;
@@ -401,19 +440,21 @@ export function ColumnChart({ cols, unit, height = 150, yMax, refs = [], xLabel,
       if (cx(i) - half >= lastRight + 4) { shown.add(i); lastRight = cx(i) + half; }
     });
   }
+  const hi = hoverKey === null ? -1 : cols.findIndex((c) => c.key === hoverKey);
   const onKey = (e: KeyboardEvent) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || !cols.length) return;
     e.preventDefault();
-    setHi((i) => Math.max(0, Math.min(cols.length - 1, (i ?? -1) + (e.key === 'ArrowLeft' ? -1 : 1))));
+    const i = hi < 0 ? 0 : Math.max(0, Math.min(cols.length - 1, hi + (e.key === 'ArrowLeft' ? -1 : 1)));
+    setHoverKey(cols[i].key);
   };
   return (
-    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHi(null)} onPointerLeave={() => setHi(null)} aria-label={label}>
+    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHoverKey(null)} onPointerLeave={() => setHoverKey(null)} aria-label={label}>
       {w > 0 && (
         <svg width={w} height={height} role="img" aria-hidden="true">
-          {sc.ticks.map((v) => (
+          {sc.ticks.map((v, i) => (
             <g key={v}>
               <line x1={M.l} x2={M.l + pw} y1={y(v)} y2={y(v)} stroke={VIZ.grid} strokeWidth={1} shapeRendering="crispEdges" />
-              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{tickText(v, v === sc.ticks[sc.ticks.length - 1], unit, sc.digits)}</text>
+              <text x={M.l - 6} y={y(v)} dy="0.32em" textAnchor="end" fontSize={10} fill={VIZ.text} className="tnum">{labels[i]}</text>
             </g>
           ))}
           {refs.map((r) => <line key={r.label} x1={M.l} x2={M.l + pw} y1={y(r.y)} y2={y(r.y)} stroke={VIZ.faint} strokeWidth={1} shapeRendering="crispEdges" />)}
@@ -424,10 +465,10 @@ export function ColumnChart({ cols, unit, height = 150, yMax, refs = [], xLabel,
           {refs.map((r) => <Halo key={r.label} x={M.l + pw - 2} y={y(r.y) - 3}>{r.label}</Halo>)}
           {xLabel && cols.map((c, i) => { const t = xLabel(c, i); return t && shown.has(i) ? <text key={c.key} x={cx(i)} y={M.t + ph + 14} textAnchor="middle" fontSize={9.5} fill={VIZ.text}>{t}</text> : null; })}
           {xTitle && <text x={M.l + pw / 2} y={height - 3} textAnchor="middle" fontSize={10} fill={VIZ.text}>{xTitle}</text>}
-          {cols.map((c, i) => <rect key={c.key} x={M.l + band * i} y={M.t} width={band} height={ph} fill="transparent" onPointerEnter={() => setHi(i)} />)}
+          {cols.map((c, i) => <rect key={c.key} x={M.l + band * i} y={M.t} width={band} height={ph} fill="transparent" onPointerEnter={() => setHoverKey(c.key)} />)}
         </svg>
       )}
-      {hi !== null && cols[hi] && (
+      {hi >= 0 && (
         <Tip x={cx(hi)} y={M.t} w={w}>
           <b className="tnum">{fmtU(cols[hi].value, unit, digits)}</b> <span className="m">{cols[hi].label}</span>
           {cols[hi].note && <div className="m">{cols[hi].note}</div>}
@@ -441,38 +482,38 @@ export function ColumnChart({ cols, unit, height = 150, yMax, refs = [], xLabel,
 export interface SkyDot { key: string; az: number; el: number; color: string; title: string; detail: string }
 export function SkyPlot({ dots, label }: { dots: SkyDot[]; label: string }) {
   const [ref, w] = useWidth<HTMLDivElement>();
-  const [hi, setHi] = useState<number | null>(null);
+  const [hoverKey, setHoverKey] = useState<string | null>(null);  // by key: the satellites are re-sorted every second
   const size = Math.min(w, 300), R = size / 2 - 16, c = size / 2;
-  const pos = (az: number, el: number) => {
-    const r = (R * (90 - Math.max(0, Math.min(90, el)))) / 90, a = (az * Math.PI) / 180;
-    return { x: c + r * Math.sin(a), y: c - r * Math.cos(a) };
-  };
+  const at = (az: number, r: number) => { const a = (az * Math.PI) / 180; return { x: c + r * Math.sin(a), y: c - r * Math.cos(a) }; };
+  const pos = (az: number, el: number) => at(az, (R * (90 - Math.max(0, Math.min(90, el)))) / 90);
+  const hi = hoverKey === null ? -1 : dots.findIndex((d) => d.key === hoverKey);
   const onKey = (e: KeyboardEvent) => {
-    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+    if ((e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') || !dots.length) return;
     e.preventDefault();
-    setHi((i) => Math.max(0, Math.min(dots.length - 1, (i ?? -1) + (e.key === 'ArrowLeft' ? -1 : 1))));
+    const i = hi < 0 ? 0 : Math.max(0, Math.min(dots.length - 1, hi + (e.key === 'ArrowLeft' ? -1 : 1)));
+    setHoverKey(dots[i].key);
   };
-  const h = hi !== null ? dots[hi] : null;
+  const h = hi >= 0 ? dots[hi] : null;
   const hp = h ? pos(h.az, h.el) : null;
   return (
-    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHi(null)} onPointerLeave={() => setHi(null)} aria-label={label}>
+    <div ref={ref} className="viz" tabIndex={0} onKeyDown={onKey} onBlur={() => setHoverKey(null)} onPointerLeave={() => setHoverKey(null)} aria-label={label}>
       {size > 0 && (
         <svg width={size} height={size} role="img" aria-hidden="true" className="mx-auto block">
           {[0, 30, 60].map((el) => <circle key={el} cx={c} cy={c} r={(R * (90 - el)) / 90} fill="none" stroke={el ? VIZ.grid : VIZ.axis} strokeWidth={1} />)}
           <line x1={c - R} x2={c + R} y1={c} y2={c} stroke={VIZ.grid} strokeWidth={1} />
           <line x1={c} x2={c} y1={c - R} y2={c + R} stroke={VIZ.grid} strokeWidth={1} />
           {(['N', 'E', 'S', 'W'] as const).map((d, i) => {
-            const p = pos(i * 90, -12);
+            const p = at(i * 90, R + 9);  // just outside the horizon ring
             return <text key={d} x={p.x} y={p.y} dy="0.32em" textAnchor="middle" fontSize={10} fill={VIZ.text}>{d}</text>;
           })}
           <text x={c + 3} y={c - (R * 60) / 90 - 2} fontSize={9} fill={VIZ.text}>30°</text>
           <text x={c + 3} y={c - (R * 30) / 90 - 2} fontSize={9} fill={VIZ.text}>60°</text>
-          {dots.map((d, i) => {
+          {dots.map((d) => {
             const p = pos(d.az, d.el);
             return (
-              <g key={d.key} onPointerEnter={() => setHi(i)}>
+              <g key={d.key} onPointerEnter={() => setHoverKey(d.key)}>
                 <circle cx={p.x} cy={p.y} r={12} fill="transparent" />
-                <circle cx={p.x} cy={p.y} r={hi === i ? 6 : 5} fill={d.color} stroke={VIZ.surface} strokeWidth={2} />
+                <circle cx={p.x} cy={p.y} r={hoverKey === d.key ? 6 : 5} fill={d.color} stroke={VIZ.surface} strokeWidth={2} />
               </g>
             );
           })}

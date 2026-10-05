@@ -93,29 +93,30 @@ export interface History { hours: number; metrics: Record<string, HistoryMetric>
 
 export const toPoints = (m: HistoryMetric | undefined): TPoint[] => (m?.points ?? []).map(([at, v, lo, hi]) => ({ t: Date.parse(at), v, lo, hi }));
 
-/** Poll `path` every `ms` while the page is visible; `null` pauses. Data from the last good fetch stays. */
+/** Poll `path` every `ms` while the page is visible; `null` or `ms <= 0` pauses (nothing is fetched, the last data
+ *  stays on screen). Only the newest request's answer is used: a slow older one never overwrites it. */
 export function usePoll<T>(path: string | null, ms: number): { data: T | null; error: string | null; busy: boolean; reload: () => Promise<void> } {
   const [data, setData] = useState<T | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const live = useRef(path);
-  live.current = path;
+  const seq = useRef(0);
   const load = useCallback(async () => {
     if (!path) return;
+    const mine = ++seq.current;
     setBusy(true);
     try {
       const d = await api.get<T>(path);
-      if (live.current === path) { setData(d); setError(null); }
+      if (mine === seq.current) { setData(d); setError(null); }
     } catch (e) {
-      if (live.current === path) setError(e instanceof ApiError ? e.message : String(e));
+      if (mine === seq.current) setError(e instanceof ApiError ? e.message : String(e));
     } finally {
-      if (live.current === path) setBusy(false);
+      if (mine === seq.current) setBusy(false);
     }
   }, [path]);
+  useEffect(() => () => { seq.current++; }, []);  // answers arriving after unmount are dropped
   useEffect(() => {
-    if (!path) return;
+    if (!path || ms <= 0) return;
     load();
-    if (ms <= 0) return;
     let stop = false;
     let timer = 0;
     const tick = async () => {

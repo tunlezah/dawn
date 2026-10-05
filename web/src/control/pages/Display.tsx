@@ -17,15 +17,45 @@ interface DisplayCfg {
   brightness: { curve: Pt[]; hysteresis_percent: number; slew_s: number; night_lux_threshold: number; night_hysteresis_lux: number; post_sunset_cap_percent: number; post_sunset_cap_minutes: number; sunset_night_palette: boolean; manual_override_until: string; manual_percent: number };
 }
 
+/** A number committed on blur or Enter, never per keystroke. Out of range, not whole when `step` is whole,
+ *  or not a number (the browser reports that as an empty value with badInput): put back what is saved. */
 function NumField({ value, min, max, step = 1, onCommit, label, className = '!w-20' }: { value: number; min: number; max: number; step?: number; onCommit: (v: number) => void; label: string; className?: string }) {
   const [v, setV] = useReactState(String(value));
   useEffect(() => setV(String(value)), [value]);
-  const commit = () => {
+  const commit = (el: HTMLInputElement) => {
     const n = Number(v);
-    if (v.trim() === '' || !Number.isFinite(n) || n < min || n > max) { setV(String(value)); return; }
+    const whole = Number.isInteger(step) ? Number.isInteger(n) : true;
+    if (el.validity.badInput || v.trim() === '' || !Number.isFinite(n) || !whole || n < min || n > max) { setV(String(value)); return; }
     if (n !== value) onCommit(n);
   };
   return <input type="number" aria-label={label} min={min} max={max} step={step} value={v} className={className}
+    onChange={(e) => setV(e.target.value)} onBlur={(e) => commit(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
+}
+
+/** Like NumField, but blank means "not set" (null). */
+function OptionalNumField({ value, min, max, onCommit, label, placeholder }: { value: number | null; min: number; max: number; onCommit: (v: number | null) => void; label: string; placeholder: string }) {
+  const [v, setV] = useReactState(value === null ? '' : String(value));
+  useEffect(() => setV(value === null ? '' : String(value)), [value]);
+  const commit = (el: HTMLInputElement) => {
+    const back = () => setV(value === null ? '' : String(value));
+    if (el.validity.badInput) return back();
+    const n = v.trim() === '' ? null : Number(v);
+    if (n !== null && (!Number.isInteger(n) || n < min || n > max)) return back();
+    if (n !== value) onCommit(n);
+  };
+  return <input type="number" aria-label={label} min={min} max={max} step={1} placeholder={placeholder} value={v} className="!w-20"
+    onChange={(e) => setV(e.target.value)} onBlur={(e) => commit(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
+}
+
+/** HH:MM committed when the field is left: typing "1", "1" must not save 13:30 on the way to 11:30. */
+function TimeField({ value, onCommit, label, disabled }: { value: string; onCommit: (v: string) => void; label: string; disabled?: boolean }) {
+  const [v, setV] = useReactState(value);
+  useEffect(() => setV(value), [value]);
+  const commit = () => {
+    if (!/^\d{2}:\d{2}$/.test(v)) return setV(value);
+    if (v !== value) onCommit(v);
+  };
+  return <input type="time" aria-label={label} value={v} disabled={disabled} className="!w-36"
     onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
 }
 
@@ -68,6 +98,8 @@ export function Display() {
   const patch = (p: Record<string, unknown>) => api.patch('/api/config', { display: p }).then(() => api.get<{ display: DisplayCfg }>('/api/config').then((c) => { setCfg(c.display); setCurve(c.display.brightness.curve); }));
   const d = s.display;
   const [sleepErr, setSleepErr] = useReactState<string | null>(null);
+  const [burnErr, setBurnErr] = useReactState<string | null>(null);
+  const patchBurn = (p: Record<string, unknown>) => patch({ burn_in: p }).then(() => setBurnErr(null)).catch((e: unknown) => setBurnErr(e instanceof ApiError ? JSON.stringify(e.detail ?? e.message) : String(e)));
   const patchSleep = (p: Partial<SleepCfg>) => patch({ sleep: p }).then(() => setSleepErr(null)).catch((e: unknown) => setSleepErr(e instanceof ApiError ? JSON.stringify(e.detail ?? e.message) : String(e)));
   const sleepNow = (on: boolean) => api.post('/api/display/sleep', { on }).then(() => setSleepErr(null)).catch((e: unknown) => setSleepErr(e instanceof ApiError ? e.message : String(e)));
   const when = (iso: string | null) => (iso ? fmtDayTime(iso, s.tz, s.settings.clock_24h) : '–');
@@ -146,7 +178,7 @@ export function Display() {
             <>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted mt-3">Go to sleep (either)</div>
               <Row label="At bedtime" hint="every night, even with the lights on">
-                <input type="time" aria-label="Bedtime" value={cfg.sleep.start} onChange={(e) => e.target.value && patchSleep({ start: e.target.value })} className="!w-36" disabled={!cfg.sleep.start_at_time} />
+                <TimeField label="Bedtime" value={cfg.sleep.start} onCommit={(v) => patchSleep({ start: v })} disabled={!cfg.sleep.start_at_time} />
                 <Switch label="At bedtime" on={cfg.sleep.start_at_time} onChange={(v) => patchSleep({ start_at_time: v })} />
               </Row>
               <Row label="When the room goes dark" hint={d.sensor_found ? `below ${cfg.sleep.dark_lux} lx for ${cfg.sleep.dark_after_s} s · now ${d.lux !== null ? `${Math.round(d.lux * 10) / 10} lx` : '–'}${d.room ? ` (${d.room})` : ''}` : 'needs the light sensor (not found)'}>
@@ -154,7 +186,7 @@ export function Display() {
               </Row>
               <div className="text-xs font-semibold uppercase tracking-wide text-muted mt-3">Wake up (whichever comes first)</div>
               <Row label="At the morning time">
-                <input type="time" aria-label="Morning time" value={cfg.sleep.end} onChange={(e) => e.target.value && patchSleep({ end: e.target.value })} className="!w-36" disabled={!cfg.sleep.end_at_time} />
+                <TimeField label="Morning time" value={cfg.sleep.end} onCommit={(v) => patchSleep({ end: v })} disabled={!cfg.sleep.end_at_time} />
                 <Switch label="At the morning time" on={cfg.sleep.end_at_time} onChange={(v) => patchSleep({ end_at_time: v })} />
               </Row>
               <Row label="Before the next alarm" hint="minutes before it (or before its light wake)">
@@ -181,9 +213,7 @@ export function Display() {
                     <CommitSlider label="Clock level" min={10} max={100} value={cfg.sleep.level_percent} onCommit={(v) => patchSleep({ level_percent: v })} />
                   </Row>
                   <Row label="Backlight" hint="blank = the backlight minimum">
-                    <input type="number" aria-label="Sleep backlight percent" min={0} max={100} placeholder="min" className="!w-20"
-                      defaultValue={cfg.sleep.backlight_percent ?? ''} key={String(cfg.sleep.backlight_percent)}
-                      onBlur={(e) => { const t = e.target.value.trim(); const n = t === '' ? null : Number(t); if (n === null || (Number.isFinite(n) && n >= 0 && n <= 100)) patchSleep({ backlight_percent: n }); }} />
+                    <OptionalNumField label="Sleep backlight percent" placeholder="min" value={cfg.sleep.backlight_percent} min={0} max={100} onCommit={(v) => patchSleep({ backlight_percent: v })} />
                     <span className="text-sm text-muted">%</span>
                   </Row>
                   <Row label="Moves every (s)" hint="fades out, moves, fades in: no edge stays in one place">
@@ -210,12 +240,13 @@ export function Display() {
       {cfg && (
         <Card title="Burn-in protection">
           <p className="text-sm text-muted mb-2">The panel is an IPS LCD: the risk is a faint ghost of things that never move (image retention). These keep every edge moving.</p>
-          <Row label="Pixel orbit" hint="the face drifts up to 8 px sideways and 6 px up and down, about a pixel a minute"><Switch label="Pixel orbit" on={cfg.burn_in.pixel_orbit} onChange={(v) => patch({ burn_in: { pixel_orbit: v } })} /></Row>
+          <Row label="Pixel orbit" hint="the face drifts up to 8 px sideways and 6 px up and down, about a pixel a minute"><Switch label="Pixel orbit" on={cfg.burn_in.pixel_orbit} onChange={(v) => patchBurn({ pixel_orbit: v })} /></Row>
           <Row label="Hide the status strip in Standby" hint="seconds without a touch before it fades; a tap or a change worth seeing brings it back · 0 = never">
-            <NumField label="Hide the status strip after seconds" value={cfg.burn_in.strip_autohide_s} min={0} max={3600} onCommit={(v) => patch({ burn_in: { strip_autohide_s: v } })} />
+            <NumField label="Hide the status strip after seconds" value={cfg.burn_in.strip_autohide_s} min={0} max={3600} onCommit={(v) => patchBurn({ strip_autohide_s: v })} />
           </Row>
-          <Row label="Background changes daily" hint="hills, trees and stars are drawn from the date"><Switch label="Background changes daily" on={cfg.burn_in.scene_daily} onChange={(v) => patch({ burn_in: { scene_daily: v } })} /></Row>
+          <Row label="Background changes daily" hint="hills, trees and stars are drawn from the date"><Switch label="Background changes daily" on={cfg.burn_in.scene_daily} onChange={(v) => patchBurn({ scene_daily: v })} /></Row>
           <p className="text-xs text-muted mt-2">The sleep clock (above) moves on its own.</p>
+          {burnErr && <p className="text-sm text-err mt-2">{burnErr}</p>}
         </Card>
       )}
     </div>
