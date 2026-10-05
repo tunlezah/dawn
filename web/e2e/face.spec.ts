@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { BASE, HUB, hub, post, reset, waitFor } from './helpers';
+import { BASE, HUB, SLEEP_DEFAULTS, config, hub, post, reset, waitFor } from './helpers';
 
 test.beforeEach(async () => { await reset(); });
 
@@ -167,5 +167,60 @@ test('AirPlay: artwork, device, progress and transport; idle switches to the amb
   } finally {
     await fetch(`${HUB}/airplay/stop`, { method: 'POST' });
     await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { ambient_after_s: 20 } }) });
+  }
+});
+
+test('sleep mode: the clock alone; it moves, a tap wakes the full face, ringing wins', async ({ page }) => {
+  await config({ display: { sleep: { enabled: true, jump_every_s: 10 } } });
+  try {
+    await page.goto('/face');
+    expect((await post('/api/display/sleep', { on: true })).status).toBe(200);
+    await waitFor((s) => s.face.mode === 'sleep' && s.display.sleep_reason === 'manual');
+    const clock = page.locator('[data-testid=sleep] .f-sleep-clock');
+    await expect(clock).toBeVisible();
+    await expect(clock.locator('.t')).toHaveText(/^\d{1,2}:\d{2}/);
+    // nothing else: no strip, no background, amber on black
+    await expect(page.locator('.f-bar')).toHaveCount(0);
+    await expect(page.locator('.f-scene')).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => document.documentElement.dataset.palette)).toBe('night');
+    // it fades to a new place every jump_every_s
+    const where = await clock.getAttribute('style');
+    await expect.poll(() => clock.getAttribute('style'), { timeout: 15000 }).not.toBe(where);
+    // a tap wakes the full face for a while, without opening the menu
+    await page.locator('.face-root').tap();
+    const s = await waitFor((x) => x.face.mode === 'standby');
+    expect(s.face.menu_open).toBe(false);
+    await expect(page.locator('.f-ambient-clock')).toBeVisible();
+    // asleep again, an alarm rings: ringing shows at once and sleep mode lets go
+    await post('/api/display/sleep', { on: true });
+    await waitFor((x) => x.face.mode === 'sleep');
+    await post('/api/alarms/test', { source: 'chime:gentle_bell', label: 'E2E sleep', volume: 30 });
+    await waitFor((x) => x.face.mode === 'ringing');
+    await expect(page.locator('.face-screen')).toContainText('E2E sleep');
+    await waitFor((x) => x.display.sleep === false);
+    await post('/api/alarms/stop');
+    await waitFor((x) => x.face.mode === 'standby');
+  } finally {
+    await post('/api/alarms/stop');
+    await post('/api/display/sleep', { on: false });
+    await config({ display: { sleep: SLEEP_DEFAULTS } });
+  }
+});
+
+test('sleep mode with the screen off: black until a tap shows the clock', async ({ page }) => {
+  await config({ display: { sleep: { enabled: true, screen_off: true } } });
+  try {
+    await page.goto('/face');
+    await post('/api/display/sleep', { on: true });
+    await waitFor((s) => s.face.mode === 'sleep' && s.display.sleep_screen_off);
+    await expect(page.locator('[data-testid=sleep]')).toBeVisible();
+    await expect(page.locator('.f-sleep-clock')).toHaveCount(0);
+    await waitFor((s) => s.display.brightness === 0);
+    await page.locator('.face-root').tap();
+    await waitFor((s) => s.face.peek_until !== null && s.face.mode === 'sleep');
+    await expect(page.locator('.f-sleep-clock')).toBeVisible();
+  } finally {
+    await post('/api/display/sleep', { on: false });
+    await config({ display: { sleep: SLEEP_DEFAULTS } });
   }
 });

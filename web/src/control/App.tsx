@@ -124,9 +124,9 @@ export function App() {
       {more && (
         <div className="sm:hidden fixed inset-0 z-40" onClick={() => setMore(false)}>
           <div className="absolute inset-0 bg-black/40" />
-          <div className="absolute right-2 bottom-[calc(max(env(safe-area-inset-bottom),6px)+64px)] card p-1.5 min-w-48 fade-in" onClick={(e) => e.stopPropagation()}>
+          <div role="menu" aria-label="More pages" className="absolute right-2 bottom-[calc(max(env(safe-area-inset-bottom),6px)+64px)] card p-1.5 min-w-48 fade-in" onClick={(e) => e.stopPropagation()}>
             {NAV.filter((n) => MORE.includes(n.path)).map((n) => (
-              <button key={n.path} onClick={() => { setMore(false); navigate(n.path); }} className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center gap-3 ${path === n.path ? 'bg-elev-2 text-fg' : 'text-muted'}`}>
+              <button key={n.path} role="menuitem" onClick={() => { setMore(false); navigate(n.path); }} className={`w-full text-left px-3 py-2.5 rounded-xl flex items-center gap-3 ${path === n.path ? 'bg-elev-2 text-fg' : 'text-muted'}`}>
                 <span className="w-5 text-center">{n.icon}</span>{n.label}
                 {n.path === '/diagnostics' && <DiagBadge fail={state.diagnostics.fail} warn={state.diagnostics.warn} />}
               </button>

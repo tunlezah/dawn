@@ -93,7 +93,7 @@ export function CheckList({ checks, onChanged, onGo, empty = 'Nothing to check h
       {groups.map((g) => g.name ? (
         <div key={g.name} className="mt-2 first:mt-0">
           <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted pt-1">
-            <StatusIcon status={worst(g.items)} />{g.name}
+            <StatusIcon status={worst(g.items)} /><span>{g.name}</span>
           </div>
           <ol className="ml-2.5 pl-4 border-l border-border">
             {g.items.map((c) => <li key={c.id} className="list-none"><CheckRow c={c} onChanged={onChanged} onGo={onGo} /></li>)}
