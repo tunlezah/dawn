@@ -6,6 +6,21 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- Reference hardware is final: Pimoroni Audio Amp SHIM (MAX98357A I2S, mono) driving a
+  Dayton PC68-4 2.5" 4 Ω driver replaces the USB DAC, MAX9744 amp and 12 V supply, so the
+  clock runs from one 5 V USB-C supply; Adafruit 377 bare encoder instead of a KY-040;
+  no big button. README hardware table and pin map, the *About* wiring list and the
+  *Audio* page are updated.
+- `install.sh --audio hifiberry` now writes `dtparam=audio=off`, `dtoverlay=hifiberry-dac`
+  and `gpio=25=op,dh`, installs the mono filter chain, adds a WirePlumber rule that keeps
+  ALSA sinks running when idle (no MAX98357A pop) and pins the I2S amp
+  (`audio.pinned_sink: hifiberry`). `--update` keeps an existing I2S set-up. The managed
+  `config.txt` block starts with `[all]`.
+- The Waveshare DSI panel overlay is `vc4-kms-dsi-7inch` (the 43H 4.3" panel presents as
+  the official 7" display) instead of `vc4-kms-dsi-waveshare-panel,4_3_inch`.
+- `inputs.big_button.enabled` defaults to `false`.
+- `audio.pinned_sink` also accepts a sink kind (`hifiberry`, `usb`, …); a missing pinned
+  sink is logged once instead of every refresh.
 - Touch-only operation: the encoder and big button are now optional. The face
   menu is a bottom sheet over the player (the clock and what is playing stay
   visible) with Presets · Nap · Sleep · Brightness · Standby and a volume
@@ -33,6 +48,20 @@ All notable changes to Dawn are recorded here. The format follows
   presets and the round player, plus a 2×2 board for the README.
 
 ### Added
+- Mono filter chain (`deploy/pipewire/dawn-eq-mono.conf`): (L+R)/2 to both I2S channels.
+  Both chains gain a 2nd-order high-pass, `audio.eq.highpass_hz` (default 110 Hz, null =
+  off), which stays in when the tone controls are off.
+- `audio.eq.bass_max_db` (default 0): bass can be cut, not boosted, unless raised.
+- `audio.output_ceiling_percent`: the hardware sink level at volume 100, applied to every
+  volume path (controls, alarm ramps, chimes, sleep fade). Lowering `audio.max_volume`
+  below the current volume now clamps it straight away.
+- `display.rotation` is applied by the installer (kernel `video=…,rotate=` and a libinput
+  touch calibration matrix).
+- *Status → Hardware → Power and throttling*: `vcgencmd get_throttled` flags (state
+  `system.throttled`, `system.throttle_flags`); changes are logged.
+- Tests for the hardware profile: volume ceiling, alarm limits, EQ limits, pinning by kind,
+  throttle parsing, and the encoder on gpiozero mock pins (pull-ups, one step per detent,
+  invert, switch, no phantom button). `gpiozero` joins the dev dependencies.
 - Scenic standby background (`display.scene`, default on): a procedural SVG
   scene behind the ambient clock, composed from the time of day relative to the
   weather feed's sunrise/sunset (night, dawn, day, dusk sky), the weather icon

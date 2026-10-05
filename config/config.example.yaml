@@ -44,21 +44,22 @@ inputs:
   pin_factory: lgpio
   encoder:
     enabled: true
-    # KY-040 CLK (A) BCM pin.
+    # Encoder A (CLK) BCM pin; the encoder's middle pin goes to GND.
     clk_pin: 17
-    # KY-040 DT (B) BCM pin.
+    # Encoder B (DT) BCM pin.
     dt_pin: 27
-    # KY-040 SW (push) BCM pin.
+    # Encoder push-switch BCM pin (other side to GND).
     sw_pin: 22
     # Volume change per detent.
     volume_step: 2
     # Hold time for the nap-timer picker.
     long_press_s: 1.0
-    # Swap rotation direction.
+    # Swap rotation direction (instead of swapping the A/B wires).
     invert: false
     bounce_time_s: 0.005
   big_button:
-    enabled: true
+    # Not fitted on the reference build; enable only with a button wired to the pin.
+    enabled: false
     # Arcade button BCM pin (to GND, internal pull-up).
     pin: 23
     # Hold time for safe shutdown.
@@ -150,10 +151,13 @@ audio:
   - hifiberry
   - headphones
   - hdmi
-  # PipeWire node.name to always use (null = auto).
+  # Sink to always use: a PipeWire node.name, or a kind (usb, hifiberry, headphones, hdmi). null = auto.
   pinned_sink: null
   default_volume: 35
+  # Highest volume any control, alarm ramp or chime may set.
   max_volume: 100
+  # Hardware sink level at volume 100. Calibrate on the device so 100 sits just below audible clipping.
+  output_ceiling_percent: 100
   # Duck level before pausing a lower-priority source.
   duck_percent: 20
   duck_seconds: 2.0
@@ -164,6 +168,10 @@ audio:
     treble_db: 0.0
     bass_hz: 120.0
     treble_hz: 6000.0
+    # Most bass boost allowed. Every +6 dB needs 4x the amplifier power; keep 0 for the 3 W I2S amp.
+    bass_max_db: 0.0
+    # 2nd-order high-pass ahead of the tone controls, protecting a small driver (null = off).
+    highpass_hz: 110.0
   mpv_binary: mpv
   mpv_extra_args: []
   # Local playlist files.
@@ -343,6 +351,8 @@ system:
   # Send systemd watchdog keepalives.
   watchdog: true
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
+  # Reads under-voltage / throttling flags on a Pi.
+  vcgencmd_binary: vcgencmd
   # Git checkout used by the software updater.
   update_repo_dir: /opt/dawn
   update_branch: main

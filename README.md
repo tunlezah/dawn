@@ -38,37 +38,64 @@ with `display.scene`.
 
 ## Hardware
 
-Primary build (all parts auto-detected at boot; every fallback is supported):
+Reference build. The whole clock runs from one 5 V USB-C supply; every part is
+auto-detected at boot and the fallbacks stay supported:
 
-| Part | Primary | Fallbacks |
+| Part | Reference build | Fallbacks |
 |---|---|---|
-| Board | Raspberry Pi 4 B, Raspberry Pi OS (Oct 2026, lite, 64-bit) | Pi 5, Pi 3B+, Pi Zero 2 W (HyperPixel/HDMI only, low-CPU face) |
-| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork) | any RTL2832U/R820T2 stick (tuner type logged) |
+| Board | Raspberry Pi 4 B, Raspberry Pi OS Lite 64-bit (Oct 2026); passive heatsink, no fan | Pi 5 (22-pin DSI cable, 27 W PSU), Pi 3B+, Pi Zero 2 W (HyperPixel/HDMI only, low-CPU face) |
+| Power | 5 V 3 A USB-C (KSA-15E-052300HA); ~7–8 W typical, ~13 W worst case | — |
+| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork), on a short USB extension | any RTL2832U/R820T2 stick (tuner type logged) |
 | GPS | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS | none (DAB and NTP time) |
-| Display | Waveshare 4.3" DSI capacitive touch, 800×480, sysfs backlight | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
-| Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10 (0x48 jumper cut) | VEML7700, BH1750; none (sunrise/sunset schedule) |
-| Audio | USB DAC (UAC) → class-D amp | HiFiBerry MiniAmp (`dtoverlay=hifiberry-dac`); 3.5 mm jack; HDMI |
-| Inputs | touch (everything is on the screen) | optional KY-040 encoder + big arcade button (GPIO, `gpiozero` + `lgpio`), auto-detected |
+| Display | Waveshare 4.3" DSI 43H-800480-IPS-CT, 800×480, Goodix touch over the ribbon, sysfs backlight 0–255 (`dtoverlay=vc4-kms-dsi-7inch`) | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
+| Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10, behind a window facing the room | VEML7700, BH1750; none (sunrise/sunset schedule) |
+| Audio | Pimoroni Audio Amp SHIM (MAX98357A, I2S, mono ~2.5 W into 4 Ω; `--audio hifiberry`) → Dayton PC68-4 2.5" 4 Ω full-range in a ~0.5 L sealed box | USB DAC; HiFiBerry DAC/MiniAmp; 3.5 mm jack; HDMI |
+| Inputs | touch (everything is on the screen) + Adafruit 377 bare rotary encoder with push switch (internal pull-ups) | optional big arcade button (off by default; GPIO, `gpiozero` + `lgpio`) |
 
-Sink priority at boot is USB DAC › HiFiBerry › headphone jack › HDMI; pin one in
-*Audio* (web UI) or `audio.pinned_sink` in the config.
+The SHIM has no hardware volume and one channel, so Dawn does it in software: the
+PipeWire filter chain mixes left and right to mono, high-passes at 110 Hz
+(`audio.eq.highpass_hz`) and allows bass cuts but no boost (`audio.eq.bass_max_db`);
+`audio.output_ceiling_percent` sets where volume 100 lands, so calibrate it on the device
+to sit just below audible clipping (see [Calibrating the volume ceiling](#calibrating-the-volume-ceiling)).
+Sink priority at boot is USB › I2S amp › headphone jack › HDMI; `--audio hifiberry`
+pins the I2S amp (`audio.pinned_sink: hifiberry`) so a USB audio device plugged in later
+cannot take over. Pin something else in *Audio* (web UI) or in the config.
 
 ## Wiring
 
-BCM numbering. All pins are configurable in `/etc/dawn/config.yaml` (`inputs:`).
+BCM numbering. Input pins are configurable in `/etc/dawn/config.yaml` (`inputs:`). No
+pins clash: the SHIM sits at the base of the 40-pin header and the other wires push onto
+the pins above it.
 
-| Signal | Pin | Header | Note |
+| Header pin | BCM | Use | Part / wire |
 |---|---|---|---|
-| Encoder CLK (A) | GPIO17 | 11 | KY-040 |
-| Encoder DT (B) | GPIO27 | 13 | |
-| Encoder SW (push) | GPIO22 | 15 | push = snooze / select |
-| Encoder + / GND | 3V3 / GND | 1 / 9 | |
-| Big "off" button | GPIO23 ↔ GND | 16 / 14 | internal pull-up |
-| VEML6030 SDA / SCL | GPIO2 / GPIO3 | 3 / 5 | 3V3, GND; address 0x10 |
-| HiFiBerry MiniAmp | HAT header (I2S) | — | optional |
-| HyperPixel 4 backlight | GPIO19 (PWM) | 35 | only with HyperPixel |
-| RTL-SDR, GPS | USB | — | |
-| Waveshare 4.3" DSI | DSI ribbon | — | backlight under `/sys/class/backlight/` |
+| 1 | 3V3 | sensor power | VEML6030, red |
+| 2, 4 | 5V | amp power | SHIM |
+| 3 | GPIO2 (SDA) | I2C bus 1 | VEML6030, blue |
+| 5 | GPIO3 (SCL) | I2C bus 1 | VEML6030, yellow |
+| 9 | GND | sensor ground | VEML6030, black |
+| 11 | GPIO17 | encoder A (CLK) | ADA377 outer pin |
+| 13 | GPIO27 | encoder B (DT) | ADA377 other outer pin |
+| 14 | GND | encoder common | ADA377 middle pin |
+| 15 | GPIO22 | encoder switch | ADA377 switch pin |
+| 20 | GND | encoder switch return | ADA377 other switch pin |
+| 12 | GPIO18 | I2S bit clock | SHIM |
+| 35 | GPIO19 | I2S LR clock | SHIM |
+| 40 | GPIO21 | I2S data | SHIM |
+| 22 | GPIO25 | driven high at boot (`gpio=25=op,dh`) | SHIM |
+| 16 | GPIO23 | unused (big button not fitted) | — |
+| — | DSI ribbon (~50 mm) | display power, video and touch I2C; no GPIO | Waveshare 43H |
+| — | USB | RTL-SDR (short extension), GPS | |
+
+The bare encoder has no pull-ups and no + pin: the A, B and switch pins are pulled up
+inside the Pi and the contacts switch them to GND. It gives one volume step per detent
+(24 per turn). If it turns the wrong way, swap the GPIO17 and GPIO27 wires or set
+`inputs.encoder.invert: true`. Speaker leads are short, twisted and routed away from the
+SDR antenna lead: the SHIM's output is unfiltered ~300 kHz PWM.
+
+> HyperPixel 4 uses GPIO 0–25 for DPI, which also collides with the SHIM's I2S pins. With
+> that panel use a USB DAC, and remap the encoder and button to free pins in `inputs:` —
+> the installer prints a reminder.
 
 > HyperPixel 4 uses GPIO 0–25 for DPI. With that panel, remap the encoder and
 > button to the free pins (GPIO 26/27 or via the HyperPixel's breakout) in
@@ -81,15 +108,25 @@ BCM numbering. All pins are configurable in `/etc/dawn/config.yaml` (`inputs:`).
    ```bash
    sudo apt-get install -y git
    sudo git clone https://github.com/tunlezah/dawn /opt/dawn
-   sudo /opt/dawn/deploy/install.sh            # add --audio hifiberry for the MiniAmp
+   sudo /opt/dawn/deploy/install.sh --audio hifiberry   # the Audio Amp SHIM (omit for a USB DAC)
    sudo reboot
    ```
    The installer detects the board and display, writes the `config.txt`
    overlays, builds `rtl-sdr-blog`, `welle.io`, `shairport-sync` + `nqptp`,
    installs gpsd/chrony/PipeWire/BlueZ/cage/Chromium, creates the `dawn` user
    and enables the `dawn-core`, `dawn-dab`, `dawn-timed` and `dawn-face` units.
-   It is idempotent; re-run it any time. Options: `--display`, `--audio`,
-   `--data-device`, `--data-image-mb`, `--readonly`, `--no-build`, `--rebuild`.
+   It is idempotent; re-run it any time, and `--update` keeps the I2S amp set-up from an
+   earlier install. Options: `--display`, `--audio`, `--data-device`, `--data-image-mb`,
+   `--readonly`, `--no-build`, `--rebuild`.
+
+   With `--audio hifiberry` the `config.txt` block gets `dtparam=audio=off`,
+   `dtoverlay=hifiberry-dac` and `gpio=25=op,dh`; the mono filter chain
+   (`deploy/pipewire/dawn-eq-mono.conf`) is installed; WirePlumber keeps the sink running
+   while idle so the MAX98357A does not pop. The DSI panel gets `dtoverlay=vc4-kms-dsi-7inch`.
+   If the case mounts the panel rotated, set `display.rotation` (90/180/270) in
+   `/etc/dawn/config.yaml` and re-run the installer: it adds
+   `video=DSI-1:800x480M@60,rotate=…` to `cmdline.txt` and a matching libinput touch
+   calibration matrix (`/etc/udev/rules.d/98-dawn-touch.rules`), then reboot.
 3. The face reaches standby within about 40 s. Without a network it starts a
    setup hotspot and shows its SSID, password and a Wi-Fi QR code; join it and
    open `http://10.42.0.1/` to pick a Wi-Fi network.
@@ -100,6 +137,16 @@ BCM numbering. All pins are configurable in `/etc/dawn/config.yaml` (`inputs:`).
    - **Settings** for location (or let the GPS fill it), holiday state, time
      zone, name, PIN, backups and updates. *All options* edits any config value.
 
+### Calibrating the volume ceiling
+
+The amp's gain is fixed, so where clipping starts depends on the build. With the case
+closed: set `audio.output_ceiling_percent: 100`, play loud, bass-heavy music at volume
+100, and lower the ceiling in steps of 5 (*Settings → All options → audio*) until the
+distortion goes away; then confirm an alarm
+at volume 100 is clearly loud enough at 1 m. Every path — the controls, alarm ramps,
+chimes, the sleep fade — scales into that ceiling; `audio.max_volume` additionally caps
+the 0–100 scale itself.
+
 ## Updating
 
 - From the UI: *Settings → Software update → Update now* (`git pull` + `install.sh --update`, services restart).
@@ -109,7 +156,8 @@ BCM numbering. All pins are configurable in `/etc/dawn/config.yaml` (`inputs:`).
 ## Controls
 
 Never ambiguous; snooze and stop are never on the same control. Touch does everything;
-the encoder and the big button are optional and keep their jobs when fitted.
+the encoder is fitted on the reference build, and the big button is optional (off unless
+`inputs.big_button.enabled`); both keep their jobs when fitted.
 
 | Control | Ringing | Playing | Standby |
 |---|---|---|---|
@@ -172,8 +220,10 @@ Alarms are evaluated against the system clock only and remember the last
 occurrence they handled, so a clock step never double-fires or skips one.
 
 Audio: PipeWire + WirePlumber in the `dawn` user session; mpv per source family
-(`dawn-dab`, `dawn-media`, `dawn-chime`); two-band EQ as a filter-chain sink;
-"audio flowing" from stream state → chime fallback after 15 s.
+(`dawn-dab`, `dawn-media`, `dawn-chime`); a filter-chain sink (mono mix for the SHIM,
+110 Hz high-pass, two-band EQ); master volume in software on the hardware sink, scaled
+into `audio.output_ceiling_percent`; "audio flowing" from stream state → chime fallback
+after 15 s.
 
 ## Configuration
 
@@ -189,10 +239,15 @@ REST API docs: `http://dawn.local/api/docs`. Everything the UIs do goes through 
 
 | Symptom | Check |
 |---|---|
-| Face stays black | `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` |
+| Face stays black | `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
+| Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
 | No DAB stations after a scan | `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
 | Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync); see *Status → Logs* (`ring_fallback`) |
-| No sound | *Audio* page: sink list and active sink; `wpctl status` as user dawn (`sudo -u dawn XDG_RUNTIME_DIR=/run/user/$(id -u dawn) wpctl status`) |
+| No sound | *Audio* page: sink list and active sink; `wpctl status` as user dawn (`sudo -u dawn XDG_RUNTIME_DIR=/run/user/$(id -u dawn) wpctl status`); with the SHIM, `aplay -l` should list `snd_rpi_hifiberry_dac` and `config.txt` must have `gpio=25=op,dh` |
+| Pop when audio starts or stops | `/etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf` present; `wpctl inspect` on the hardware sink shows `session.suspend-timeout-seconds = 0` |
+| Only one side of a stereo track | the mono filter chain is not loaded: re-run `install.sh --audio hifiberry` and check `/etc/pipewire/pipewire.conf.d/dawn-eq.conf` says "mono" |
+| Distortion at high volume | lower `audio.output_ceiling_percent`; keep `audio.eq.bass_max_db` at 0 |
+| Random resets, SD errors, *Status → Hardware → Power and throttling* warns | `vcgencmd get_throttled`: bit 0x10000 = under-voltage since boot; use the 5 V 3 A supply directly, no hub |
 | Time not synced | *Status → Time*; `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |

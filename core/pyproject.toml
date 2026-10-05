@@ -33,6 +33,7 @@ pi = [
 dev = [
   "pytest>=8",
   "pytest-asyncio>=0.23",
+  "gpiozero>=2.0",  # mock pins for the encoder tests (pure Python)
   "ruff>=0.4",
   "mypy>=1.9",
 ]

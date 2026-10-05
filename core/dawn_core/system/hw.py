@@ -92,8 +92,8 @@ def detect_panel(config_panel: str = "auto") -> str:
     cfg = _read("/boot/firmware/config.txt") or _read("/boot/config.txt") or ""
     if "hyperpixel4" in cfg:
         return "hyperpixel4"
-    if "waveshare" in cfg and "dsi" in cfg.lower():
-        return "waveshare_dsi"
+    if ("waveshare" in cfg and "dsi" in cfg.lower()) or "vc4-kms-dsi-7inch" in cfg:
+        return "waveshare_dsi"  # the 43H 4.3" panel uses the official 7" display's overlay
     if any("HDMI" in n and status.get(n) == "connected" for n in names):
         return "hdmi"
     if detect_backlight():
@@ -133,6 +133,39 @@ def detect_sdr() -> tuple[bool, str | None, str | None]:
     except (OSError, subprocess.TimeoutExpired):
         tuner = _RTL_IDS.get(vidpid or "", "RTL2832U")
     return True, tuner, vidpid
+
+
+# vcgencmd get_throttled bits: (mask, label, happening now?)
+THROTTLE_FLAGS: list[tuple[int, str, bool]] = [
+    (0x1, "under-voltage", True),
+    (0x2, "frequency capped", True),
+    (0x4, "throttled", True),
+    (0x8, "soft temperature limit", True),
+    (0x10000, "under-voltage since boot", False),
+    (0x20000, "frequency capped since boot", False),
+    (0x40000, "throttled since boot", False),
+    (0x80000, "soft temperature limit since boot", False),
+]
+
+
+def parse_throttled(text: str) -> int | None:
+    """`throttled=0x50005` -> 0x50005; None when vcgencmd gave nothing usable."""
+    m = re.search(r"throttled=(0x[0-9a-fA-F]+|\d+)", text or "")
+    return int(m.group(1), 0) if m else None
+
+
+def throttle_flags(value: int | None) -> list[str]:
+    if not value:
+        return []
+    return [label for mask, label, _ in THROTTLE_FLAGS if value & mask]
+
+
+def read_throttled(binary: str = "vcgencmd") -> int | None:
+    try:
+        out = subprocess.run([binary, "get_throttled"], capture_output=True, text=True, timeout=3)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return parse_throttled(out.stdout) if out.returncode == 0 else None
 
 
 def detect_i2c() -> list[int]:

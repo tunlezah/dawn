@@ -69,6 +69,10 @@ class GpiozeroBackend(InputBackend):
         enc = self.cfg.encoder
         if enc.enabled:
             try:
+                # A bare encoder (Adafruit 377) has no pull-ups of its own, unlike a KY-040 board: the
+                # contacts only ever pull to GND, so every pin needs the SoC's internal pull-up.
+                # gpiozero's RotaryEncoder always enables it on A and B; the switch asks for it below.
+                # One step is one full quadrature cycle, which is one detent on a 24-detent/24-PPR part.
                 a, b = (enc.dt_pin, enc.clk_pin) if enc.invert else (enc.clk_pin, enc.dt_pin)
                 r = RotaryEncoder(a, b, max_steps=0, bounce_time=enc.bounce_time_s or None, wrap=False)
                 r.when_rotated_clockwise = lambda: self._thread_emit("encoder_cw")
@@ -88,10 +92,12 @@ class GpiozeroBackend(InputBackend):
                 sw.when_held = on_held
                 sw.when_released = on_released
                 self._devices += [r, sw]
-                log.info("encoder on CLK=%s DT=%s SW=%s", enc.clk_pin, enc.dt_pin, enc.sw_pin)
+                log.info("encoder on CLK=%s DT=%s SW=%s (internal pull-ups)", enc.clk_pin, enc.dt_pin, enc.sw_pin)
             except Exception as e:  # noqa: BLE001
                 log.error("encoder unavailable: %s", e)
         bb = self.cfg.big_button
+        # Not fitted on the reference build: leave the pin alone so a floating GPIO23 can never
+        # produce phantom presses. When enabled it is pulled up like the encoder switch.
         if bb.enabled:
             try:
                 btn = Button(bb.pin, pull_up=True, bounce_time=bb.bounce_time_s or None)

@@ -2,10 +2,11 @@ import { useState } from '../../shared/store';
 import { Card, Row } from '../../shared/components';
 
 const WIRING = [
-  ['KY-040 CLK', 'GPIO17 (pin 11)'], ['KY-040 DT', 'GPIO27 (pin 13)'], ['KY-040 SW', 'GPIO22 (pin 15)'], ['KY-040 +', '3V3 (pin 1)'], ['KY-040 GND', 'GND (pin 9)'],
-  ['Arcade button', 'GPIO23 (pin 16) ↔ GND (pin 14), internal pull-up'],
-  ['VEML6030 SDA/SCL', 'GPIO2/GPIO3 (pins 3/5), 3V3, GND · address 0x10'],
-  ['HiFiBerry MiniAmp', 'HAT header (I2S), dtoverlay=hifiberry-dac'],
+  ['Encoder A / B', 'GPIO17 / GPIO27 (pins 11 / 13), middle pin to GND (pin 14) · internal pull-ups'],
+  ['Encoder switch', 'GPIO22 (pin 15) ↔ GND (pin 20)'],
+  ['Big button (optional)', 'GPIO23 (pin 16) ↔ GND, internal pull-up · off unless inputs.big_button.enabled'],
+  ['VEML6030 SDA/SCL', 'GPIO2/GPIO3 (pins 3/5), 3V3 (pin 1), GND (pin 9) · address 0x10'],
+  ['Audio Amp SHIM', 'I2S on GPIO18/19/21, 5V (pins 2/4), GPIO25 high · dtoverlay=hifiberry-dac'],
   ['RTL-SDR', 'USB'], ['u-blox 7 GPS', 'USB (/dev/ttyACM0)'], ['Waveshare 4.3" DSI', 'DSI ribbon + backlight via sysfs'],
 ];
 
@@ -21,7 +22,7 @@ export function About() {
         </div>
       </Card>
       <Card title="Controls">
-        <Row label="Big button" hint="short: stop alarm / stop playback / wake · hold 3 s: shut down" />
+        <Row label="Big button (optional)" hint="short: stop alarm / stop playback / wake · hold 3 s: shut down" />
         <Row label="Encoder" hint="turn: volume · push: snooze (ringing) or next preset · hold: nap timer" />
         <Row label="Touch" hint="ringing: snooze (whole screen) · otherwise: menu" />
       </Card>

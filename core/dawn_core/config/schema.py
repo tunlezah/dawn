@@ -67,17 +67,17 @@ class HolidayConfig(StrictModel):
 # --------------------------------------------------------------------------- #
 class EncoderConfig(StrictModel):
     enabled: bool = True
-    clk_pin: int = Field(17, ge=0, le=27, description="KY-040 CLK (A) BCM pin.")
-    dt_pin: int = Field(27, ge=0, le=27, description="KY-040 DT (B) BCM pin.")
-    sw_pin: int = Field(22, ge=0, le=27, description="KY-040 SW (push) BCM pin.")
+    clk_pin: int = Field(17, ge=0, le=27, description="Encoder A (CLK) BCM pin; the encoder's middle pin goes to GND.")
+    dt_pin: int = Field(27, ge=0, le=27, description="Encoder B (DT) BCM pin.")
+    sw_pin: int = Field(22, ge=0, le=27, description="Encoder push-switch BCM pin (other side to GND).")
     volume_step: int = Field(2, ge=1, le=20, description="Volume change per detent.")
     long_press_s: float = Field(1.0, ge=0.3, le=5, description="Hold time for the nap-timer picker.")
-    invert: bool = Field(False, description="Swap rotation direction.")
+    invert: bool = Field(False, description="Swap rotation direction (instead of swapping the A/B wires).")
     bounce_time_s: float = Field(0.005, ge=0, le=0.1)
 
 
 class BigButtonConfig(StrictModel):
-    enabled: bool = True
+    enabled: bool = Field(False, description="Not fitted on the reference build; enable only with a button wired to the pin.")
     pin: int = Field(23, ge=0, le=27, description="Arcade button BCM pin (to GND, internal pull-up).")
     long_press_s: float = Field(3.0, ge=1, le=10, description="Hold time for safe shutdown.")
     bounce_time_s: float = Field(0.02, ge=0, le=0.2)
@@ -185,6 +185,14 @@ class EqConfig(StrictModel):
     treble_db: float = Field(0.0, ge=-12, le=12)
     bass_hz: float = Field(120.0, ge=40, le=400)
     treble_hz: float = Field(6000.0, ge=2000, le=12000)
+    bass_max_db: float = Field(
+        0.0, ge=0, le=12,
+        description="Most bass boost allowed. Every +6 dB needs 4x the amplifier power; keep 0 for the 3 W I2S amp.",
+    )
+    highpass_hz: float | None = Field(
+        110.0, ge=20, le=300,
+        description="2nd-order high-pass ahead of the tone controls, protecting a small driver (null = off).",
+    )
 
 
 class AudioConfig(StrictModel):
@@ -193,9 +201,15 @@ class AudioConfig(StrictModel):
         default_factory=lambda: ["usb", "hifiberry", "headphones", "hdmi"],
         description="Boot-time sink selection order.",
     )
-    pinned_sink: str | None = Field(None, description="PipeWire node.name to always use (null = auto).")
+    pinned_sink: str | None = Field(
+        None, description="Sink to always use: a PipeWire node.name, or a kind (usb, hifiberry, headphones, hdmi). null = auto.",
+    )
     default_volume: int = Field(35, ge=0, le=100)
-    max_volume: int = Field(100, ge=1, le=100)
+    max_volume: int = Field(100, ge=1, le=100, description="Highest volume any control, alarm ramp or chime may set.")
+    output_ceiling_percent: int = Field(
+        100, ge=1, le=100,
+        description="Hardware sink level at volume 100. Calibrate on the device so 100 sits just below audible clipping.",
+    )
     duck_percent: int = Field(20, ge=0, le=100, description="Duck level before pausing a lower-priority source.")
     duck_seconds: float = Field(2.0, ge=0, le=10)
     volume_overlay_s: float = Field(1.5, ge=0.2, le=10)
@@ -340,6 +354,7 @@ class SystemConfig(StrictModel):
     heartbeat_interval_s: int = Field(5, ge=1, le=60)
     watchdog: bool = Field(True, description="Send systemd watchdog keepalives.")
     cpu_temp_path: str = "/sys/class/thermal/thermal_zone0/temp"
+    vcgencmd_binary: str = Field("vcgencmd", description="Reads under-voltage / throttling flags on a Pi.")
     update_repo_dir: str = Field("/opt/dawn", description="Git checkout used by the software updater.")
     update_branch: str = "main"
     sudo_binary: str = "sudo"

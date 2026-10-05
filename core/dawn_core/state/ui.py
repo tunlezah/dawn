@@ -73,6 +73,8 @@ class EqState(BaseModel):
     enabled: bool = True
     bass_db: float = 0.0
     treble_db: float = 0.0
+    bass_max_db: float = 0.0
+    highpass_hz: float | None = None
 
 
 class SourceStatus(BaseModel):
@@ -292,6 +294,8 @@ class SystemState(BaseModel):
     uptime_s: int = 0
     load1: float | None = None
     mem_used_percent: float | None = None
+    throttled: int | None = None  # vcgencmd get_throttled bitmask (None = not a Pi / unavailable)
+    throttle_flags: list[str] = Field(default_factory=list)
     sdr_present: bool = False
     sdr_tuner: str | None = None
     panel: str = "none"

@@ -16,7 +16,7 @@ export interface DisplayState {
   sunrise: string | null; sunset: string | null; schedule_night: boolean; show_seconds: boolean; ambient_after_s: number; scene: boolean;
 }
 export interface SinkInfo { id: string; name: string; description: string; kind: 'usb' | 'hifiberry' | 'headphones' | 'hdmi' | 'other'; active: boolean }
-export interface EqState { enabled: boolean; bass_db: number; treble_db: number }
+export interface EqState { enabled: boolean; bass_db: number; treble_db: number; bass_max_db: number; highpass_hz: number | null }
 export interface SourceStatus { kind: SourceKind; priority: number; state: 'idle' | 'starting' | 'playing' | 'paused' | 'ducked' | 'error'; label: string; detail: string | null }
 export interface AudioState {
   volume: number; muted: boolean; sink: SinkInfo | null; sinks: SinkInfo[]; pinned_sink: string | null; eq: EqState;
@@ -64,6 +64,7 @@ export interface WeatherState {
 export interface NetworkInfo { online: boolean; ip: string | null; ssid: string | null; interface: string | null; hotspot_active: boolean; hotspot_ssid: string | null; mdns_name: string | null }
 export interface SystemState {
   model: string; hostname: string; cpu_temp_c: number | null; uptime_s: number; load1: number | null; mem_used_percent: number | null;
+  throttled: number | null; throttle_flags: string[];
   sdr_present: boolean; sdr_tuner: string | null; panel: string; network: NetworkInfo; update_available: boolean; update_running: boolean;
   update_log: string | null; heartbeat_at: string | null; sim: boolean; version: string; git_rev: string | null; booted_at: string | null;
   config_error: string | null; services: Record<string, string>;
@@ -85,7 +86,7 @@ export const EMPTY_STATE: UIState = {
   version: 0, now: '', tz: 'Australia/Sydney',
   face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, shutdown_countdown: null, setup: null },
   display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true },
-  audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0 }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
+  audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
   alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false },
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
@@ -93,7 +94,7 @@ export const EMPTY_STATE: UIState = {
   presets: [],
   time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null },
-  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
+  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },

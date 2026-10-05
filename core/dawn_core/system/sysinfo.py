@@ -111,6 +111,14 @@ class SysInfoService(Service):
                 avail = int(line.split()[1])
         if tot and avail is not None:
             st.mem_used_percent = round(100 * (1 - avail / tot), 1)
+        if self.hw.is_pi:
+            # under-voltage (bit 0x10000 since boot) is the first thing to check on a single 5 V supply,
+            # and with a passive heatsink thermal throttling has to stay visible too
+            th = hwmod.read_throttled(cfg.system.vcgencmd_binary)
+            if th != st.throttled and th:
+                log.warning("vcgencmd get_throttled=0x%x (%s)", th, ", ".join(hwmod.throttle_flags(th)))
+            st.throttled = th
+            st.throttle_flags = hwmod.throttle_flags(th)
         st.heartbeat_at = self.ctx.store.iso()
         # heartbeat file + systemd watchdog
         try:

@@ -59,6 +59,32 @@ each section. Every entry says what was decided and why, so it can be revisited.
   becomes the default sink and its output stream is re-targeted to the selected
   hardware sink; master volume still applies to the hardware sink. Without the
   filter chain everything works, just without tone control.
+- **The reference build is one 5 V supply with an I2S amp** (Pimoroni Audio Amp
+  SHIM, MAX98357A, mono ~2.5 W into a 2.5" 4 Ω driver) instead of a USB DAC, a
+  class-D amp and a 12 V rail. It uses the stock `hifiberry-dac` overlay
+  (`--audio hifiberry`), so it needs no new sink kind; `install.sh --update`
+  keeps it by reading its own `config.txt` block.
+- **Mono is mixed in software.** The SHIM's left/right/mix mode is unconfirmed,
+  so the filter chain (`dawn-eq-mono.conf`) sums (L+R)/2 and sends it to both I2S
+  channels: whichever the amp takes, it gets the whole programme. The stereo
+  chain is kept for USB DACs.
+- **Protect the driver in the graph, not with presets.** A 2nd-order 110 Hz
+  high-pass sits ahead of the shelves (the PC68-4 is specified from 120 Hz) and
+  stays in when the tone controls are off; bass can be cut but not boosted by
+  default (`eq.bass_max_db = 0`) because each +6 dB costs 4× the power and the
+  3 W amp clips first.
+- **Volume ceiling as a scale, not a clamp.** The MAX98357A has a fixed gain, so
+  `audio.output_ceiling_percent` maps volume 100 onto a calibrated sink level
+  and every path (controls, alarm ramp, chimes, sleep fade) is scaled into it:
+  the whole 0–100 range stays usable, and nothing can drive the amp into
+  clipping. `audio.max_volume` remains the clamp on the user scale.
+- **Pin the I2S amp by kind.** `audio.pinned_sink` also accepts a sink kind
+  (`hifiberry`), because the node name differs between boards and OS releases;
+  the installer sets it so a USB audio device plugged in later cannot take over
+  despite `usb` ranking first in `sink_priority`.
+- **No idle suspend on ALSA outputs.** The MAX98357A pops whenever the I2S clocks
+  start or stop, so WirePlumber keeps the sink running when idle
+  (`session.suspend-timeout-seconds = 0`, `node.pause-on-idle = false`).
 
 ## Inputs
 
@@ -78,6 +104,13 @@ each section. Every entry says what was decided and why, so it can be revisited.
   keep-alive (`POST /api/face/menu/activity`) that re-arms the auto-close
   timer while a finger is on the slider or a tile. The GPIO inputs stay
   supported and auto-detected; nothing in core changed shape for them.
+- **Bare encoder, internal pull-ups, no big button.** The Adafruit 377 has no
+  pull-ups or + pin (a KY-040 module has both), so A, B and the switch rely on
+  the SoC pull-ups; gpiozero's `RotaryEncoder` always enables them and the
+  switch is a pulled-up `Button`. One full quadrature cycle is one step, which
+  is one detent on this 24-detent part. The big button is not fitted, so it is
+  off by default: GPIO23 is never claimed and a floating pin cannot produce
+  phantom presses. The Standby tile on the face does its job.
 - **Volume is on demand, not always on.** The control bar lost its − 🔊 + cell;
   the slider appears with the sheet (a tap anywhere) and the overlay is
   suppressed while the sheet is up so the two never show the same number
@@ -195,6 +228,15 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **HDMI panels dim with a software overlay** (`display.overlay_dim`, drawn by
   the face). The sim backlight also dims the face a little so the effect is
   visible on a laptop while the hub prints the level.
+- **The Waveshare 43H 4.3" DSI panel uses the official 7" overlay**
+  (`vc4-kms-dsi-7inch`); it presents itself as that display, and the overlay
+  for Waveshare's older PCB-backed 4.3" LCD leaves it dark. Rotation is a boot
+  setting (`video=DSI-1:…,rotate=` plus a libinput calibration matrix written
+  by the installer from `display.rotation`), not something the face does.
+- **Under-voltage and throttling are diagnostics, not guesses.** With one 5 V
+  supply and a passive heatsink by the bed, `vcgencmd get_throttled` is read on
+  every heartbeat and shown in *Status → Hardware*; bit 0x10000 (under-voltage
+  since boot) is the one to look for.
 - **VEML6030/VEML7700 run at gain 1/8, 100 ms integration** (0.46 lx/count,
   ~30 klx range) so one setting covers a dark bedroom and daylight at the 10 Hz
   sample rate; the datasheet polynomial corrects readings above 1000 lx.
