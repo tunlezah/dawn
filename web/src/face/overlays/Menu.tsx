@@ -76,20 +76,24 @@ function PowerTile({ close }: { close: () => void }) {
   const s = useState();
   const playing = s.audio.active_source !== 'none';
   const downAt = useRef(0);
+  // down, up (and the preset) go one after the other: an up that overtook its down would leave core's
+  // hold timer running into the shutdown countdown
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const send = (f: () => Promise<unknown>) => { queue.current = run(queue.current.then(f, f)); };
   const onDown = (e: PointerEvent<HTMLButtonElement>) => {
     stop(e);
     e.currentTarget.setPointerCapture(e.pointerId);
     downAt.current = Date.now();
     run(actions.menuActivity());
-    run(actions.input('button_down'));
+    send(() => actions.input('button_down'));
   };
   const onUp = () => {
     if (!downAt.current) return;
     const held = Date.now() - downAt.current;
     downAt.current = 0;
-    run(actions.input('button_up'));
+    send(() => actions.input('button_up'));
     if (held < TAP_MS) {
-      if (!playing) run(actions.nextPreset());
+      if (!playing) send(() => actions.nextPreset());
       close();
     }
   };
