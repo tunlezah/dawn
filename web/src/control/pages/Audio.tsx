@@ -4,7 +4,7 @@ import { Card, Row, Slider, Switch, Empty } from '../../shared/components';
 import { actions, api } from '../../shared/api';
 import { BluetoothPanel } from '../components/BluetoothPanel';
 
-const KIND_LABEL: Record<string, string> = { usb: 'USB DAC', hifiberry: 'HiFiBerry I2S', headphones: '3.5 mm jack', hdmi: 'HDMI', other: 'Other' };
+const KIND_LABEL: Record<string, string> = { usb: 'USB DAC', hifiberry: 'I2S amp (hifiberry-dac)', headphones: '3.5 mm jack', hdmi: 'HDMI', other: 'Other' };
 
 export function Audio() {
   const s = useState();
@@ -26,12 +26,12 @@ export function Audio() {
           <Slider label="Master volume" value={vol} onChange={setVol} onCommit={(v) => actions.setVolume(v)} />
           <span className="tnum w-8 text-right">{vol}</span>
         </div>
-        <p className="text-xs text-muted mt-2">Encoder steps of 2. Alarms use their own stored volume and restore this one afterwards.</p>
+        <p className="text-xs text-muted mt-2">Encoder steps of 2. Alarms use their own stored volume and restore this one afterwards. All volume is in software: 100 is the calibrated ceiling (<code>audio.output_ceiling_percent</code>), never above it.</p>
       </Card>
 
       <Card title="Output" action={<span className="chip">{s.audio.backend}</span>}>
         {s.audio.sinks.length === 0 && <Empty>No audio sinks found.</Empty>}
-        <Row label="Automatic (priority order)" hint="USB DAC › HiFiBerry › headphone jack › HDMI">
+        <Row label="Automatic (priority order)" hint="USB › I2S amp › headphone jack › HDMI">
           <input type="radio" name="sink" checked={!s.audio.pinned_sink} onChange={() => api.put('/api/audio/sink', { name: null })} />
         </Row>
         {s.audio.sinks.map((k) => (
@@ -43,10 +43,10 @@ export function Audio() {
 
       <Card title="Tone" action={<Switch on={s.audio.eq.enabled} onChange={(v) => api.put('/api/audio/eq', { enabled: v })} label="EQ enabled" />}>
         <div className={s.audio.eq.enabled ? '' : 'opacity-40 pointer-events-none'}>
-          <div className="flex items-center gap-3 py-2"><span className="w-14 text-sm text-muted">Bass</span><Slider label="Bass" min={-12} max={12} step={0.5} value={bass} onChange={setBass} onCommit={(v) => api.put('/api/audio/eq', { bass_db: v })} /><span className="tnum w-14 text-right text-sm">{bass > 0 ? '+' : ''}{bass} dB</span></div>
+          <div className="flex items-center gap-3 py-2"><span className="w-14 text-sm text-muted">Bass</span><Slider label="Bass" min={-12} max={s.audio.eq.bass_max_db} step={0.5} value={Math.min(bass, s.audio.eq.bass_max_db)} onChange={setBass} onCommit={(v) => api.put('/api/audio/eq', { bass_db: v })} /><span className="tnum w-14 text-right text-sm">{bass > 0 ? '+' : ''}{bass} dB</span></div>
           <div className="flex items-center gap-3 py-2"><span className="w-14 text-sm text-muted">Treble</span><Slider label="Treble" min={-12} max={12} step={0.5} value={treble} onChange={setTreble} onCommit={(v) => api.put('/api/audio/eq', { treble_db: v })} /><span className="tnum w-14 text-right text-sm">{treble > 0 ? '+' : ''}{treble} dB</span></div>
         </div>
-        <p className="text-xs text-muted mt-1">Two-band shelving EQ in a PipeWire filter chain (applies to every source).</p>
+        <p className="text-xs text-muted mt-1">Two-band shelving EQ in a PipeWire filter chain (applies to every source).{s.audio.eq.bass_max_db === 0 ? ' Bass can be cut but not boosted: the small amp clips sooner with every dB of bass.' : ` Bass boost is limited to +${s.audio.eq.bass_max_db} dB.`}{s.audio.eq.highpass_hz !== null && ` A ${s.audio.eq.highpass_hz} Hz high-pass protects the speaker.`}</p>
       </Card>
 
       <Card title="AirPlay" action={<span className={`chip ${s.airplay.available ? '' : 'opacity-60'}`}>{s.airplay.available ? (s.airplay.active ? 'streaming' : 'ready') : 'unavailable'}</span>}>

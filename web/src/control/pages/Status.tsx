@@ -52,6 +52,11 @@ export function Status() {
         <Row label="Light sensor" hint={s.display.sensor ?? 'not found'}><Dot state={s.display.sensor_found ? 'ok' : 'off'} /></Row>
         <Row label="Audio" hint={`${s.audio.backend} · ${s.audio.sink?.description ?? 'no sink'}`} />
         <Row label="CPU temperature" hint={sys.cpu_temp_c !== null ? `${sys.cpu_temp_c.toFixed(1)} °C` : '–'}><Dot state={sys.cpu_temp_c !== null && sys.cpu_temp_c > 75 ? 'warn' : 'ok'} /></Row>
+        {sys.throttled !== null && (
+          <Row label="Power and throttling" hint={sys.throttled === 0 ? 'no under-voltage or throttling since boot (0x0)' : `${sys.throttle_flags.join(' · ')} (0x${sys.throttled.toString(16)})`}>
+            <Dot state={sys.throttled === 0 ? 'ok' : 'warn'} />
+          </Row>
+        )}
         <Row label="Uptime" hint={`${fmtDuration(sys.uptime_s)} · load ${sys.load1 ?? '–'} · mem ${sys.mem_used_percent ?? '–'}%`} />
         <Row label="Network" hint={sys.network.online ? `${sys.network.ssid ?? sys.network.interface ?? 'online'} · ${sys.network.ip ?? ''}` : sys.network.hotspot_active ? `hotspot ${sys.network.hotspot_ssid}` : 'offline'}><Dot state={sys.network.online ? 'ok' : 'off'} /></Row>
         <Row label="Software" hint={`dawn-core ${sys.version}${sys.git_rev ? ` (${sys.git_rev})` : ''} · heartbeat ${fmtShort(sys.heartbeat_at, s.tz, s.settings.clock_24h)}`} />

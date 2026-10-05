@@ -65,11 +65,49 @@ http://localhost:8099/.
 
 - [x] **Same image boots on a Pi 3B+ with the HyperPixel fallback and on a Pi 5 with the DSI panel.**
   - design: `install.sh` detects the board and panel (DRM connectors, config.txt), writes
-    `vc4-kms-dpi-hyperpixel4` or `vc4-kms-dsi-waveshare-panel,4_3_inch`; the backlight driver is
+    `vc4-kms-dpi-hyperpixel4` or `vc4-kms-dsi-7inch` (Waveshare 43H); the backlight driver is
     chosen at runtime (sysfs / PWM / overlay); low-power boards get the low-CPU face. The code uses
     `lgpio` so GPIO works on Pi 3/4/5/Zero 2 W.
   - device: run `sudo ./deploy/install.sh` on each board (`--display hyperpixel4` if the panel is not
     yet attached at install time) and check *Status → Hardware*.
+
+## On-device checks: reference hardware
+
+For the final build (Pi 4, Waveshare 43H DSI, Audio Amp SHIM + PC68-4, VEML6030, Adafruit
+377 encoder, no big button, one 5 V 3 A supply), after `sudo ./deploy/install.sh --audio
+hifiberry` and a reboot. The sim covers the logic (`core/tests/test_hardware_profile.py`);
+these need the hardware.
+
+- [ ] **DAB, AirPlay, Bluetooth and the chime fallback all play through the SHIM.**
+  - *Audio → Output* shows the I2S amp as active and pinned; play each source in turn, then
+    pull the SDR and trigger a test ring on a DAB alarm to hear the chime.
+- [ ] **No pop when a stream starts or stops, or when the alarm hands over to the chime.**
+  - start/stop a station, pause AirPlay, and run a DAB test ring with the SDR unplugged.
+    `wpctl inspect <hardware sink id>` shows `session.suspend-timeout-seconds = 0`.
+- [ ] **Mono downmix works: a left-only and a right-only test tone are both audible.**
+  - `speaker-test -D pipewire -c 2 -t sine -s 1` then `-s 2` (as user dawn, with
+    `XDG_RUNTIME_DIR=/run/user/$(id -u dawn)`); both channels sound from the one speaker.
+- [ ] **At maximum volume loud content doesn't audibly clip, and the alarm is clearly loud
+  enough at 1 m.**
+  - calibrate `audio.output_ceiling_percent` as in the README, then play bass-heavy music at
+    100 and run a test ring at volume 100 with the case closed.
+- [ ] **Encoder: exactly one step per detent in each direction; a press registers on GPIO22.**
+  - turn one detent at a time and watch the volume overlay change by `volume_step` (2); a
+    full turn is 24 steps. Wrong direction: set `inputs.encoder.invert`. Push = next preset.
+- [ ] **Backlight covers the full 0–255 range, and auto-dimming follows the VEML6030.**
+  - `cat /sys/class/backlight/*/max_brightness` is 255; *Display* slider at 1 % and 100 %
+    reads 3 and 255 in `brightness`; cover the sensor window and the face dims.
+    *Status → Hardware → Light sensor* shows veml6030 at 0x10.
+- [ ] **Touch lines up with the display after any rotation.**
+  - with `display.rotation` set and the installer re-run, tap the four corner tiles of the
+    menu sheet.
+- [ ] **No phantom button events with nothing connected to GPIO23.**
+  - leave it for an hour with `journalctl -u dawn-core -f`: no `button_down`/`button_up`,
+    no shutdown countdown.
+- [ ] **Load test: DAB playing, the face running and an alarm at maximum volume give
+  `vcgencmd get_throttled` = `0x0`.**
+  - run it for 10 minutes; *Status → Hardware → Power and throttling* stays green. Check the
+    CPU temperature there too (passive heatsink).
 
 ## Automated test inventory
 
@@ -79,6 +117,7 @@ http://localhost:8099/.
 | Scheduling: DST gap/overlap, leap day, skip-next, holidays, leave, grace | `test_scheduler.py`, `test_holidays.py`, `test_alarm_engine.py` |
 | Arbiter priority, duck/pause/resume | `test_arbiter.py` |
 | Input semantics (button/encoder/touch, hold countdown) | `test_input_controller.py` |
+| Reference hardware: volume ceiling, EQ limits, sink pinning, throttle flags, encoder on mock GPIO | `test_hardware_profile.py` |
 | Brightness curve, hysteresis, slew, 3 s scenario | `test_brightness.py` |
 | Time sources: chrony parsing, NMEA | `test_timesync.py` |
 | DAB: mux parsing, SID normalisation, scan order, monograms | `test_dab.py` |

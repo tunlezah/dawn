@@ -70,7 +70,7 @@ class AudioBackend:
     async def set_default_sink(self, sink: Sink) -> None: ...
     async def set_volume(self, percent: int) -> None: ...
     async def set_mute(self, muted: bool) -> None: ...
-    async def set_eq(self, bass_db: float, treble_db: float) -> None: ...
+    async def set_eq(self, bass_db: float, treble_db: float, highpass_hz: float | None = None) -> None: ...
     async def stream_running(self, client_name: str) -> bool | None:
         """True/False when known, None when the backend cannot tell."""
         return None
@@ -83,6 +83,7 @@ class PipeWireBackend(AudioBackend):
     name = "pipewire"
     supports_eq = True
     EQ_SINK = "dawn_eq"
+    HIGHPASS_OFF_HZ = 10.0  # the biquad stays in the graph; this far down it changes nothing audible
 
     def __init__(self) -> None:
         self._eq_present = False
@@ -165,12 +166,13 @@ class PipeWireBackend(AudioBackend):
         target = self._hw_sink.id if self._hw_sink else "@DEFAULT_AUDIO_SINK@"
         await run("wpctl", "set-mute", target, "1" if muted else "0")
 
-    async def set_eq(self, bass_db: float, treble_db: float) -> None:
+    async def set_eq(self, bass_db: float, treble_db: float, highpass_hz: float | None = None) -> None:
         if not self._eq_present:
             return
         eq_id, _ = await self._eq_nodes()
         if eq_id:
-            params = f'{{ params = [ "bass:Gain" {bass_db:.1f} "treble:Gain" {treble_db:.1f} ] }}'
+            hp = highpass_hz if highpass_hz is not None else self.HIGHPASS_OFF_HZ
+            params = f'{{ params = [ "highpass:Freq" {hp:.1f} "bass:Gain" {bass_db:.1f} "treble:Gain" {treble_db:.1f} ] }}'
             await run("pw-cli", "set-param", eq_id, "Props", params)
 
     async def stream_running(self, client_name: str) -> bool | None:
@@ -247,9 +249,10 @@ class SimBackend(AudioBackend):
         self.muted = False
         self.default = "sim_usb"
         self.eq = (0.0, 0.0)
+        self.highpass_hz: float | None = None
         self._sinks = [
             Sink("41", "alsa_output.usb-Topping_D10-00.analog-stereo", "Topping D10 (USB DAC)", "usb"),
-            Sink("42", "alsa_output.platform-soc_sound.stereo-fallback", "HiFiBerry MiniAmp", "hifiberry"),
+            Sink("42", "alsa_output.platform-soc_sound.stereo-fallback", "Audio Amp SHIM (hifiberry-dac)", "hifiberry"),
             Sink("43", "alsa_output.platform-bcm2835_audio.stereo-fallback", "bcm2835 Headphones", "headphones"),
             Sink("44", "alsa_output.platform-fef00700.hdmi.hdmi-stereo", "vc4-hdmi", "hdmi"),
         ]
@@ -270,8 +273,9 @@ class SimBackend(AudioBackend):
     async def set_mute(self, muted: bool) -> None:
         self.muted = muted
 
-    async def set_eq(self, bass_db: float, treble_db: float) -> None:
+    async def set_eq(self, bass_db: float, treble_db: float, highpass_hz: float | None = None) -> None:
         self.eq = (bass_db, treble_db)
+        self.highpass_hz = highpass_hz
 
     async def stream_running(self, client_name: str) -> bool | None:
         try:

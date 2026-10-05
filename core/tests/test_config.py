@@ -30,7 +30,7 @@ def test_unknown_key_rejected() -> None:
 
 def test_duplicate_pins_rejected() -> None:
     with pytest.raises(ValidationError):
-        DawnConfig.model_validate({"inputs": {"big_button": {"pin": 17}}})
+        DawnConfig.model_validate({"inputs": {"big_button": {"enabled": True, "pin": 17}}})
 
 
 def test_curve_must_be_sorted() -> None:

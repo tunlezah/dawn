@@ -3,7 +3,8 @@
 #
 #   sudo ./deploy/install.sh                 full install (builds rtl-sdr-blog, welle.io, shairport-sync + nqptp)
 #   sudo ./deploy/install.sh --update        after `git pull`: reinstall python/web/configs, skip finished builds
-#   sudo ./deploy/install.sh --audio hifiberry   add the HiFiBerry MiniAmp overlay (default: auto = USB DAC / jack)
+#   sudo ./deploy/install.sh --audio hifiberry   I2S amp (Pimoroni Audio Amp SHIM / HiFiBerry): hifiberry-dac overlay,
+#                                                onboard audio off, mono EQ chain, output pinned (default: auto)
 #   sudo ./deploy/install.sh --display hyperpixel4|waveshare_dsi|hdmi   force the panel overlay (default: auto)
 #   sudo ./deploy/install.sh --data-device /dev/mmcblk0p3   mount /var/lib/dawn from an ext4 partition (data=journal)
 #   sudo ./deploy/install.sh --data-image-mb 1024          ...or from a loop-mounted ext4 image (data=journal)
@@ -66,11 +67,19 @@ detect_panel() {
   for c in /sys/class/drm/card*-DSI-*; do [ -e "$c/status" ] && grep -q '^connected' "$c/status" && { echo waveshare_dsi; return; }; done
   for c in /sys/class/drm/card*-DPI-*; do [ -e "$c/status" ] && grep -q '^connected' "$c/status" && { echo hyperpixel4; return; }; done
   grep -qs 'hyperpixel4' "$BOOTCFG" && { echo hyperpixel4; return; }
-  grep -qs 'waveshare-panel' "$BOOTCFG" && { echo waveshare_dsi; return; }
+  grep -qsE 'waveshare-panel|vc4-kms-dsi-7inch' "$BOOTCFG" && { echo waveshare_dsi; return; }
   for c in /sys/class/drm/card*-HDMI-*; do [ -e "$c/status" ] && grep -q '^connected' "$c/status" && { echo hdmi; return; }; done
   case "$MODEL" in *"Zero 2"*) echo hdmi;; *) echo waveshare_dsi;; esac   # Zero 2 W has no DSI connector
 }
 PANEL_DETECTED="$(detect_panel)"
+# --update runs without --audio: keep an I2S amp set up by an earlier install (or already loaded)
+detect_audio() {
+  [ "$AUDIO" != auto ] && { echo "$AUDIO"; return; }
+  awk '/^# >>> dawn >>>/{d=1} /^# <<< dawn <<</{d=0} d && /^dtoverlay=hifiberry-dac/{f=1} END{exit !f}' "$BOOTCFG" 2>/dev/null && { echo hifiberry; return; }
+  grep -qsi 'hifiberry' /proc/asound/cards && { echo hifiberry; return; }
+  echo auto
+}
+AUDIO="$(detect_audio)"
 echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTED audio=$AUDIO"
 
 # ---------------------------------------------------------------------------
@@ -215,16 +224,49 @@ fi
 # ---------------------------------------------------------------------------
 if [ "$IS_PI" -eq 1 ] && [ -f "$BOOTCFG" ]; then
   step "boot config ($BOOTCFG)"
-  OVERLAYS=$'dtparam=i2c_arm=on\ndtparam=watchdog=on\ndtparam=audio=on'
+  # [all] first: the block is appended, so it must not land inside a [pi4]/[cm4] section
+  OVERLAYS=$'[all]\ndtparam=i2c_arm=on\ndtparam=watchdog=on'
+  case "$AUDIO" in
+    # Pimoroni Audio Amp SHIM (MAX98357A): I2S on GPIO 18/19/21, GPIO25 driven high at boot.
+    # Onboard audio off so the I2S card is the only audio device. Later lines win, so
+    # this overrides the stock dtparam=audio=on further up the file.
+    hifiberry) OVERLAYS+=$'\ndtparam=audio=off\ndtoverlay=hifiberry-dac\ngpio=25=op,dh';;
+    *)         OVERLAYS+=$'\ndtparam=audio=on';;
+  esac
   case "$PANEL_DETECTED" in
-    waveshare_dsi) OVERLAYS+=$'\ndtoverlay=vc4-kms-dsi-waveshare-panel,4_3_inch';;
+    # Waveshare 4.3" DSI 43H-800480-IPS-CT (thin panel, Goodix touch over the ribbon) presents
+    # itself as the official 7" display. The older PCB-backed 4.3" LCD's overlay
+    # (vc4-kms-dsi-waveshare-panel,4_3_inch) leaves this panel dark.
+    waveshare_dsi) OVERLAYS+=$'\ndtoverlay=vc4-kms-dsi-7inch';;
     hyperpixel4)   OVERLAYS+=$'\ndtoverlay=vc4-kms-dpi-hyperpixel4';;
   esac
-  case "$AUDIO" in hifiberry) OVERLAYS+=$'\ndtoverlay=hifiberry-dac';; esac
   [ "$LOW_POWER" -eq 1 ] && OVERLAYS+=$'\n# low-power board: smaller GPU split is fine for the kiosk\ngpu_mem=96'
   sed -i '/^# >>> dawn >>>/,/^# <<< dawn <<</d' "$BOOTCFG"
   printf '\n# >>> dawn >>>  (managed by deploy/install.sh; edit /etc/dawn/config.yaml instead)\n%s\n# <<< dawn <<<\n' "$OVERLAYS" >>"$BOOTCFG"
   grep -q '^dtoverlay=vc4-kms-v3d' "$BOOTCFG" || echo "WARNING: vc4-kms-v3d overlay not found in $BOOTCFG (needed for the DSI/DPI panel)"
+
+  # Panel rotation (display.rotation in config.yaml): rotate the console/KMS output on the kernel
+  # command line, and rotate touch to match with a libinput calibration matrix.
+  CMDLINE=/boot/firmware/cmdline.txt; [ -f "$CMDLINE" ] || CMDLINE=/boot/cmdline.txt
+  ROT="$(awk '/^display:/{d=1;next} /^[^ #]/{d=0} d && /^  rotation:/{print $2; exit}' /etc/dawn/config.yaml 2>/dev/null || true)"
+  case "$ROT" in 90|180|270) ;; *) ROT=0;; esac
+  case "$PANEL_DETECTED" in waveshare_dsi) CONN=DSI-1;; hyperpixel4) CONN=DPI-1;; *) CONN="";; esac
+  if [ -f "$CMDLINE" ]; then
+    sed -i -E 's/ ?video=(DSI|DPI)-1:[^ ]*//g' "$CMDLINE"
+    [ "$ROT" != 0 ] && [ -n "$CONN" ] && sed -i -E "1s/\$/ video=$CONN:800x480M@60,rotate=$ROT/" "$CMDLINE"
+  fi
+  case "$ROT" in
+    90)  MATRIX="0 -1 1 1 0 0";;
+    180) MATRIX="-1 0 1 0 -1 1";;
+    270) MATRIX="0 1 0 -1 0 1";;
+    *)   MATRIX="";;
+  esac
+  if [ -n "$MATRIX" ]; then
+    printf '# Dawn: touch follows display.rotation=%s (written by deploy/install.sh)\nENV{ID_INPUT_TOUCHSCREEN}=="1", ENV{LIBINPUT_CALIBRATION_MATRIX}="%s"\n' "$ROT" "$MATRIX" >/etc/udev/rules.d/98-dawn-touch.rules
+  else
+    rm -f /etc/udev/rules.d/98-dawn-touch.rules
+  fi
+  echo "panel rotation: $ROT"
 fi
 
 # ---------------------------------------------------------------------------
@@ -236,8 +278,13 @@ install -m 0644 "$D/udev/99-dawn.rules" /etc/udev/rules.d/99-dawn.rules
 [ -f /etc/chrony/chrony.conf.dawn-orig ] || cp /etc/chrony/chrony.conf /etc/chrony/chrony.conf.dawn-orig 2>/dev/null || true
 install -m 0644 "$D/chrony/chrony.conf" /etc/chrony/chrony.conf
 install -m 0644 "$D/gpsd/gpsd" /etc/default/gpsd
-install -D -m 0644 "$D/pipewire/dawn-eq.conf" /etc/pipewire/pipewire.conf.d/dawn-eq.conf
+if [ "$AUDIO" = hifiberry ]; then EQ_CONF=dawn-eq-mono.conf; else EQ_CONF=dawn-eq.conf; fi
+install -D -m 0644 "$D/pipewire/$EQ_CONF" /etc/pipewire/pipewire.conf.d/dawn-eq.conf
 install -D -m 0644 "$D/wireplumber/51-dawn-bluetooth.conf" /etc/wireplumber/wireplumber.conf.d/51-dawn-bluetooth.conf
+install -D -m 0644 "$D/wireplumber/52-dawn-alsa.conf" /etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf
+# The I2S amp is the only speaker: pin it so a USB audio device plugged in later (usb ranks first
+# in audio.sink_priority) cannot take over. Only replaces an unset pin; a user's choice stays.
+[ "$AUDIO" = hifiberry ] && sed -i -E 's/^(\s*pinned_sink:\s*)null\s*$/\1hifiberry/' /etc/dawn/config.yaml || true
 [ -f /etc/shairport-sync.conf ] && [ ! -f /etc/shairport-sync.conf.dawn-orig ] && cp /etc/shairport-sync.conf /etc/shairport-sync.conf.dawn-orig || true
 install -m 0644 "$D/shairport-sync/shairport-sync.conf" /etc/shairport-sync.conf
 install -m 0644 "$D/logrotate/dawn" /etc/logrotate.d/dawn

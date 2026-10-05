@@ -41,6 +41,7 @@ class AudioService(Service):
         self._task: asyncio.Task[None] | None = None
         self._overlay_task: asyncio.Task[None] | None = None
         self._last_published_level: str | None = None
+        self._pinned_missing_logged: str | None = None
         self.register_factory("chime", self._make_chime)
         self.register_factory("url", self._make_url)
         self.register_factory("playlist", self._make_playlist)
@@ -50,10 +51,10 @@ class AudioService(Service):
         cfg = self.ctx.config
         self.backend = await make_backend(cfg.audio.backend, cfg.sim.hub_url, self.ctx.sim)
         self.ctx.store.state.audio.backend = self.backend.name
-        self.volume = int(self.ctx.db.get("audio.volume", cfg.audio.default_volume))
+        self.volume = min(cfg.audio.max_volume, int(self.ctx.db.get("audio.volume", cfg.audio.default_volume)))
         self.muted = bool(self.ctx.db.get("audio.muted", False))
         await self.refresh_sinks(select_now=True)
-        await self.backend.set_volume(self.volume)
+        await self.backend.set_volume(self.hw_volume(self.volume))
         await self.backend.set_mute(self.muted)
         await self.apply_eq()
         self._task = asyncio.create_task(self._loop(), name="audio-loop")
@@ -75,6 +76,10 @@ class AudioService(Service):
             await self.apply_eq()
         if old.audio.pinned_sink != new.audio.pinned_sink or old.audio.sink_priority != new.audio.sink_priority:
             await self.refresh_sinks(select_now=True)
+        if new.audio.max_volume < self.volume:
+            await self.set_volume(new.audio.max_volume, overlay=False)
+        elif old.audio.output_ceiling_percent != new.audio.output_ceiling_percent:
+            await self.backend.set_volume(self.hw_volume(self.volume))
         self.arbiter.duck_percent = new.audio.duck_percent
         self.arbiter.duck_seconds = new.audio.duck_seconds
         self.publish()
@@ -178,13 +183,20 @@ class AudioService(Service):
         return src_flowing and running
 
     # ---- volume ----------------------------------------------------------
+    def hw_volume(self, volume: int) -> int:
+        """Map the 0-100 user scale onto the sink: 100 lands on audio.output_ceiling_percent.
+
+        The I2S amp has no hardware volume, so this is the only gain stage; every
+        path (controls, alarm ramps, chimes, sleep fades) ends up here."""
+        return round(max(0, min(100, volume)) * self.ctx.config.audio.output_ceiling_percent / 100)
+
     async def set_volume(self, volume: int, *, persist: bool = True, overlay: bool = True) -> int:
         volume = max(0, min(self.ctx.config.audio.max_volume, int(volume)))
         self.volume = volume
         if self.muted and volume > 0:
             self.muted = False
             await self.backend.set_mute(False)
-        await self.backend.set_volume(volume)
+        await self.backend.set_volume(self.hw_volume(volume))
         if persist:
             self.ctx.db.set("audio.volume", volume)
             self.ctx.db.set("audio.muted", self.muted)
@@ -224,7 +236,7 @@ class AudioService(Service):
             if self._sink is None or want.name != self._sink.name or select_now:
                 try:
                     await self.backend.set_default_sink(want)
-                    await self.backend.set_volume(self.volume)
+                    await self.backend.set_volume(self.hw_volume(self.volume))
                     await self.backend.set_mute(self.muted)
                     log.info("audio sink -> %s (%s)", want.description, want.kind)
                 except Exception:  # noqa: BLE001
@@ -238,10 +250,17 @@ class AudioService(Service):
             return None
         pinned = self.ctx.config.audio.pinned_sink
         if pinned:
+            # a node.name, id or description pins one device; a kind (hifiberry, usb...) pins
+            # whichever sink of that kind is present, whatever PipeWire named it on this board
             for s in sinks:
                 if s.name == pinned or s.id == pinned or s.description == pinned:
                     return s
-            log.warning("pinned sink %r not present; falling back to priority", pinned)
+            for s in sinks:
+                if s.kind == pinned:
+                    return s
+            if self._pinned_missing_logged != pinned:
+                log.warning("pinned sink %r not present; falling back to priority", pinned)
+                self._pinned_missing_logged = pinned
         for kind in self.ctx.config.audio.sink_priority:
             for s in sinks:
                 if s.kind == kind:
@@ -254,11 +273,15 @@ class AudioService(Service):
     # ---- EQ --------------------------------------------------------------
     async def apply_eq(self) -> None:
         eq = self.ctx.config.audio.eq
+        bass = min(eq.bass_db, eq.bass_max_db)
         try:
-            await self.backend.set_eq(eq.bass_db if eq.enabled else 0.0, eq.treble_db if eq.enabled else 0.0)
+            # the high-pass protects the driver, so it stays in even with the tone controls off
+            await self.backend.set_eq(bass if eq.enabled else 0.0, eq.treble_db if eq.enabled else 0.0, eq.highpass_hz)
         except Exception:  # noqa: BLE001
             log.exception("eq apply failed")
-        self.ctx.store.state.audio.eq = EqState(enabled=eq.enabled, bass_db=eq.bass_db, treble_db=eq.treble_db)
+        self.ctx.store.state.audio.eq = EqState(
+            enabled=eq.enabled, bass_db=bass, treble_db=eq.treble_db, bass_max_db=eq.bass_max_db, highpass_hz=eq.highpass_hz,
+        )
         self.ctx.store.touch()
 
     # ---- presets ---------------------------------------------------------
