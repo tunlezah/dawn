@@ -108,18 +108,25 @@ _RTL_IDS = {
 }
 
 
-def detect_sdr() -> tuple[bool, str | None, str | None]:
-    """Presence from USB IDs; tuner type from rtl_test when available."""
-    present = False
-    vidpid = None
+def _sdr_vidpid() -> str | None:
     for dev in glob.glob("/sys/bus/usb/devices/*"):
         vid = _read(os.path.join(dev, "idVendor"))
         pid = _read(os.path.join(dev, "idProduct"))
         if vid and pid and f"{vid}:{pid}" in _RTL_IDS:
-            present = True
-            vidpid = f"{vid}:{pid}"
-            break
-    if not present:
+            return f"{vid}:{pid}"
+    return None
+
+
+def sdr_on_usb() -> tuple[bool, str | None]:
+    """(present, generic name) from the USB ids alone, without opening the stick."""
+    vidpid = _sdr_vidpid()
+    return (vidpid is not None, _RTL_IDS.get(vidpid) if vidpid else None)
+
+
+def detect_sdr() -> tuple[bool, str | None, str | None]:
+    """Presence from USB IDs; tuner type from rtl_test when available (boot only: it opens the stick)."""
+    vidpid = _sdr_vidpid()
+    if vidpid is None:
         return False, None, None
     tuner = None
     try:

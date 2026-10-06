@@ -38,6 +38,14 @@ class Player:
         """Decoder producing audio right now (best effort)."""
         return False
     @property
+    def loaded_url(self) -> str | None:
+        """What is loaded now (None after unload): a paused source checks it before resuming."""
+        return None
+    @property
+    def idle(self) -> bool:
+        """Nothing loaded any more (a stream that ended or broke while paused)."""
+        return self.loaded_url is None
+    @property
     def media_title(self) -> str | None:
         return None
     @property
@@ -114,6 +122,14 @@ class MpvPlayer(Player):
     @property
     def alive(self) -> bool:
         return self.proc is not None and self.proc.returncode is None
+
+    @property
+    def loaded_url(self) -> str | None:
+        return self._loaded_url
+
+    @property
+    def idle(self) -> bool:
+        return self._loaded_url is None or bool(self.props.get("idle-active", True))
 
     async def _rx(self) -> None:
         assert self._reader
@@ -258,6 +274,10 @@ class SimPlayer(Player):
         if not self.playing:
             return False
         return self._probe() if self._probe else True
+
+    @property
+    def loaded_url(self) -> str | None:
+        return self._url
 
     @property
     def media_title(self) -> str | None:

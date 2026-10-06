@@ -80,7 +80,11 @@ class PlayerSource(AudioSource):
         await self.player.pause(True)
 
     async def resume(self) -> None:
-        await self.player.pause(False)
+        if self._started and (self.player.loaded_url != self.url or self.player.idle):
+            # the player was used for something else meanwhile, or the stream ended while paused: load it again
+            await self.player.load(self.url, loop=self.loop)
+        else:
+            await self.player.pause(False)
 
     async def set_gain(self, percent: float) -> None:
         await self.player.set_gain(percent)

@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import logging
 from datetime import date
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from ..alarms.schemas import AlarmIn, LeaveIn, TestRingIn
-from ..alarms.service import AlarmService
+from ..alarms.service import AlarmService, RingBusy
 from ..context import DawnContext
 from .deps import get_ctx
 
 router = APIRouter(prefix="/api/alarms", tags=["alarms"])
+log = logging.getLogger("dawn.api.alarms")
 
 
 def alarms(ctx: DawnContext = Depends(get_ctx)) -> AlarmService:
@@ -19,7 +21,13 @@ def alarms(ctx: DawnContext = Depends(get_ctx)) -> AlarmService:
 
 @router.get("")
 async def list_alarms(a: AlarmService = Depends(alarms)) -> list[dict[str, Any]]:
-    return [a.to_out(r).model_dump() for r in a.rows()]
+    out = []
+    for r in a.rows():
+        try:
+            out.append(a.to_out(r).model_dump())
+        except ValueError as e:  # a malformed row (hand edit, foreign backup) must not hide the others
+            log.error("alarm %s cannot be listed: %s", r.id, e)
+    return out
 
 
 @router.post("", status_code=201)
@@ -39,7 +47,10 @@ async def stop(a: AlarmService = Depends(alarms)) -> dict[str, Any]:
 
 @router.post("/test")
 async def test_ring(body: TestRingIn, a: AlarmService = Depends(alarms)) -> dict[str, Any]:
-    await a.test_ring(source=body.source, label=body.label, volume=body.volume, ramp_seconds=body.ramp_seconds)
+    try:
+        await a.test_ring(source=body.source, label=body.label, volume=body.volume, ramp_seconds=body.ramp_seconds)
+    except RingBusy as e:
+        raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
 
@@ -92,7 +103,10 @@ async def test_alarm(alarm_id: int, a: AlarmService = Depends(alarms)) -> dict[s
     row = a.get(alarm_id)
     if not row:
         raise HTTPException(404)
-    await a.test_ring(row)
+    try:
+        await a.test_ring(row)
+    except RingBusy as e:
+        raise HTTPException(409, str(e)) from e
     return {"ok": True}
 
 
@@ -102,7 +116,7 @@ async def skip_next(alarm_id: int, body: dict | None = None, a: AlarmService = D
     if not row:
         raise HTTPException(404)
     value = (body or {}).get("skip", not row.skip_next)
-    a.patch(alarm_id, skip_next=bool(value))
+    a.set_skip_next(alarm_id, bool(value))
     return {"skip_next": bool(value)}
 
 

@@ -159,8 +159,13 @@ class DisplayService(Service):
         floor = sl.backlight_percent if sl.backlight_percent is not None else cfg.display.backlight.min_percent
         self.controller.lo = 0 if sleeping and (dark or floor == 0) else cfg.display.backlight.min_percent
         forced: float | None = None
+        ringing = st.alarms.ringing is not None and not st.alarms.ringing.snoozed_until and st.face.mode == "ringing"
         if st.alarms.light_wake_active:
             forced = 100
+        elif ringing:
+            # an alarm lights the screen as a tap does, so its time and how to snooze or stop it can be read at once
+            # (dimly at night: the curve alone would leave it at the backlight minimum in a dark bedroom)
+            forced = sl.wake_percent if (night or st.display.sleep) else b.standby_wake_percent
         elif sleeping:
             forced = 0 if dark else floor
         elif st.face.wake_until and datetime.fromisoformat(st.face.wake_until) > now and st.face.mode == "standby":

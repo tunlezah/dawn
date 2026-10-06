@@ -6,6 +6,7 @@ import asyncio
 import logging
 import time
 from collections import deque
+from contextlib import suppress
 from datetime import UTC, datetime
 
 from sqlmodel import delete, select
@@ -31,6 +32,10 @@ def snr_to_signal(snr: float | None) -> int | None:
     return int(max(0, min(100, (snr / 20.0) * 100)))
 
 
+class TunerBusy(RuntimeError):
+    """The tuner is an alarm's: a scan, a retune or a decoder restart by hand has to wait."""
+
+
 class DabSource(PlayerSource):
     kind = "dab"
 
@@ -40,15 +45,47 @@ class DabSource(PlayerSource):
         self.dab = dab
         self.label = svc.label
         self.ref = f"dab:{svc.sid}"
+        self._channel: str | None = None
+        self._reload: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         await self.dab.ensure_tuned_for(self.svc.sid)
+        self._channel = self.dab.channel
         await super().start()
         self.dab.mark_active(self.svc.sid)
 
     async def stop(self) -> None:
+        self._cancel_reload()
         await super().stop()
         self.dab.mark_active(None)
+
+    async def pause(self) -> None:
+        self._cancel_reload()
+        await super().pause()
+
+    async def resume(self) -> None:
+        if self._started and self.dab.channel != self._channel:
+            # something (an alarm on another station) retuned welle while this was paused, so its stream is gone.
+            # Tuning takes seconds: do it outside the arbiter's lock.
+            self._cancel_reload()
+            self._reload = asyncio.create_task(self._retune(), name=f"dab-resume-{self.svc.sid}")
+            return
+        await super().resume()
+
+    async def _retune(self) -> None:
+        try:
+            await self.dab.ensure_tuned_for(self.svc.sid)
+            self._channel = self.dab.channel
+            if self._started:
+                await self.player.load(self.url)
+                self.dab.mark_active(self.svc.sid)
+        except Exception as e:  # noqa: BLE001
+            log.warning("could not resume %s after a retune: %s", self.svc.label, e)
+
+    def _cancel_reload(self) -> None:
+        if self._reload and not self._reload.done() and self._reload is not asyncio.current_task():
+            self._reload.cancel()
+        self._reload = None
 
     @property
     def flowing(self) -> bool:
@@ -278,14 +315,21 @@ class DabService(Service):
             return ServiceInfo(sid=sid, label=row.label, short_label=row.short_label, bitrate=row.bitrate, codec=row.codec, pty=row.pty)
         return ServiceInfo(sid=sid, label=f"DAB {sid.upper()}")
 
-    async def make_source(self, arg: str):
+    async def make_source(self, arg: str, level: str = "user"):
         sid = norm_sid(arg)
         svc = self._svc_info(sid)
-        player = await self.ctx.svc(AudioService).player("dawn-dab")
+        audio = self.ctx.svc(AudioService)
+        player = await audio.player(audio.player_name("dab", level))
         return DabSource(player, self.client.stream_url(svc), svc, self)
 
     async def ensure_tuned_for(self, sid: str) -> None:
         cfg = self.ctx.config.dab
+        if self._scan_task and not self._scan_task.done():
+            # a scan retunes every few seconds: the station that is wanted now comes first
+            log.warning("stopping the scan to play %s", sid)
+            self._scan_stop.set()
+            with suppress(Exception):
+                await asyncio.wait_for(asyncio.shield(self._scan_task), 8)
         row = self.service_row(sid)
         want = row.channel.upper() if row else None
         if want is None:
@@ -321,8 +365,67 @@ class DabService(Service):
     def mark_active(self, sid: str | None) -> None:
         self.active_sid = sid
 
+    def _alarm_conflict(self, within_s: float = 0.0, *, ringing_only: bool = False) -> str | None:
+        try:
+            from ..alarms.service import AlarmService
+
+            return self.ctx.svc(AlarmService).dab_conflict(within_s, ringing_only=ringing_only)
+        except (ImportError, KeyError):
+            return None
+
+    async def user_tune(self, channel: str) -> None:
+        """A retune asked for by hand (the API, Diagnostics): not while an alarm on the radio rings or is snoozed."""
+        hold = self._alarm_conflict(ringing_only=True)
+        if hold:
+            raise TunerBusy(f"{hold}; retune after it")
+        await self.tune(channel)
+
+    async def prepare_for(self, sid: str, *, may_retune: bool) -> tuple[str, str]:
+        """Get the tuner ready for an alarm on `sid` minutes ahead. Returns (status, what is wrong): "ok"; "tuning"
+        (just retuned, or a scan is being stopped: sync follows); "busy" (someone is listening on another channel,
+        which the alarm retunes when it rings); "fail"."""
+        sid = norm_sid(sid)
+        if not self.ctx.store.state.dab.sdr_present:
+            return "fail", "no SDR"
+        if self._scan_task and not self._scan_task.done():
+            log.warning("a scan is running with an alarm on DAB minutes away; stopping it")
+            self._scan_stop.set()
+            return "tuning", "stopping a scan"
+        row = self.service_row(sid)
+        want = row.channel.upper() if row else None
+        if want is None and sid not in self.live:
+            return "fail", "station unknown"
+        if not await self.client.reachable():
+            await self.restart_welle(reason="alarm")
+            return "fail", "DAB decoder not answering"
+        if want and want != self.channel:
+            if not may_retune:
+                return "busy", f"the radio is playing on {self.channel}; it retunes to {want} when the alarm rings"
+            log.info("retuning to %s for an alarm", want)
+            try:
+                await self.tune(want)
+            except RuntimeError as e:
+                return "fail", str(e)
+            return "tuning", f"tuned to {want}"
+        m = await self.client.mux()
+        if m is None:
+            return "fail", "DAB decoder not answering"
+        if not m.sync:
+            return "fail", f"no DAB signal on {self.channel}"
+        self.live_sync = True
+        for s in m.services:
+            self.live[s.sid] = s
+        if sid not in {s.sid for s in m.services}:
+            return "fail", "station not on air in its ensemble"
+        return "ok", ""
+
     async def restart_welle(self, force: bool = False, reason: str = "unreachable") -> bool:
-        """Restart the dawn-dab unit (at most once per 30 s unless forced from Diagnostics). Returns True if attempted."""
+        """Restart the dawn-dab unit (at most once per 30 s unless forced from Diagnostics). Returns True if attempted.
+        A restart by hand (`reason="manual"`) waits while an alarm on the radio rings."""
+        if reason == "manual":
+            hold = self._alarm_conflict(ringing_only=True)
+            if hold:
+                raise TunerBusy(f"{hold}; restart the decoder after it")
         now = time.monotonic()
         if now - self._last_restart < (5 if force else 30):
             return False
@@ -342,6 +445,11 @@ class DabService(Service):
     async def start_scan(self) -> bool:
         if self._scan_task and not self._scan_task.done():
             return False
+        cfg = self.ctx.config.dab
+        # a scan holds the tuner for minutes: not into an alarm on the radio, nor its preparation
+        hold = self._alarm_conflict(len(scan_order(cfg.scan_channels, cfg.scan_priority)) * cfg.scan_dwell_s + 30)
+        if hold:
+            raise TunerBusy(f"{hold}; scanning waits until it has rung")
         audio = self.ctx.svc(AudioService)
         for level in ("user", "sleep"):
             slot = audio.arbiter.slot(level)

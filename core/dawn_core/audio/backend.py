@@ -289,7 +289,7 @@ class SimBackend(AudioBackend):
     async def stream_running(self, client_name: str) -> bool | None:
         try:
             async with httpx.AsyncClient(timeout=1.5) as c:
-                r = await c.get(f"{self.hub}/audio/flowing")
+                r = await c.get(f"{self.hub}/audio/flowing", params={"client": client_name})
                 return bool(r.json().get("flowing"))
         except Exception:  # noqa: BLE001
             return True

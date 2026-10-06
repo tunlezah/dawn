@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
@@ -28,6 +29,9 @@ class Database:
         else:
             url = "sqlite://"
         self.engine = create_engine(url, connect_args={"check_same_thread": False})
+        self.write_errors = 0  # writes that failed (storage read-only or full); Diagnostics shows them
+        self.last_write_error: str | None = None
+        self._write_error_logged = 0.0
 
         @event.listens_for(self.engine, "connect")
         def _pragmas(dbapi_conn, _record):  # type: ignore[no-untyped-def]
@@ -66,6 +70,25 @@ class Database:
                 s.add(row)
             s.commit()
 
+    def try_set(self, key: str, value: Any) -> bool:
+        """`set` for state worth keeping that must not stop the caller (volume, a ring in progress): an SD card
+        that has gone read-only or a full disk is logged, and False is returned."""
+        try:
+            self.set(key, value)
+        except Exception as e:  # noqa: BLE001
+            self.write_failed(key, e)
+            return False
+        return True
+
+    def write_failed(self, what: str, e: BaseException) -> None:
+        """Count a failed write and log it at most once a minute (the alarm engine retries every second)."""
+        self.write_errors += 1
+        self.last_write_error = f"{what}: {e}"
+        now = time.monotonic()
+        if now - self._write_error_logged > 60:
+            self._write_error_logged = now
+            log.error("database write failed (%s): %s", what, e)
+
     def all_kv(self) -> dict[str, Any]:
         with self.session() as s:
             out = {}
@@ -78,9 +101,14 @@ class Database:
 
     # ---- events ----------------------------------------------------------
     def log_event(self, kind: str, **detail: Any) -> None:
-        with self.session() as s:
-            s.add(EventRow(kind=kind, detail=json.dumps(detail, default=str)))
-            s.commit()
+        """Record an event. Never raises: the log is for reading later, and nothing that logs (an alarm firing
+        above all) may fail because the storage has gone read-only or is full. The journal still gets it."""
+        try:
+            with self.session() as s:
+                s.add(EventRow(kind=kind, detail=json.dumps(detail, default=str)))
+                s.commit()
+        except Exception as e:  # noqa: BLE001
+            self.write_failed(f"event {kind}", e)
         log.info("event %s %s", kind, detail, extra={"dawn_kind": kind})
 
     def events_since(self, since: datetime, kinds: list[str] | None = None, limit: int = 500) -> list[dict[str, Any]]:

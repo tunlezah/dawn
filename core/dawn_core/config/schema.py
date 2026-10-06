@@ -332,16 +332,35 @@ class DabConfig(StrictModel):
 # --------------------------------------------------------------------------- #
 # Alarms and timers
 # --------------------------------------------------------------------------- #
+class BuzzerConfig(StrictModel):
+    """The backup tone: the alarm's last resort when neither its source nor the chime can be heard."""
+
+    gpio_pin: int | None = Field(
+        None, ge=0, le=27,
+        description="BCM pin of an optional active piezo buzzer (e.g. 26 = header pin 37, its − to pin 39 GND); null = none fitted. It only sounds with the backup tone.",
+    )
+    gpio_active_high: bool = Field(True, description="False for buzzer modules that sound when the pin is pulled low.")
+
+
 class AlarmDefaults(StrictModel):
     volume: int = Field(70, ge=1, le=100)
     ramp_seconds: int = Field(60, ge=0, le=600)
     ramp_start_percent: int = Field(10, ge=1, le=100)
     snooze_minutes: int = Field(9, ge=1, le=60)
     fallback_after_s: int = Field(15, ge=3, le=120, description="Switch to the chime after this long without audio.")
+    buzzer_after_s: int = Field(
+        8, ge=3, le=60,
+        description="Switch from the chime to the backup tone (a beep played without mpv, plus the face and an optional GPIO buzzer) after this long without audio.",
+    )
+    prepare_minutes: int = Field(
+        5, ge=0, le=30,
+        description="Get each alarm's sound ready this many minutes ahead: the players are started, the DAB radio is tuned and in sync, and scans wait until it has rung (0 = off).",
+    )
     max_ring_minutes: int = Field(30, ge=1, le=180)
     missed_grace_minutes: int = Field(10, ge=0, le=60, description="Fire late if within this window after boot.")
     light_wake_minutes: int = Field(10, ge=1, le=60)
     chime: Literal["gentle_bell", "rising_synth", "birds"] = "gentle_bell"
+    buzzer: BuzzerConfig = BuzzerConfig()
 
 
 class TimersConfig(StrictModel):
@@ -465,6 +484,8 @@ class DawnConfig(StrictModel):
             pins.append(self.inputs.big_button.pin)
         if self.display.backlight.driver == "hyperpixel_pwm":
             pins.append(self.display.backlight.pwm_pin)
+        if self.alarm_defaults.buzzer.gpio_pin is not None:
+            pins.append(self.alarm_defaults.buzzer.gpio_pin)
         if len(pins) != len(set(pins)):
             raise ValueError(f"GPIO pins must be unique, got {pins}")
         return self
