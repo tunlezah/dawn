@@ -101,6 +101,7 @@ export class Beeper {
     this.timer = null;
     try { this.master?.disconnect(); } catch { /* already gone */ }
     this.master = null;
+    this.ctx?.suspend().catch(() => {}); // no idle output stream held open
   }
 
   private cycle(ctx: AudioContext, out: GainNode, t: number): number {

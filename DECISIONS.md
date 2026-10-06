@@ -173,14 +173,79 @@ each section. Every entry says what was decided and why, so it can be revisited.
   are partial-state (e.g. the Royal Queensland Show). `holiday_scope =
   include_regional` turns them on. Extra dates and name exclusions come from
   config.
-- **One ring session at a time.** A nap or test ring arriving while an alarm
-  rings replaces it (logged). Snooze pauses the alarm slot (so the previous
-  source does not resume) and re-rings with the ramp again; the max-ring clock
-  counts ringing time only. The big button stops a snoozed session too.
-- **Fallback is decided inside the ring session, not the arbiter.** It watches
-  "audio flowing" every second; a DAB source whose welle-cli is unreachable gets
-  one restart attempt after 3 s, and whatever happens the chime takes over at
-  `fallback_after_s` (15 s). With no SDR present the chime starts immediately.
+- **One ring session at a time, and a real alarm keeps it.** A new alarm replaces whatever rings; a nap that
+  runs out while an alarm rings is folded into it (and ends its snooze, if snoozed), and a test ring is refused
+  with 409, because stopping either would have stopped the alarm too. Snooze pauses the alarm slot (so the
+  previous source does not resume) and re-rings with the ramp again on the same rung; the max-ring clock counts
+  ringing time only. The big button stops a snoozed session too.
+- **Fallback is a watched ladder inside the ring session, not the arbiter.** Source → chime → backup tone. Every
+  rung is watched each second through the alarm level's own slot (not whatever happens to be on top): no audio
+  `fallback_after_s` (15 s) after the ring, or 5 s after a slow start (a retune), moves to the chime; the chime
+  gets `buzzer_after_s` (8 s); audio that stops for 10 s (5 s for the chime) counts as failed, so a brief DAB
+  dropout does not drop the station. A DAB source whose welle-cli is unreachable gets one restart attempt after
+  3 s; with no SDR the chime starts at once. A chime alarm goes straight from its chime to the tone. The ramp
+  counts from the ring, so it carries on across rungs; the tone goes straight to the alarm's volume. A volume
+  change by hand while ringing ends the ramp (the knob wins).
+- **The backup tone needs neither mpv nor the source.** Core generates the beeps (four 120 ms beeps at 2 kHz, a
+  pause, as a WAV in /run/dawn) and plays them with the first program that works: `pw-play`, `paplay`, `aplay`
+  on ALSA's default device, then `aplay` straight on each card (I2S/USB first, HDMI last). The raw-card path
+  only succeeds when PipeWire is not holding the card, which is exactly when PipeWire is what broke. Success is
+  "the process played the file through"; a failure moves on to the next program. It is an arbiter source at the
+  alarm level, so everything below stays paused, and it starts directly if even the arbiter fails. An optional
+  GPIO piezo (`alarm_defaults.buzzer.gpio_pin`) beeps the same pattern: the only sound left when the amp or the
+  I2S link is what broke, so it is offered rather than required.
+- **The face beeps too, and rings alone when core is down.** On the backup tone core sets `ringing.face_beep`
+  and the face plays the pattern through Web Audio (Chromium runs with autoplay allowed): a second process and a
+  second audio client. If core does not answer at alarm time (no state over the socket and no `/api/health` for
+  20 s; the probe keeps a stuck socket from ringing over a healthy core) the face rings by itself 45 s after the
+  alarm, or 45 s after a ring or snooze it heard of, from what it last heard (kept in localStorage). Tap snoozes
+  and a hold stops, on the face; it hands back as soon as core rings again, and otherwise rings until stopped or
+  for 30 minutes. It cannot change the volume or the backlight, which belong to core.
+- **The alarm level has its own mpv players** (`dawn-alarm-dab`, `-media`, `-chime`). An alarm loaded into the
+  player of the source it preempts was paused by that source's duck two seconds later (a DAB alarm while
+  listening to DAB). They are started in the preparation window, not at the alarm. A paused stream whose player
+  was used for something else, or that ended while paused, is loaded again on resume; DAB retunes first (in the
+  background, outside the arbiter's lock) when the alarm moved welle to another channel.
+- **The sound starts in the background; the ring shows at once.** The tick used to await the whole start (a DAB
+  tune can take 12 s or more), and a snooze or stop landing in that window was overtaken by the start that came
+  after it: the chime rang through a snooze, or rang on with no session left to stop it. Every start now carries
+  an epoch: snooze and stop bump it, and an overtaken start pauses or releases what it started instead of
+  carrying on. Stop clears the face before tearing the audio down (which can wait on a tune), and a stopped ring
+  never publishes again.
+- **Bookkeeping can fail, the alarm cannot.** An occurrence is marked handled after its ring has started (if the
+  start raised, the next tick tries again within the grace window). The engine's own changes (handled
+  occurrence, spent skip, a once-alarm switching itself off) take effect in memory and are saved best-effort, so a
+  read-only SD card or a full disk neither silences an alarm nor makes it ring every second; the event log never
+  raises; a damaged row is logged once and skipped while the others ring; when the table cannot be read the last
+  copy is used; out-of-range values in a row ring with the defaults. Backups must contain valid alarms.
+- **A ring survives a restart of dawn-core.** The session is saved (`alarms.ring`: request, rung, snooze, the
+  volume from before) and carried on at the next start, ringing again or still snoozed, if it would still be
+  going (rung within its max-ring time, or a snooze that ended at most `missed_grace_minutes` ago) and is under 4
+  hours old. A shutdown keeps it, a stop or the max ring drops it. The nap timer is saved the same way.
+- **The watchdog is fed only while the alarm engine ticks** (within 30 s): the tick is quick now, so a stuck one
+  is a reason for systemd to restart dawn-core, after which the saved ring carries on. `dawn-core.service` has
+  `StartLimitIntervalSec=0`: systemd's default gave up after five fast restarts, leaving no alarms at all.
+- **Each alarm is prepared minutes ahead** (`alarm_defaults.prepare_minutes`, 5; every 20 s, every 5 s while
+  something is not ready). Its players are started; for DAB a running scan is stopped, an unreachable decoder
+  restarted, the tuner moved to the station's channel and checked for sync and the station on air. Someone
+  listening on another channel keeps listening ("busy": it retunes when the alarm rings). A failure seen on two
+  checks in a row (or no SDR, or an unknown station) starts the ring on the chime at once, since waiting 15 s in
+  silence would not bring the station back; a check older than 60 s decides nothing. Steps under way (a retune)
+  are `pending`, not problems. Scans are refused into a DAB alarm's window plus the scan's own length; retunes,
+  decoder restarts and gain changes by hand wait while one rings or is snoozed; the alarm's own restart is always
+  allowed.
+- **While ringing the big button only stops.** A press of any length stops (no shutdown countdown); a sleepy
+  half-second press used to show the countdown and then do nothing, and a 3 s one powered the clock off. A
+  shutdown hold that an alarm interrupts does not power off. The encoder hold snoozes like a push instead of
+  opening the nap picker behind the ringing screen.
+- **Ringing lights the screen as a tap does**: `sleep.wake_percent` (15 %) in the night palette, the standby wake
+  level otherwise, so the time and the hint can be read; the room's level again while snoozed.
+- **SDR presence is re-checked from USB ids only.** The minute check ran `rtl_test -t` on the event loop, and it
+  opens the stick: a welle-cli starting at that moment (an alarm restarting it) could find it taken. The tuner
+  type is still read at boot. `vcgencmd` runs in a thread.
+- **PipeWire not answering at start is retried.** The ALSA fallback (or no backend) used to stay for the whole
+  run, leaving the alarm's volume ramp and the speaker filter out of reach; every 30 s core tries PipeWire again
+  and switches when it answers.
 - **Sleep timer promotes the playing slot** from `user` to `sleep` (arbiter
   `move`) instead of restarting the stream; cancelling demotes it back and keeps
   playing. Nothing playing: the last-played source starts at the sleep level.
