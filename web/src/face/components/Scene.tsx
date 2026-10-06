@@ -3,6 +3,7 @@
 // bitmaps, so it costs nothing to ship and renders the same on every panel. Legibility comes from a scrim
 // over the top and bottom thirds; the clock text adds its own shadow.
 import { useMemo } from 'react';
+import { dayNumber } from '../burnin';
 
 type Kind = 'clear' | 'partly' | 'overcast' | 'fog' | 'rain' | 'snow';
 type Season = 'summer' | 'autumn' | 'winter' | 'spring';
@@ -10,6 +11,8 @@ type Season = 'summer' | 'autumn' | 'winter' | 'spring';
 export interface SceneProps {
   now: Date; tz: string; icon: string | null; temperature: number | null;
   sunrise: string | null; sunset: string | null; latitude: number; lowCpu: boolean;
+  /** burn-in: draw the hills, trees and stars from today's date so their outline is not the same edge every day */
+  daily?: boolean;
 }
 
 const W = 800, H = 480;
@@ -71,7 +74,8 @@ const HILL: Record<Season, [string, string, string]> = {
   spring: ['#8fbf6a', '#5f9a4e', '#3c6b35'],
 };
 
-export function Scene({ now, tz, icon, temperature, sunrise, sunset, latitude, lowCpu }: SceneProps) {
+export function Scene({ now, tz, icon, temperature, sunrise, sunset, latitude, lowCpu, daily = false }: SceneProps) {
+  const day = daily ? dayNumber(now, tz) % 9973 : 0;
   const model = useMemo(() => {
     const t = minutesOfDay(now, tz);
     const rise = sunMinutes(sunrise, 6 * 60 + 15), set = sunMinutes(sunset, 18 * 60);
@@ -109,19 +113,20 @@ export function Scene({ now, tz, icon, temperature, sunrise, sunset, latitude, l
   }, [now.getTime() - (now.getTime() % 60000), tz, icon, temperature, sunrise, sunset, latitude]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const m = model;
-  const stars = useMemo(() => Array.from({ length: 90 }, (_, i) => ({ x: rnd(i) * W, y: rnd(i + 100) * 260, r: 0.5 + rnd(i + 200) * 1.3, o: 0.35 + rnd(i + 300) * 0.65 })), []);
+  const d0 = day * 1013; // offsets every seed by the day (0 when the daily scene is off)
+  const stars = useMemo(() => Array.from({ length: 90 }, (_, i) => ({ x: rnd(i + d0) * W, y: rnd(i + 100 + d0) * 260, r: 0.5 + rnd(i + 200) * 1.3, o: 0.35 + rnd(i + 300) * 0.65 })), [d0]);
   const cloudCount = m.kind === 'clear' ? 0 : m.kind === 'partly' ? 3 : m.kind === 'fog' ? 0 : 8;
   const clouds = useMemo(() => Array.from({ length: cloudCount }, (_, i) => ({
-    x: (i / Math.max(1, cloudCount)) * W + rnd(i + 11) * 90, y: 55 + rnd(i + 23) * (m.overcast ? 150 : 110), s: 0.8 + rnd(i + 37) * 0.9,
-  })), [cloudCount, m.overcast]);
+    x: (i / Math.max(1, cloudCount)) * W + rnd(i + 11 + d0) * 90, y: 55 + rnd(i + 23 + d0) * (m.overcast ? 150 : 110), s: 0.8 + rnd(i + 37 + d0) * 0.9,
+  })), [cloudCount, m.overcast, d0]);
   const cloudFill = m.overcast ? mix(mix('#1b2330', '#8e9aa8', m.dayness), m.hor, 0.2) : mix(mix('#2a3346', '#ffffff', m.dayness), '#f7b48c', m.twilight * 0.5);
   const cloudAlpha = m.overcast ? 0.92 : 0.85;
   const drops = useMemo(() => Array.from({ length: m.kind === 'rain' ? 60 : m.kind === 'snow' ? 70 : 0 }, (_, i) => ({ x: rnd(i + 500) * W, y: rnd(i + 600) * H, l: 10 + rnd(i + 700) * 14, r: 1.2 + rnd(i + 800) * 2 })), [m.kind]);
   const pines = m.season === 'winter' || m.snowy;
-  const trees = useMemo(() => Array.from({ length: 11 }, (_, i) => ({ x: 10 + i * 76 + rnd(i + 900) * 40, h: 22 + rnd(i + 950) * 26 })), []);
+  const trees = useMemo(() => Array.from({ length: 11 }, (_, i) => ({ x: 10 + i * 76 + rnd(i + 900 + d0) * 40, h: 22 + rnd(i + 950 + d0) * 26 })), [d0]);
   const hillPath = (y: number, amp: number, seed: number) => {
     let d = `M0 ${H} L0 ${y}`;
-    for (let x = 0; x <= W; x += 80) d += ` Q${x + 40} ${y - amp * (rnd(seed + x) - 0.4) * 2} ${x + 80} ${y + amp * (rnd(seed + x + 7) - 0.5)}`;
+    for (let x = 0; x <= W; x += 80) d += ` Q${x + 40} ${y - amp * (rnd(seed + x + d0) - 0.4) * 2} ${x + 80} ${y + amp * (rnd(seed + x + 7 + d0) - 0.5)}`;
     return d + ` L${W} ${H} Z`;
   };
   const hillY = [322, 354, 386];

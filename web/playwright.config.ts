@@ -5,6 +5,8 @@ export default defineConfig({
   testDir: './e2e',
   timeout: 30_000,
   retries: 0,
+  // every test drives the one simulator stack (and resets it in beforeEach), so projects must not overlap
+  workers: 1,
   reporter: [['list']],
   use: {
     baseURL: process.env.DAWN_URL || 'http://127.0.0.1:8080',

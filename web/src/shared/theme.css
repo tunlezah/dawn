@@ -48,6 +48,12 @@
   --ring: #ff7a3d66;
 }
 
+/* Charts (Diagnostics). Series 1-2 are slots 1-2 of the validated data-viz reference palette, stepped per theme
+   and checked against the card surface (--bg-elev): CVD and normal-vision separation pass in both themes.
+   --viz-dim is the de-emphasis grey (>= 3:1 on the card); grid and axis are hairlines one step off the card. */
+:root { --viz-1: #3987e5; --viz-2: #d95926; --viz-dim: #6b7385; --viz-grid: #222837; --viz-axis: #2f3646; }
+:root[data-palette='light'] { --viz-1: #2a78d6; --viz-2: #eb6834; --viz-dim: #7b8394; --viz-grid: #eceef2; --viz-axis: #c3c8d2; }
+
 @theme inline {
   --color-bg: var(--bg);
   --color-elev: var(--bg-elev);
@@ -112,3 +118,16 @@ input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--ring); }
 @keyframes fadein { from { opacity: 0; } to { opacity: 1; } }
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-thumb { background: var(--fg-faint); border-radius: 3px; }
+
+/* chart chrome */
+.viz { position: relative; touch-action: pan-y; }
+.viz:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 8px; }
+.viz text { font-family: var(--font-sans); }
+.viz-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--bg-elev-2); border: 1px solid var(--border); border-radius: 10px;
+  padding: 6px 9px; font-size: 12px; line-height: 1.35; width: max-content; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35); color: var(--fg); }
+.viz-tip .k { display: inline-block; width: 12px; height: 2px; border-radius: 1px; vertical-align: middle; margin-right: 6px; }
+.viz-tip .m { color: var(--fg-muted); }
+.viz-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+.viz-table th { text-align: left; font-weight: 500; color: var(--fg-muted); padding: 4px 6px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+.viz-table td { padding: 3px 6px; border-bottom: 1px solid var(--border); font-variant-numeric: tabular-nums; }
+.pnum { font-feature-settings: 'tnum' 0, 'cv11' 1; font-variant-numeric: proportional-nums; }

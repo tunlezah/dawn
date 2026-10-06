@@ -14,6 +14,7 @@ def tmp_config(tmp_path: Path) -> Path:
     p.write_text(
         "general:\n  timezone: Australia/Sydney\n  data_dir: %s\n  runtime_dir: %s\n"
         "audio:\n  backend: sim\ndisplay:\n  backlight:\n    driver: sim\n  lux_sensor:\n    driver: sim\n"
+        "  sleep:\n    enabled: false\n"  # on by default; off here so face-mode tests do not depend on the hour
         "inputs:\n  pin_factory: mock\ntime_sources:\n  gps:\n    source: sim\nsystem:\n  watchdog: false\n"
         % (tmp_path / "data", tmp_path / "run")
     )

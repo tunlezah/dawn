@@ -12,10 +12,13 @@ class DawnStore {
   private retry = 500;
   private timer: number | null = null;
   private started = false;
+  /** Sent to core on connect ("face" for the kiosk) so Diagnostics can tell the face is up. */
+  private role: string | null = null;
 
-  start() {
+  start(role: string | null = null) {
     if (this.started) return;
     this.started = true;
+    this.role = role;
     this.connect();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) this.connect();
@@ -32,7 +35,10 @@ class DawnStore {
       this.scheduleReconnect();
       return;
     }
-    this.ws.onopen = () => { this.connected = true; this.retry = 500; this.emit(); };
+    this.ws.onopen = () => {
+      this.connected = true; this.retry = 500; this.emit();
+      if (this.role) this.ws?.send(JSON.stringify({ type: 'hello', role: this.role }));
+    };
     this.ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);

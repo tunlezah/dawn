@@ -196,7 +196,8 @@ class MpvPlayer(Player):
 
 
 class SimPlayer(Player):
-    """No sound; tracks state and reports 'flowing' from an optional probe."""
+    """No sound; tracks state and reports 'flowing' from an optional probe. Local HTTP streams (the fake
+    welle-cli) are read and discarded the way mpv would, so the fake decodes the station on demand."""
 
     def __init__(self, client_name: str, flowing_probe: Callable[[], bool] | None = None):
         self.client_name = client_name
@@ -204,19 +205,39 @@ class SimPlayer(Player):
         self._paused = False
         self._probe = flowing_probe
         self._listeners: list[Callable[[], None]] = []
+        self._reader: asyncio.Task[None] | None = None
         self.gain = 100.0
 
     def on_change(self, fn: Callable[[], None]) -> None:
         self._listeners.append(fn)
 
     async def load(self, url: str, loop: bool = False) -> None:
+        self._drop()
         self._url = url
         self._paused = False
         log.info("sim player %s: play %s%s", self.client_name, url, " (loop)" if loop else "")
+        if url.startswith(("http://127.0.0.1", "http://localhost")):
+            self._reader = asyncio.create_task(self._read(url), name=f"sim-{self.client_name}")
         for fn in self._listeners:
             fn()
 
+    async def _read(self, url: str) -> None:
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None)) as c, c.stream("GET", url) as r:
+                async for _ in r.aiter_bytes():
+                    pass
+        except (httpx.HTTPError, OSError):
+            pass
+
+    def _drop(self) -> None:
+        if self._reader:
+            self._reader.cancel()
+            self._reader = None
+
     async def unload(self) -> None:
+        self._drop()
         if self._url:
             log.info("sim player %s: stop", self.client_name)
         self._url = None

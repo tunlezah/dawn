@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from datetime import UTC, datetime
 
 from sqlmodel import delete, select
@@ -19,7 +20,7 @@ from ..state.ui import DabService as DabServiceState
 from ..state.ui import NowPlaying, ScanProgress
 from .logos import LogoCache, monogram_svg
 from .scanner import scan, scan_order, scanned_at
-from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid
+from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid, welle_args
 
 log = logging.getLogger("dawn.dab")
 
@@ -89,6 +90,17 @@ class DabService(Service):
         self._slide_seen: dict[str, int] = {}
         self._unit_check_at = 0.0
         self._initial_tune_done = False
+        self._channel_check_at = 0.0
+        # diagnostics: the latest mux as read, when, welle's own messages, and the FIC CRC error rate
+        self.last_mux: MuxInfo | None = None
+        self.last_mux_at: float | None = None
+        self.messages: deque[tuple[str, str]] = deque(maxlen=200)
+        self.arg_notes: list[str] = []
+        self.fic_errors_per_min: float | None = None
+        self._crc_prev: tuple[float, int] | None = None
+        # per service: (time, frame, rs, aac) at the start of the window, and the last rates per minute
+        self._err_prev: dict[str, tuple[float, int, int, int]] = {}
+        self.error_rates: dict[str, dict[str, float]] = {}
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -115,9 +127,11 @@ class DabService(Service):
     def _write_env(self) -> None:
         """Environment file read by dawn-dab.service so welle restarts on the last channel."""
         cfg = self.ctx.config.dab
-        args = list(cfg.welle_args)
-        if cfg.gain is not None:
-            args += ["-g", str(cfg.gain)]
+        args, notes = welle_args(list(cfg.welle_args), cfg.gain)
+        if notes != self.arg_notes:
+            for note in notes:
+                log.warning("dab.welle_args: %s", note)
+            self.arg_notes = notes
         try:
             (self.ctx.data_dir / "dab.env").write_text(f"DAWN_DAB_CHANNEL={self.channel}\nDAWN_WELLE_ARGS={' '.join(args)}\n")
         except OSError as e:
@@ -151,6 +165,11 @@ class DabService(Service):
             st.sync = False
             st.snr = None
         else:
+            self._diag(m)
+            if not m.channel and (not self._initial_tune_done or time.time() - self._channel_check_at > 10):
+                # upstream mux.json has no channel; welle answers it on GET /channel
+                self._channel_check_at = time.time()
+                m.channel = await self.client.channel()
             self.live_sync = m.sync
             self.snr = m.snr
             st.sync = m.sync
@@ -183,6 +202,40 @@ class DabService(Service):
         st.ensemble = self.ensemble if self.live_sync else None
         st.enabled = self.ctx.config.dab.enabled
         self.ctx.store.touch()
+
+    def _diag(self, m: MuxInfo) -> None:
+        now = time.time()
+        self.last_mux, self.last_mux_at = m, now
+        stamp = datetime.fromtimestamp(now).astimezone().isoformat(timespec="seconds")
+        for line in m.messages:
+            self.messages.append((stamp, line))
+        if m.fic_crc_errors is not None:
+            if self._crc_prev and m.fic_crc_errors >= self._crc_prev[1] and now - self._crc_prev[0] >= 20:
+                self.fic_errors_per_min = round((m.fic_crc_errors - self._crc_prev[1]) * 60 / (now - self._crc_prev[0]), 1)
+                self._crc_prev = (now, m.fic_crc_errors)
+            elif not self._crc_prev or m.fic_crc_errors < self._crc_prev[1]:  # first read, or welle restarted
+                self._crc_prev = (now, m.fic_crc_errors)
+        for svc in m.services:
+            if svc.frame_errors is None or not svc.decoding:
+                continue
+            cur = (now, svc.frame_errors or 0, svc.rs_errors or 0, svc.aac_errors or 0)
+            prev = self._err_prev.get(svc.sid)
+            if prev is None or any(c < p for c, p in zip(cur[1:], prev[1:], strict=True)):
+                self._err_prev[svc.sid] = cur
+            elif now - prev[0] >= 20:
+                k = 60 / (now - prev[0])
+                self.error_rates[svc.sid] = {"frame": round((cur[1] - prev[1]) * k, 1), "rs": round((cur[2] - prev[2]) * k, 1),
+                                             "aac": round((cur[3] - prev[3]) * k, 1), "at": now}
+                self._err_prev[svc.sid] = cur
+
+    async def fresh_mux(self) -> MuxInfo | None:
+        """A read of mux.json right now (Diagnostics' live meter). welle drains its message log on every read,
+        so every read goes through _diag."""
+        m = await self.client.mux()
+        if m is not None:
+            self._diag(m)
+            m.channel = m.channel or self.channel
+        return m
 
     def _metadata_changed(self, sid: str) -> None:
         if sid == self.active_sid:
@@ -268,13 +321,13 @@ class DabService(Service):
     def mark_active(self, sid: str | None) -> None:
         self.active_sid = sid
 
-    async def restart_welle(self) -> bool:
-        """Restart the dawn-dab unit (at most once per 30 s). Returns True if attempted."""
+    async def restart_welle(self, force: bool = False, reason: str = "unreachable") -> bool:
+        """Restart the dawn-dab unit (at most once per 30 s unless forced from Diagnostics). Returns True if attempted."""
         now = time.monotonic()
-        if now - self._last_restart < 30:
+        if now - self._last_restart < (5 if force else 30):
             return False
         self._last_restart = now
-        self.ctx.db.log_event("dab_restart", channel=self.channel)
+        self.ctx.db.log_event("dab_restart", channel=self.channel, reason=reason)
         if self.ctx.sim:
             log.warning("sim: would restart %s", self.ctx.config.dab.service_name)
             return True

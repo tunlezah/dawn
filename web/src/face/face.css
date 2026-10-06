@@ -117,8 +117,27 @@
 .f-ambient .f-hr { width: 40vmin; margin: 2.8vmin auto 0; }
 .f-ambient .f-next { margin-top: 2.6vmin; display: flex; align-items: center; justify-content: center; gap: 2vmin; font-size: 4.2vmin; color: var(--fg); font-weight: 500; }
 .f-ambient .f-next .f-icon { width: 5.2vmin; height: 5.2vmin; color: var(--fg-muted); }
-.f-ambient .f-bar { margin-top: auto; width: 100%; }
+.f-ambient .f-bar { margin-top: auto; width: 100%; transition: opacity 1.2s ease; }
+.f-ambient .f-bar.faded { opacity: 0; }  /* burn-in: the strip fades in Standby after a while untouched */
 .f-ambient.compact .f-ambient-clock { font-size: 30vmin; }
+
+/* ---- sleep: the clock alone, small and deep amber on black (palette is forced to night) --------------- */
+.f-sleep { position: absolute; inset: 0; background: #000; }
+.f-sleep-clock { position: absolute; transform: translate(-50%, -50%); display: flex; flex-direction: column; align-items: center; gap: 1.6vmin;
+  color: color-mix(in srgb, var(--fg) var(--lvl, 72%), #000); transition: opacity 750ms ease; white-space: nowrap; }
+.f-sleep-clock.out { opacity: 0; }
+.f-sleep-clock .t { font-size: 15vmin; font-weight: 600; letter-spacing: -0.03em; line-height: 0.9; font-variant-numeric: tabular-nums; }
+.f-sleep-clock .t .ampm { font-size: 5vmin; font-weight: 500; margin-left: 1.4vmin; }
+.f-sleep-clock .a { display: flex; align-items: center; gap: 1.4vmin; font-size: 4vmin; font-weight: 500; }
+.f-sleep-clock .a .f-icon { width: 4.2vmin; height: 4.2vmin; }
+.f-sleep-clock .a .f-icon.w { width: 5.6vmin; height: 5.6vmin; margin-left: 2vmin; }
+.f-sleep-clock .a .f-icon.w:first-child { margin-left: 0; }
+.round .f-sleep { border-radius: 50%; }
+.round .f-sleep-clock .t { font-size: 12vmin; }
+@media (prefers-reduced-motion: reduce) { .f-sleep-clock { transition: none; } }
+
+/* pixel orbit (burn-in): text and controls drift a few pixels along a slow path; backgrounds stay put */
+.f-ambient > :not(.f-scene):not(.f-horizon), .face-screen { translate: var(--ox, 0) var(--oy, 0); }
 
 /* ---- overlays ------------------------------------------------------------- */
 .face-overlay { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; z-index: 20; }

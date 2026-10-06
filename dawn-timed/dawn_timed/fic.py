@@ -56,13 +56,17 @@ def parse_fig_0_10(data: bytes) -> tuple[datetime, bool] | None:
         return None
 
 
-def parse_fibs(data: bytes, verify_crc: bool = True) -> list[tuple[datetime, bool]]:
-    """Walk 32-byte FIBs and return every FIG 0/10 time found."""
+def parse_fibs(data: bytes, verify_crc: bool = True, stats: dict[str, int] | None = None) -> list[tuple[datetime, bool]]:
+    """Walk 32-byte FIBs and return every FIG 0/10 time found. `stats` (optional) counts FIBs and CRC failures."""
     out: list[tuple[datetime, bool]] = []
     for off in range(0, len(data) - FIB_LEN + 1, FIB_LEN):
         fib = data[off : off + FIB_LEN]
         payload, crc = fib[:30], int.from_bytes(fib[30:], "big")
+        if stats is not None:
+            stats["fibs"] = stats.get("fibs", 0) + 1
         if verify_crc and crc16_ccitt(payload) != crc:
+            if stats is not None:
+                stats["crc_bad"] = stats.get("crc_bad", 0) + 1
             continue
         i = 0
         while i < 30:

@@ -72,7 +72,8 @@ async def amain(args: argparse.Namespace) -> None:
     if not args.no_core:
         tasks.append(asyncio.create_task(_child("core", [py, "-m", "dawn_core"], env, stop)))
     if not args.no_timed:
-        tasks.append(asyncio.create_task(_child("timed", [py, "-m", "dawn_timed", "--dry-run", "--welle-url", f"http://127.0.0.1:{args.welle_port}"], env, stop)))
+        status = str(ROOT / "var" / "run" / "dawn-timed" / "status.json")
+        tasks.append(asyncio.create_task(_child("timed", [py, "-m", "dawn_timed", "--dry-run", "--welle-url", f"http://127.0.0.1:{args.welle_port}", "--status-file", status], env, stop)))
     if not args.no_keyboard:
         tasks.append(asyncio.create_task(keyboard_loop(stop)))
 

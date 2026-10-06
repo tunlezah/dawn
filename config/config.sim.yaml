@@ -47,6 +47,29 @@ display:
   clock_24h: true
   ambient_after_s: 20
   scene: true
+  sleep:
+    enabled: false
+    start_at_time: true
+    start: '22:30'
+    start_when_dark: true
+    end_at_time: true
+    end: 06:30
+    end_before_alarm: true
+    alarm_lead_minutes: 10
+    end_when_bright: true
+    dark_lux: 3.0
+    dark_after_s: 60
+    bright_lux: 30.0
+    bright_after_s: 20
+    jump_every_s: 120
+    level_percent: 72
+    backlight_percent: null
+    screen_off: false
+    wake_percent: 15
+  burn_in:
+    pixel_orbit: true
+    strip_autohide_s: 120
+    scene_daily: true
   backlight:
     driver: sim
     sysfs_path: null
@@ -97,6 +120,7 @@ audio:
   pinned_sink: null
   default_volume: 35
   max_volume: 100
+  output_ceiling_percent: 100
   duck_percent: 20
   duck_seconds: 2.0
   volume_overlay_s: 1.5
@@ -106,6 +130,8 @@ audio:
     treble_db: 0.0
     bass_hz: 120.0
     treble_hz: 6000.0
+    bass_max_db: 0.0
+    highpass_hz: 110.0
   mpv_binary: mpv
   mpv_extra_args: []
   media_dir: ./var/dawn/media
@@ -129,8 +155,6 @@ dab:
   welle_args:
   - -w
   - '8000'
-  - -C
-  - -P
   service_name: dawn-dab
   default_channel: 9A
   scan_priority:
@@ -222,10 +246,15 @@ system:
   heartbeat_interval_s: 5
   watchdog: false
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
+  vcgencmd_binary: vcgencmd
   update_repo_dir: .
   update_branch: main
   sudo_binary: sudo
   allow_shutdown: true
   log_tail_lines: 200
+diagnostics:
+  history_days: 7
+  check_interval_s: 60
+  timed_status_file: ./var/run/dawn-timed/status.json
 sim:
   hub_url: http://127.0.0.1:8099

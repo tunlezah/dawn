@@ -121,14 +121,27 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **welle-cli runs as its own unit (`dawn-dab`)** and core talks to it over HTTP
   only. Core writes `/var/lib/dawn/dab.env` (`DAWN_DAB_CHANNEL`, `DAWN_WELLE_ARGS`)
   so a restart, by us or by systemd, comes back on the last-used channel. The
-  exact welle-cli flags are config (`dab.welle_args`, default `-w 8000 -C`),
-  because the carousel/PAD flags differ between welle.io versions.
+  exact welle-cli flags are config (`dab.welle_args`), because the carousel/PAD
+  flags differ between welle.io versions.
+- **welle-cli decodes on demand by default (`-w 8000`).** Upstream `-C` needs a
+  programme count (`-C 1 -P` cycles one programme at a time for slides and DLS on
+  every station); the old default `-C -P` silently disabled the carousel and the
+  unit's fallback `-w 8000 -C` made welle-cli exit. The carousel costs CPU and
+  heat on a Pi in a closed case, and the station playing already decodes its
+  slides and DLS, so it stays an option (documented in the schema) rather than
+  the default. Invalid `-C`/`-P` combinations are dropped when `dab.env` is
+  written, existing configs included, with a log line saying so.
+- **`dab.gain` is in dB; welle-cli's `-g` is an index** into the R820T/R828D
+  gain table, so the nearest step is sent. Null or negative = AGC.
 - **Service ids are normalised to lowercase hex without `0x`** (`1002`), whatever
   welle-cli emits, and that form is used in `dab:<sid>` references, presets and
-  logo URLs.
-- **"Sync" means an ensemble was decoded**: `demodulator.sync` when welle exposes
-  it, otherwise a non-empty ensemble label or service list. SNR is mapped 0–20 dB
-  to a 0–100 signal figure.
+  logo URLs. Requests *to* welle-cli (`/mp3/…`, `/slide/…`) use `0x1002`: welle
+  parses a bare number as decimal and throws on one starting with a letter.
+- **"Sync" means the ensemble is being decoded right now**: upstream welle-cli has
+  no sync flag, so it is read from `time_last_fct0_frame` (FIG 0/0 arrives about
+  every 12 s in mode I; older than 30 s = no sync). The channel comes from
+  `GET /channel` because mux.json does not carry it. SNR is mapped 0–20 dB to a
+  0–100 signal figure.
 - **The latest MOT slide per service is the station logo** (`/var/lib/dawn/logos/`),
   served from `/api/dab/logo/<sid>`; with no slide the same URL returns an SVG
   monogram tile (two letters, colour hashed from the SID). One URL, no client logic.
@@ -148,6 +161,13 @@ each section. Every entry says what was decided and why, so it can be revisited.
   occurrence that is newer than that. A backwards step (chrony `makestep`)
   therefore cannot re-fire; a forward step fires if within the 10-minute grace
   window and logs a miss otherwise.
+- **An alarm answers only for occurrences after it was created, edited or switched
+  on**: those moments are stored as handled. Without this a one-off alarm set in
+  the evening for 06:30 found that morning's 06:30 in the 26-hour look-back,
+  logged it as missed and disabled itself. The grace window for a clock that was
+  off at alarm time is unchanged. If that stamp is later found more than 10 minutes in
+  the future (the clock was fast when the alarm was set, and chrony has stepped it back),
+  it is pulled back to the present so the real occurrence still rings.
 - **Regional-only holidays are a name table** (`holidays.REGIONAL_ONLY`) layered
   on the `holidays` package, because the package does not flag which entries
   are partial-state (e.g. the Royal Queensland Show). `holiday_scope =
@@ -222,7 +242,10 @@ each section. Every entry says what was decided and why, so it can be revisited.
   default mode/level and whether overrides end at sunrise or never.
 - **Forced levels bypass the curve but keep the slew**: light-wake forces 100 %,
   a standby wake tap forces `standby_wake_percent` while `face.wake_until` is in
-  the future. The post-sunset cap applies only in auto mode.
+  the future, except in the night palette or sleep mode, where it is
+  `display.sleep.wake_percent` (15 %) so a tap at 2 am is not a torch. The sleep
+  clock holds the backlight at `sleep.backlight_percent` (default: the backlight
+  minimum) or 0 with `screen_off`. The post-sunset cap applies only in auto mode.
 - **No sensor = schedule mode**: the configured manual level by day and the
   curve's lowest point after sunset; the face shows a "sensor not found" chip.
 - **HDMI panels dim with a software overlay** (`display.overlay_dim`, drawn by
@@ -340,11 +363,98 @@ each section. Every entry says what was decided and why, so it can be revisited.
   only enabled together with `--data-device`.
 - **Setup hotspot via NetworkManager** (`nmcli dev wifi hotspot`) after
   `wait_for_network_s` without a network; the face shows the SSID, password and
-  a Wi-Fi QR code, and the control UI at `http://10.42.0.1/` can join a network.
+  a Wi-Fi QR code, and the control UI at `http://10.42.0.1:8080/` can join a network.
   The hotspot stops by itself when connectivity returns.
 - **Backups are one JSON document** (config + alarms, presets, DAB scan results,
   KV settings, minus auth secrets). Restore replaces the tables and the config
   atomically enough for a bedside clock and republishes state.
+
+## Sleep mode and burn-in
+
+- **What was asked, and the answers it was built from.** Sleep starts at a set time
+  *or* when the room is dark, each selectable on its own; it ends at a set morning
+  time, shortly before the next alarm or when the room gets bright, whichever comes
+  first; audio playing at bedtime keeps the player up until it stops; the look is a
+  small amber clock that moves every 2 minutes with the alarm time and a simple
+  weather icon; burn-in measures are the pixel orbit, the strip auto-hide, the
+  daily scene and an optional screen-off sleep; the existing background switch
+  stays and covers Standby and the ambient clock (sleep never shows a background).
+- **The planner is a pure, event-driven function** (`display/sleep.py`), tested
+  minute by minute over whole nights like the brightness curve. It reacts to
+  *crossings* (bedtime passes, morning passes) and *changes* of the room (dark or
+  bright held for `dark_after_s` / `bright_after_s`), not to levels, so a manual
+  Sleep now / Wake now holds until the next real event.
+- **Interplay rules chosen where the answers left room** (all in the planner's
+  docstring and tests):
+  - Bedtime fires even with the lights on (the triggers are OR-ed, as asked).
+  - The bright end is an edge: the room *becoming* bright wakes the clock; a room
+    that is already lit at bedtime does not undo the bedtime.
+  - A lamp switched on in the night wakes the face; while still inside the bedtime
+    window it goes back to sleep once the room has been dark again for
+    `dark_after_s`, even with the dark trigger off.
+  - After a morning, alarm or ring wake the dark trigger waits until the room has
+    been bright once, so a dark winter morning does not put it straight back.
+  - Anything ringing (an alarm, a nap, light wake) ends sleep mode. A bedtime that passes
+    while something rings still applies once it stops.
+  - Inside the alarm lead window (`alarm_lead_minutes` before the alarm until 5 minutes
+    after it) nothing puts the face back to sleep, not even a restart or a clock step.
+  - Each light state is entered *and left* only after its dwell time, so a hand over the
+    sensor or someone walking past is not "the room got bright" again.
+  - All of its timing is in real (UTC) seconds: Python subtracts two times in the same
+    zone as wall-clock times, which made each DST change look like a one-hour clock step.
+  - At boot, or when the clock steps by more than 10 minutes (chrony at boot), it
+    takes the state the schedule says it should be in; the room's first reading
+    after boot settles to dark (which counts) or bright (which does not count as
+    the room becoming bright).
+  - `alarm_lead_minutes` counts back from the alarm's light wake when it has one.
+- **Defaults**: on, 22:30 to 06:30, dark below 3 lx for 60 s, bright above 30 lx
+  for 20 s, 10 minutes before an alarm, move every 120 s, amber at 72 % of the
+  night foreground, tap brightness 15 %. The 3 lx/30 lx pair sits between the
+  night-palette threshold (5 lx) and a lit room so headlights or a phone screen
+  do not count. The simulator config and the tests ship with sleep mode *off* so
+  results do not depend on the hour.
+- **Core decides, the face draws.** Core publishes `display.sleep` and owns the
+  backlight; `FaceService` shows `sleep` only where Standby would be, so ringing,
+  light wake, a nap countdown, setup and messages keep their precedence. The
+  first tap wakes the full face (no menu), the second opens the menu, as in
+  Standby. With `screen_off` the first tap shows the sleep clock for 10 s.
+- **Sleep clock placement follows the research branch** (`docs/research/
+  standby-display.md` on `claude/screen-burnin-standby-research-toz3de`): a
+  Halton sequence (bases 2 and 3) inside a safe box (15–85 % × 15–87 %, or the
+  inscribed circle on the round layout), indexed by the time of day, so a reload
+  keeps the place and no state is needed; 0.75 s fades instead of a jump.
+- **Burn-in**: the pixel orbit is a slow Lissajous path (±8 × 6 px, about a pixel
+  a minute) applied to text and controls only; backgrounds stay put. The strip
+  hides after 120 s in Standby (not while playing) and returns on a touch or a
+  change of what it shows (a time source, the network, the next alarm). The
+  daily scene offsets every random seed by the local date.
+
+## Diagnostics
+
+- **One service, three speeds.** Checks run every `check_interval_s` (60 s) and
+  on demand; `live/dab` and `live/gps` answer once a second for the antenna and
+  sky pages; history is sampled every 10 s from what the services already hold
+  (no extra hardware access) and written as one SQLite row a minute
+  (average/min/max per metric), kept `history_days` (7) and left out of backups.
+- **Checks follow chains.** Each area is checked from the hardware up (stick →
+  driver → decoder → sync → signal → station list; receiver → gpsd → reports →
+  signal → fix; source → shared memory → chrony's choice). Where an early failure
+  already explains the rest (no decoder answering, no GPS receiver or reports,
+  offline), the later steps are left out instead of repeating the cause, so the
+  first failure in a chain is the thing to fix.
+- **The OS sits behind a `Host` seam.** systemctl, chronyc, /proc, /sys and USB
+  are read through one object that the simulator replaces with the hub, so every
+  check runs on a laptop and in tests.
+- **Fixes are narrow.** Each action is a fixed operation with at most a validated
+  value (a channel name, a gain); the privileged ones are exact command lines in
+  `deploy/sudoers/dawn` (restart gpsd/chrony, `chronyc -n -c selectdata|ntpdata`,
+  `chronyc burst 4/4`). Nothing typed in the browser reaches a shell.
+- **Manual decoder restarts are not problems**: restarts tagged `manual` are left
+  out of the 24-hour DAB check; an alarm's restart of a silent decoder is counted.
+- **Charts follow the data-viz method**: one y-axis per chart (different units get
+  their own chart), solid hairline grid, two validated series colours per theme,
+  a legend whenever there are two series, tooltips on hover and keyboard, and a
+  table view behind every chart.
 
 ## Testing
 

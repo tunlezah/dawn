@@ -7,7 +7,7 @@ import json
 import logging
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +82,24 @@ class Database:
             s.add(EventRow(kind=kind, detail=json.dumps(detail, default=str)))
             s.commit()
         log.info("event %s %s", kind, detail, extra={"dawn_kind": kind})
+
+    def events_since(self, since: datetime, kinds: list[str] | None = None, limit: int = 500) -> list[dict[str, Any]]:
+        """Events at or after `since` (aware datetime), newest first, optionally of some kinds only."""
+        with self.session() as s:
+            q = select(EventRow).where(EventRow.at >= since.astimezone(UTC))
+            if kinds:
+                q = q.where(EventRow.kind.in_(kinds))  # type: ignore[attr-defined]
+            rows = s.exec(q.order_by(EventRow.at.desc()).limit(limit)).all()  # type: ignore[attr-defined]
+        return [self._event(r) for r in rows]
+
+    @staticmethod
+    def _event(r: EventRow) -> dict[str, Any]:
+        try:
+            d = json.loads(r.detail)
+        except json.JSONDecodeError:
+            d = {"detail": r.detail}
+        at = r.at if r.at.tzinfo else r.at.replace(tzinfo=UTC)
+        return {"id": r.id, "at": at.isoformat(), "kind": r.kind, **d}
 
     def recent_events(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.session() as s:

@@ -6,6 +6,15 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- `dab.welle_args` defaults to `-w 8000` (decode on demand); bad `-C`/`-P` combinations are
+  dropped from existing configs too, and `dab.gain` is sent to welle-cli as the R820T/R828D
+  gain-table index it expects.
+- The *Display* background switch now says it covers Standby and the ambient clock (never sleep
+  mode or the night palette).
+- New sudo rules, exact command lines only: restart gpsd and chrony, `chronyc -n -c
+  selectdata`/`ntpdata`, `chronyc burst 4/4`.
+- README and setup screen give the control UI's real address, `http://dawn.local:8080/`
+  (setup hotspot: `http://10.42.0.1:8080/`): nothing listens on port 80.
 - Reference hardware is final: Pimoroni Audio Amp SHIM (MAX98357A I2S, mono) driving a
   Dayton PC68-4 2.5" 4 Ω driver replaces the USB DAC, MAX9744 amp and 12 V supply, so the
   clock runs from one 5 V USB-C supply; Adafruit 377 bare encoder instead of a KY-040;
@@ -48,6 +57,48 @@ All notable changes to Dawn are recorded here. The format follows
   presets and the round player, plus a 2×2 board for the README.
 
 ### Added
+- **Diagnostics** page (`/diagnostics`; under *More* on a phone, with a badge, and a banner on
+  *Home* when something fails). Every place a fault can sit is checked and explained, problems
+  first, each with what to do and a one-tap fix where one exists. Tabs:
+  - *DAB radio*: live SNR (meter and a two-minute trace, once a second), FIC CRC errors per
+    minute, frequency correction, tuner gain, the frame counter's age; the spectrum, the
+    null-symbol spectrum (interference), the impulse response and the symbol-phase histogram
+    from welle-cli; per-station frame/Reed-Solomon/AAC error rates; transmitters heard (TII);
+    tune a channel, fixed gain or AGC, rescan, restart the decoder; welle-cli's arguments and
+    messages.
+  - *GPS*: fix, satellites used and strong, HDOP, a sky plot and the signal per satellite,
+    receiver/gpsd facts, how late the time report arrives (TOFF); restart gpsd.
+  - *Time sync*: chrony's tracking; the GPS → chrony, DAB → chrony and Network → chrony chains
+    followed step by step with chrony's own reason when a source is not used; sources with
+    state, reach, spread and options; dawn-timed's status; the NTP shared-memory segments;
+    poll all sources, restart chrony or dawn-timed.
+  - *Network*, *Audio & devices* (audio, AirPlay, Bluetooth, display, knob, weather) and
+    *System* (services, power and throttling, temperature, disk, recent errors, logs).
+  - A week of history per area (one SQLite row a minute: average, minimum and maximum) with
+    the events that matter to it (decoder restarts, scans, fixes, alarms, sleep mode).
+  - API: `GET /api/diag`, `POST /api/diag/run`, `GET /api/diag/live/{dab,gps}`,
+    `GET /api/diag/dab/plot/{spectrum,nullspectrum,impulseresponse,constellation}`,
+    `GET /api/diag/history`, `GET /api/diag/events`, `POST /api/diag/action/{id}`.
+    Config: `diagnostics.history_days`, `check_interval_s`, `timed_status_file`.
+  - dawn-timed writes `/run/dawn-timed/status.json`.
+- **Sleep mode** (`display.sleep`): in Standby the face becomes the clock alone, small and deep
+  amber on black at the backlight floor, with the next alarm and a weather icon underneath; it
+  fades to a new place every `jump_every_s` (120 s). It starts at the bedtime (`start`, 22:30)
+  or when the room goes dark (below `dark_lux` for `dark_after_s`), each on its own switch, and
+  ends at the morning time (`end`, 06:30), `alarm_lead_minutes` before the next alarm or its
+  light wake, or when the room gets bright, whichever comes first; anything ringing ends it.
+  Playing audio stays on screen until it stops. A tap shows the full face for
+  `inputs.standby_wake_s` at `wake_percent` (15 %, also used for a tap in the night palette
+  instead of 100 %). `screen_off` turns the backlight off on a black screen; a tap then shows
+  the sleep clock for 10 s. *Display → Sleep mode* sets all of it and has Sleep now / Wake now
+  (`POST /api/display/sleep`). Transitions are logged as `sleep_mode` events.
+- **Burn-in protection** (`display.burn_in`): the face's foreground drifts within ±8 × 6 px
+  (pixel orbit), the Standby status strip fades after `strip_autohide_s` without a touch and
+  comes back on a tap or a change worth seeing, and the background's hills, trees and stars
+  are drawn from the date (`scene_daily`).
+- Simulator: DAB SNR, GPS signal, Wi-Fi level, GPS plugged and failed-service controls on the
+  hub; a fake welle-cli that follows upstream (nested labels, on-demand decoding, error
+  counters driven by the SNR, plot endpoints, TII).
 - Mono filter chain (`deploy/pipewire/dawn-eq-mono.conf`): (L+R)/2 to both I2S channels.
   Both chains gain a 2nd-order high-pass, `audio.eq.highpass_hz` (default 110 Hz, null =
   off), which stays in when the tone controls are off.
@@ -84,6 +135,22 @@ All notable changes to Dawn are recorded here. The format follows
   button adds/removes the current station as a preset.
 - Playwright coverage for the control bar (star, next preset, volume), AirPlay
   progress/transport and the ambient idle switch.
+
+### Fixed
+- DAB with upstream welle-cli (the version the installer builds): ensemble and station labels
+  are objects and showed as `{'label': …}`; sync was read from a field that does not exist
+  (now the FIG 0/0 frame counter); the channel was never read back (now `GET /channel`);
+  slides and logos asked for the wrong station (`/slide/1002` is decimal to welle-cli; ids are
+  now `0x…`); the unit's fallback `-w 8000 -C` made welle-cli exit at first boot.
+- An alarm created, edited or switched on after its time counted that morning's occurrence:
+  a one-off alarm set in the evening for the next morning was logged as missed and disabled at
+  once, and a repeating one set a few minutes after its time rang straight away. (An alarm set
+  while the clock was fast still rings at the real time once chrony corrects the clock.)
+- The face's Standby tile could shut the clock down: its button-down and button-up requests
+  raced, and an up that arrived first left the hold timer running into the shutdown countdown.
+- A GPS fix lingered after the receiver was unplugged; it now expires 10 s after the last report.
+- dawn-timed no longer restart-loops when chrony's SHM 2 segment cannot be attached; the reason
+  shows in its status and in *Diagnostics → Time sync*.
 
 ## [0.1.0] - 2026-10-02
 

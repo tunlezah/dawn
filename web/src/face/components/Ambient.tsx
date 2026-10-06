@@ -1,3 +1,4 @@
+import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { fmtDate, fmtDayTime, fmtTime, useNow } from '../../shared/time';
 import { WeatherIcon } from '../../shared/icons/weather';
@@ -21,10 +22,22 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   const next = s.alarms.next;
   const flowing = s.audio.audio_flowing || s.airplay.playing || s.bluetooth.playing;
   const place = w.location_label || s.settings.name;
+  // burn-in: in Standby the strip fades after a while without a touch; a touch, or a change worth seeing
+  // (a time source lost or back, the network, the next alarm), brings it back
+  const autohide = !compact && s.display.strip_autohide_s > 0;
+  const attention = [live('gps') || s.time_sources.gps.fix >= 2, live('dab') || s.dab.sync, live('ntp'), s.system.network.online,
+    s.time_sources.synced, next?.at ?? '', s.face.menu_open, s.face.wake_until ?? ''].join('|');
+  const [stripFaded, setStripFaded] = useReactState(false);
+  useEffect(() => {
+    setStripFaded(false);
+    if (!autohide) return;
+    const t = window.setTimeout(() => setStripFaded(true), s.display.strip_autohide_s * 1000);
+    return () => clearTimeout(t);
+  }, [attention, autohide, s.display.strip_autohide_s]);
   return (
     <div className={`f-ambient fade-in ${compact ? 'compact' : ''} ${scene ? 'scenic' : ''}`}>
       {scene
-        ? <Scene now={now} tz={s.tz} icon={w.available ? w.icon : null} temperature={w.available ? w.temperature : null} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} />
+        ? <Scene now={now} tz={s.tz} icon={w.available ? w.icon : null} temperature={w.available ? w.temperature : null} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} daily={s.display.scene_daily} />
         : <div className="f-horizon" />}
       <div className="face-time f-ambient-clock">
         {t.hm}
@@ -46,7 +59,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
         <IconAlarm />
         {next ? <span>Next alarm <b className="tnum">{fmtDayTime(next.at, s.tz, s.settings.clock_24h)}</b>{next.label && <span className="f-meta ml-[1.6vmin]">{next.label}</span>}</span> : <span className="f-meta">No alarm set</span>}
       </div>
-      <div className="f-bar">
+      <div className={`f-bar ${stripFaded ? 'faded' : ''}`}>
         <div className="cell grow">
           {playing ? (
             <>

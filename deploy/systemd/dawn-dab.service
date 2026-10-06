@@ -7,9 +7,9 @@ StartLimitIntervalSec=0
 User=dawn
 Group=dawn
 SupplementaryGroups=plugdev audio
-# written by dawn-core: DAWN_DAB_CHANNEL=9A  DAWN_WELLE_ARGS=-w 8000 -C
+# written by dawn-core: DAWN_DAB_CHANNEL=9A  DAWN_WELLE_ARGS=-w 8000 (before core first runs: these defaults)
 EnvironmentFile=-/var/lib/dawn/dab.env
-ExecStart=/bin/sh -c 'exec /usr/local/bin/welle-cli -c "${DAWN_DAB_CHANNEL:-9A}" ${DAWN_WELLE_ARGS:--w 8000 -C}'
+ExecStart=/bin/sh -c 'exec /usr/local/bin/welle-cli -c "${DAWN_DAB_CHANNEL:-9A}" ${DAWN_WELLE_ARGS:--w 8000}'
 Restart=always
 RestartSec=3
 Nice=-5

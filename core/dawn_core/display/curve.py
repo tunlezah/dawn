@@ -64,6 +64,12 @@ class BrightnessController:
             self.set_target(want, now)
         return self.target
 
+    def retarget(self, lux: float, now: float | None = None) -> float:
+        """Target straight from the curve, without the hysteresis: after a forced level (sleep, a tap, light-wake)
+        the old target is not the curve's, and "close enough" to 0 would keep the screen dark."""
+        self.set_target(interpolate(self.curve, lux), now)
+        return self.target
+
     def set_target(self, value: float, now: float | None = None) -> None:
         value = self._clamp(value)
         if value == self.target:

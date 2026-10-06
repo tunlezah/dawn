@@ -10,7 +10,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-FaceMode = Literal["standby", "playing", "ringing", "countdown", "setup", "message", "lightwake"]
+FaceMode = Literal["standby", "sleep", "playing", "ringing", "countdown", "setup", "message", "lightwake"]
 SourceKind = Literal["dab", "chime", "url", "playlist", "airplay", "bluetooth", "none"]
 
 
@@ -28,6 +28,7 @@ class FaceState(BaseModel):
     menu_open: bool = False
     menu_page: str | None = None
     wake_until: str | None = None  # standby wake-to-full timer
+    peek_until: str | None = None  # screen-off sleep: a tap shows the sleep clock until then
     shutdown_countdown: int | None = None
     setup: SetupInfo | None = None
 
@@ -59,6 +60,20 @@ class DisplayState(BaseModel):
     show_seconds: bool = False
     ambient_after_s: int = 20  # playing face -> ambient clock after this many idle seconds (0 = never)
     scene: bool = True  # scenic ambient background
+    # sleep mode: wanted by the planner; the face shows it in Standby (face.mode == "sleep")
+    sleep: bool = False
+    sleep_reason: str | None = None  # schedule | dark | manual
+    sleep_enabled: bool = True
+    sleep_next_start: str | None = None
+    sleep_next_end: str | None = None
+    sleep_screen_off: bool = False
+    sleep_jump_s: int = 120
+    sleep_level: int = 72  # % of the night amber the sleep clock is drawn at
+    room: Literal["dark", "bright", "between"] | None = None  # as the sleep triggers see it (None = no sensor)
+    # burn-in protection
+    orbit: bool = True
+    strip_autohide_s: int = 120
+    scene_daily: bool = True
 
 
 class SinkInfo(BaseModel):
@@ -140,6 +155,7 @@ class NextAlarm(BaseModel):
     label: str
     at: str
     in_seconds: int
+    light_wake_at: str | None = None  # when its light-wake starts, if it has one
 
 
 class RingingInfo(BaseModel):
@@ -246,6 +262,9 @@ class GpsInfo(BaseModel):
     sats_seen: int = 0
     time: str | None = None
     device: str | None = None
+    source: str = "none"  # gpsd | serial | none
+    hdop: float | None = None
+    snr_avg: float | None = None  # mean C/N0 (dBHz) of the satellites in use
 
 
 class TimeSourcesState(BaseModel):
@@ -342,6 +361,23 @@ class AirPlayState(BaseModel):
     playing: bool = False
 
 
+class DiagProblem(BaseModel):
+    id: str
+    area: str
+    title: str
+    status: Literal["warn", "fail"]
+    detail: str
+
+
+class DiagnosticsSummary(BaseModel):
+    """The latest background check run: counts and the worst few findings (full report at /api/diag)."""
+
+    updated_at: str | None = None
+    fail: int = 0
+    warn: int = 0
+    problems: list[DiagProblem] = Field(default_factory=list)
+
+
 class SettingsSummary(BaseModel):
     timezone: str = "Australia/Sydney"
     holiday_region: str = "NSW"
@@ -373,3 +409,4 @@ class UIState(BaseModel):
     bluetooth: BluetoothState = BluetoothState()
     airplay: AirPlayState = AirPlayState()
     settings: SettingsSummary = SettingsSummary()
+    diagnostics: DiagnosticsSummary = DiagnosticsSummary()

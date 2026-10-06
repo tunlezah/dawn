@@ -61,6 +61,11 @@ class AudioBackend:
     name = "none"
     supports_eq = False
 
+    @property
+    def eq_present(self) -> bool:
+        """The EQ/protection filter chain is in the graph (PipeWire only)."""
+        return self.supports_eq
+
     async def start(self) -> None: ...
     async def stop(self) -> None: ...
     async def list_sinks(self) -> list[Sink]:
@@ -88,6 +93,10 @@ class PipeWireBackend(AudioBackend):
     def __init__(self) -> None:
         self._eq_present = False
         self._hw_sink: Sink | None = None
+
+    @property
+    def eq_present(self) -> bool:
+        return self._eq_present
 
     async def start(self) -> None:
         rc, _ = await run("wpctl", "status")

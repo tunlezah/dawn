@@ -108,7 +108,7 @@ async def skip_next(alarm_id: int, body: dict | None = None, a: AlarmService = D
 
 @router.post("/{alarm_id}/enabled")
 async def set_enabled(alarm_id: int, body: dict, a: AlarmService = Depends(alarms)) -> dict[str, Any]:
-    row = a.patch(alarm_id, enabled=bool(body.get("enabled", True)))
+    row = a.set_enabled(alarm_id, bool(body.get("enabled", True)))
     if not row:
         raise HTTPException(404)
     return {"enabled": row.enabled}

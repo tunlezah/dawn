@@ -60,3 +60,17 @@ async def sun(d: DisplayService = Depends(display)) -> dict[str, Any]:
 @router.get("/lux")
 async def lux(d: DisplayService = Depends(display)) -> dict[str, Any]:
     return {"lux": d.lux, "sensor": d.sensor.name if d.sensor else None, "brightness": d.controller.applied, "target": d.controller.target}
+
+
+class SleepBody(BaseModel):
+    on: bool
+
+
+@router.post("/sleep")
+async def sleep_now(body: SleepBody, ctx: DawnContext = Depends(get_ctx), d: DisplayService = Depends(display)) -> dict[str, Any]:
+    """Sleep now / wake now. It holds until the next trigger (bedtime, morning, alarm, the room's light)."""
+    if body.on and not ctx.config.display.sleep.enabled:
+        raise HTTPException(409, "sleep mode is turned off (display.sleep.enabled)")
+    d.manual_sleep(body.on)
+    st = ctx.store.state
+    return {"sleep": st.display.sleep, "reason": st.display.sleep_reason}

@@ -82,6 +82,6 @@ async def face_demo(body: DemoBody, ctx: DawnContext = Depends(get_ctx)) -> dict
     if body.mode == "setup" and ctx.store.state.face.setup is None:
         from ..state.ui import SetupInfo
 
-        ctx.store.state.face.setup = SetupInfo(ssid="Dawn-Setup", password=ctx.config.network.hotspot.password, url="http://10.42.0.1/", qr_payload="http://10.42.0.1/")
+        ctx.store.state.face.setup = SetupInfo(ssid="Dawn-Setup", password=ctx.config.network.hotspot.password, url=f"http://10.42.0.1:{ctx.config.web.port}/", qr_payload=f"WIFI:T:WPA;S:Dawn-Setup;P:{ctx.config.network.hotspot.password};;")
     ctx.svc(FaceService).set_demo(body.mode)
     return {"ok": True, "face": ctx.store.state.face.mode}

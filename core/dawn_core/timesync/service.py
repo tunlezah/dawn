@@ -80,9 +80,17 @@ class TimeSourceService(Service):
         st.gps = GpsInfo(
             available=bool(self.gps and getattr(self.gps, "connected", False)), fix=fix.mode if fix.has_fix else (1 if fix.mode else 0),
             lat=fix.lat if fix.has_fix else None, lon=fix.lon if fix.has_fix else None, sats_used=fix.sats_used, sats_seen=fix.sats_seen,
-            time=fix.time, device=fix.device,
+            time=fix.time, device=fix.device, source=self.gps.kind if self.gps else "none", hdop=fix.hdop, snr_avg=fix.snr_summary()[0],
         )
         self.ctx.store.touch()
+
+    def gps_detail(self) -> dict:
+        """Everything the GPS client knows, for Diagnostics."""
+        g = self.gps
+        d = g.fix.as_dict() if g else GpsFix().as_dict()
+        d.update(source=g.kind if g else "none", connected=bool(g and g.connected), connect_error=getattr(g, "connect_error", None),
+                 enabled=self.ctx.config.time_sources.gps.enabled)
+        return d
 
     # ---- chrony ----------------------------------------------------------
     async def _loop(self) -> None:

@@ -11,6 +11,9 @@ const BAND_III: Record<string, number> = {
   '13A': 232.496, '13B': 234.208, '13C': 235.776, '13D': 237.488, '13E': 239.2, '13F': 240.8,
 };
 
+/** Band III channel names in frequency order. */
+export const DAB_CHANNELS = Object.keys(BAND_III);
+
 export function channelFrequency(channel: string | null): string | null {
   if (!channel) return null;
   const f = BAND_III[channel.toUpperCase()];

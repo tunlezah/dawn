@@ -71,8 +71,13 @@ class AlarmService(Service):
         with self.ctx.db.session() as s:
             return s.get(AlarmRow, alarm_id)
 
-    def create(self, data: AlarmIn) -> AlarmRow:
-        row = AlarmRow(**data.model_dump(exclude={"days"}), days=",".join(map(str, data.days)))
+    def _armed(self, now: datetime | None) -> str:
+        """An alarm only answers for occurrences after it was created, edited or switched on: one set at 22:00
+        for 06:30 must not count this morning's 06:30 as missed (and a once-alarm must not disable itself)."""
+        return (now or self.ctx.store.now()).isoformat(timespec="seconds")
+
+    def create(self, data: AlarmIn, *, now: datetime | None = None) -> AlarmRow:
+        row = AlarmRow(**data.model_dump(exclude={"days"}), days=",".join(map(str, data.days)), last_fired_occurrence=self._armed(now))
         with self.ctx.db.session() as s:
             s.add(row)
             s.commit()
@@ -81,7 +86,7 @@ class AlarmService(Service):
         self.publish(force=True)
         return row
 
-    def update(self, alarm_id: int, data: AlarmIn) -> AlarmRow | None:
+    def update(self, alarm_id: int, data: AlarmIn, *, now: datetime | None = None) -> AlarmRow | None:
         with self.ctx.db.session() as s:
             row = s.get(AlarmRow, alarm_id)
             if not row:
@@ -89,12 +94,21 @@ class AlarmService(Service):
             for k, v in data.model_dump(exclude={"days"}).items():
                 setattr(row, k, v)
             row.days = ",".join(map(str, data.days))
+            row.last_fired_occurrence = self._armed(now)
             row.updated_at = datetime.now(UTC)
             s.add(row)
             s.commit()
             s.refresh(row)
         self.publish(force=True)
         return row
+
+    def set_enabled(self, alarm_id: int, enabled: bool, *, now: datetime | None = None) -> AlarmRow | None:
+        row = self.get(alarm_id)
+        if row is None:
+            return None
+        if enabled and not row.enabled:
+            return self.patch(alarm_id, enabled=True, last_fired_occurrence=self._armed(now))
+        return self.patch(alarm_id, enabled=enabled)
 
     def patch(self, alarm_id: int, **fields: Any) -> AlarmRow | None:
         with self.ctx.db.session() as s:
@@ -174,6 +188,9 @@ class AlarmService(Service):
         for row in self.rows():
             if not row.enabled:
                 continue
+            if row.last_fired_occurrence and datetime.fromisoformat(row.last_fired_occurrence) > now + timedelta(minutes=10):
+                # stamped while the clock was fast, and it has been stepped back since: only up to now is handled
+                row = self.patch(row.id or 0, last_fired_occurrence=now.isoformat(timespec="seconds")) or row
             spec = self.spec_for(row)
             hol = self._holiday_fn(row)
             # a pending skip whose occurrence has now passed: consume it
@@ -295,6 +312,9 @@ class AlarmService(Service):
         self._last_summary = summary
         st = self.ctx.store.state.alarms
         st.items = items
-        st.next = NextAlarm(id=nxt[1].id or 0, label=nxt[1].label, at=nxt[0].isoformat(timespec="seconds"), in_seconds=int((nxt[0] - now).total_seconds())) if nxt else None
+        st.next = NextAlarm(
+            id=nxt[1].id or 0, label=nxt[1].label, at=nxt[0].isoformat(timespec="seconds"), in_seconds=int((nxt[0] - now).total_seconds()),
+            light_wake_at=(nxt[0] - timedelta(minutes=nxt[1].light_wake_minutes)).isoformat(timespec="seconds") if nxt[1].light_wake else None,
+        ) if nxt else None
         st.on_leave_until = self.ctx.db.get("alarms.leave_until")
         self.ctx.store.touch()

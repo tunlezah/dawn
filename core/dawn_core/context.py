@@ -33,6 +33,7 @@ class DawnContext:
         self.runtime_dir = self._runtime_dir()
         self.db = Database(self.data_dir / "dawn.db")
         self.registry = ServiceRegistry()
+        self.ws_hub: Any = None  # api.ws.WsHub, set by the app (Diagnostics lists the connected clients)
         self.store.state.system.sim = self.sim
         self.cfg_mgr.on_change(self._on_config)
 
@@ -82,6 +83,13 @@ class DawnContext:
         st.display.show_seconds = c.display.show_seconds
         st.display.ambient_after_s = c.display.ambient_after_s
         st.display.scene = c.display.scene
+        st.display.sleep_enabled = c.display.sleep.enabled
+        st.display.sleep_screen_off = c.display.sleep.screen_off
+        st.display.sleep_jump_s = c.display.sleep.jump_every_s
+        st.display.sleep_level = c.display.sleep.level_percent
+        st.display.orbit = c.display.burn_in.pixel_orbit
+        st.display.strip_autohide_s = c.display.burn_in.strip_autohide_s
+        st.display.scene_daily = c.display.burn_in.scene_daily
         st.timers.sleep_choices = list(c.timers.sleep_choices_min)
         st.timers.nap_choices = list(c.timers.nap_choices_min)
         lat, lon, src = self.position()

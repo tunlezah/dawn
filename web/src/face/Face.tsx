@@ -2,6 +2,7 @@ import { useEffect, useRef, useState as useReactState } from 'react';
 import { useDawn } from '../shared/store';
 import { actions } from '../shared/api';
 import { Standby } from './states/Standby';
+import { Sleep } from './states/Sleep';
 import { Playing } from './states/Playing';
 import { Ringing } from './states/Ringing';
 import { Countdown } from './states/Countdown';
@@ -12,14 +13,22 @@ import { Ambient } from './components/Ambient';
 import { VolumeOverlay } from './overlays/VolumeOverlay';
 import { Menu } from './overlays/Menu';
 import { ShutdownOverlay } from './overlays/ShutdownOverlay';
+import { useNow } from '../shared/time';
+import { orbitAt, secondsOfDay } from './burnin';
 
 export function Face() {
   const { state: s, connected } = useDawn();
 
+  // sleep mode is always amber on black, whatever the room's light
+  const palette = s.face.mode === 'sleep' ? 'night' : s.display.palette;
   useEffect(() => {
-    document.documentElement.dataset.palette = s.display.palette;
+    document.documentElement.dataset.palette = palette;
     document.documentElement.classList.toggle('low-cpu', s.display.low_cpu);
-  }, [s.display.palette, s.display.low_cpu]);
+  }, [palette, s.display.low_cpu]);
+
+  // pixel orbit (burn-in): the foreground drifts a pixel a minute along a closed path; backgrounds stay put
+  const minute = Math.floor(secondsOfDay(useNow(60_000), s.tz) / 60);
+  const orbit = s.display.orbit ? orbitAt(minute) : { x: 0, y: 0 };
 
   // Idle while playing -> ambient clock with a now-playing strip. Any touch, or a new track, brings the player back.
   const [ambient, setAmbient] = useReactState(false);
@@ -53,12 +62,13 @@ export function Face() {
     case 'setup': screen = <Setup />; break;
     case 'message': screen = <Message />; break;
     case 'lightwake': screen = <LightWake />; break;
+    case 'sleep': screen = <Sleep />; break;
     default: screen = <Standby />;
   }
 
   return (
     <div className={`face-root ${s.display.layout === 'round' ? 'round' : ''}`} onPointerDown={onPointerDown}>
-      <div className="face-canvas">
+      <div className="face-canvas" style={{ ['--ox' as string]: `${orbit.x}px`, ['--oy' as string]: `${orbit.y}px` }}>
         {screen}
         {s.face.menu_open && s.face.mode !== 'ringing' && <Menu />}
         <VolumeOverlay />
