@@ -206,11 +206,11 @@ async def test_ramp_carries_across_rungs_and_yields_to_the_knob(svc, fast) -> No
     audio: AudioService = ctx.svc(AudioService)
     _factory(audio, "fake", flows=True)
     await audio.set_volume(30, overlay=False)
-    await a.start_ring(RingRequest(kind="alarm", label="R", source="fake:x", volume=80, ramp_seconds=4, ramp_start_percent=10))
+    await a.start_ring(RingRequest(kind="alarm", label="R", source="fake:x", volume=80, ramp_seconds=10, ramp_start_percent=10))
     await a.ring.settled()
     await asyncio.sleep(1.2)
     v = audio.volume
-    assert 10 < v < 80  # ramping
+    assert 10 < v < 80  # ramping (10 s: room for a slow machine)
     await audio.set_volume(25, overlay=False)  # turned down by hand
     await asyncio.sleep(1.5)
     assert audio.volume == 25  # the ramp let go

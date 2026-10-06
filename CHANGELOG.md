@@ -160,7 +160,9 @@ All notable changes to Dawn are recorded here. The format follows
   progress/transport and the ambient idle switch.
 
 ### Fixed
-- Alarms (all found in an audit of the alarm path and covered by tests in `test_alarm_robustness.py`):
+- Alarms (found in an audit of the alarm path; covered by tests in `test_alarm_robustness.py`,
+  `test_alarm_support.py` and `test_buzzer.py`, except the systemd unit and the `rtl_test`/`vcgencmd`
+  changes, which need the device):
   - A DAB alarm while DAB was playing (or a stream alarm over a stream, a chime over a chime) went silent
     after 2 s and fell back to the chime: both shared one mpv, and the preempted source's duck paused it.
     The alarm level now has its own players.
