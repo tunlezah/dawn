@@ -462,9 +462,10 @@ class AlarmService(Service):
 
         def num(v: Any, default: int, lo: int, hi: int) -> int:
             try:
-                return max(lo, min(hi, int(v)))
+                n = int(v)
             except (TypeError, ValueError):
                 return default
+            return n if lo <= n <= hi else default
 
         tier, reason = self._start_tier(row.id or 0, occurrence)
         return RingRequest(
