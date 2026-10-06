@@ -4,6 +4,7 @@ backups that cannot smuggle in a broken alarm, the Diagnostics that report all t
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -118,11 +119,19 @@ def test_diagnostics_report_the_alarm_ladder_and_failing_storage() -> None:
     assert all(x.group == "Alarms" for k, x in c.items() if k.startswith("audio.alarm."))
 
 
-async def test_sim_hub_streams_flow_per_client() -> None:
-    from httpx import ASGITransport, AsyncClient
+def test_the_core_unit_keeps_the_alarms_going() -> None:
+    """What the alarms rely on from systemd: restarted for ever, the watchdog, and /run/dawn kept across a restart
+    (the default deletes it when the service stops, and with it the marker of a ring stopped on a read-only card)."""
+    unit = (Path(__file__).resolve().parents[2] / "deploy" / "systemd" / "dawn-core.service").read_text()
+    lines = {ln.strip() for ln in unit.splitlines()}
+    for want in ("Restart=always", "StartLimitIntervalSec=0", "WatchdogSec=60", "RuntimeDirectory=dawn", "RuntimeDirectoryPreserve=yes"):
+        assert want in lines, want
 
+
+async def test_sim_hub_streams_flow_per_client() -> None:
     from dawn_sim.hub import create_app as hub_app
     from dawn_sim.simstate import STATE
+    from httpx import ASGITransport, AsyncClient
 
     async def flowing(c: AsyncClient, client: str) -> bool:
         return (await c.get("/audio/flowing", params={"client": client})).json()["flowing"]

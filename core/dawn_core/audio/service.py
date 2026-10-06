@@ -43,6 +43,7 @@ class AudioService(Service):
         self._overlay_task: asyncio.Task[None] | None = None
         self._last_published_level: str | None = None
         self._pinned_missing_logged: str | None = None
+        self._last_source: str | None = None  # `last-played`, as last read or set
         self.register_factory("chime", self._make_chime)
         self.register_factory("url", self._make_url)
         self.register_factory("playlist", self._make_playlist)
@@ -184,9 +185,14 @@ class AudioService(Service):
         return PlaylistSource(await self.player(self.player_name("media", level)), arg, self.ctx.config.audio.media_dir, self.ctx.runtime_dir)
 
     def resolve(self, ref: str) -> str:
-        """`last-played` as the reference it stands for (anything else unchanged)."""
+        """`last-played` as the reference it stands for (anything else unchanged). A database that cannot answer
+        leaves the last value read, or the chime."""
         if ref == "last-played":
-            return self.ctx.db.get("audio.last_source") or f"chime:{self.ctx.config.audio.default_chime}"
+            try:
+                self._last_source = self.ctx.db.get("audio.last_source") or self._last_source
+            except Exception:  # noqa: BLE001
+                pass
+            return self._last_source or f"chime:{self.ctx.config.audio.default_chime}"
         return ref
 
     async def make_source(self, ref: str, level: str = "user") -> AudioSource:
@@ -202,7 +208,8 @@ class AudioService(Service):
     async def play(self, ref: str, level: str = "user", remember: bool = True) -> Slot:
         src = await self.make_source(ref, level)
         if remember and level == "user":
-            self.ctx.db.try_set("audio.last_source", src.ref or ref)
+            self._last_source = src.ref or ref
+            self.ctx.db.try_set("audio.last_source", self._last_source)
         if self.muted and level in ("user", "alarm", "sleep"):
             await self.set_mute(False, overlay=False)
         slot = await self.arbiter.acquire(level, src)
@@ -398,7 +405,10 @@ class AudioService(Service):
         st.now_playing = active.source.now_playing() if active else NowPlaying()
         if active and not st.now_playing.started_at:
             st.now_playing.started_at = self.ctx.store.iso()
-        st.presets = self.presets()
+        try:
+            st.presets = self.presets()
+        except Exception:  # noqa: BLE001
+            pass  # the database cannot be read: keep the presets last shown (this runs inside every play and stop)
         self.ctx.store.touch()
 
     @staticmethod

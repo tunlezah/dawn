@@ -301,9 +301,14 @@ class DabService(Service):
 
     # ---- tuning / source -------------------------------------------------
     def service_row(self, sid: str) -> DabServiceRow | None:
+        """The scanned station, or None (also when the database cannot be read: the live ensemble may still know it)."""
         sid = norm_sid(sid)
-        with self.ctx.db.session() as s:
-            return s.exec(select(DabServiceRow).where(DabServiceRow.sid == sid)).first()
+        try:
+            with self.ctx.db.session() as s:
+                return s.exec(select(DabServiceRow).where(DabServiceRow.sid == sid)).first()
+        except Exception as e:  # noqa: BLE001
+            log.warning("cannot look up station %s: %s", sid, e)
+            return None
 
     def _svc_info(self, sid: str) -> ServiceInfo:
         sid = norm_sid(sid)
@@ -358,7 +363,7 @@ class DabService(Service):
         self.channel = channel
         self.live.clear()
         self.live_sync = False
-        self.ctx.db.set("dab.last_channel", channel)
+        self.ctx.db.try_set("dab.last_channel", channel)  # a read-only database must not undo a retune
         self._write_env()
         self.publish()
 

@@ -20,6 +20,11 @@ test('a ring core was running when it went away is owed again 45 s later', () =>
   expect(owedRing(heard, T + 60_000 + LOCAL_AFTER_MS, [])?.label).toBe('Work');
 });
 
+test('a ring the face was already beeping along with carries on at once', () => {
+  const heard: Heard = { next: null, ring: { label: 'Work', started: next.at, snoozedUntil: null, beep: true }, at: T + 60_000 };
+  expect(owedRing(heard, T + 60_000, [])?.label).toBe('Work'); // no silent gap while core is down
+});
+
 test('a snoozed ring is owed 45 s after its snooze would have ended', () => {
   const until = '2026-10-07T06:39:00+11:00';
   const heard: Heard = { next: null, ring: { label: 'Work', started: next.at, snoozedUntil: until }, at: T + 60_000 };

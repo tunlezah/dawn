@@ -37,6 +37,7 @@ DROPOUT_S = {"source": 10.0, "chime": 5.0}  # audio that stops for this long has
 START_EXTRA_S = 10.0  # a rung still starting this long after its deadline is abandoned
 DAB_RESTART_AFTER_S = 3.0
 BUZZER_RETRY_S = 5.0
+SAVE_EVERY_S = 30.0  # a ringing session is saved this often, so a restart knows it was still going
 
 
 @dataclass
@@ -71,7 +72,7 @@ class RingSession:
         on_done: Callable[[RingSession, str], Awaitable[None] | None],
         *,
         buzzer: Any = None,
-        persist: Callable[[dict[str, Any] | None], None] | None = None,
+        persist: Callable[[dict[str, Any] | None, str], None] | None = None,
     ):
         self.ctx = ctx
         self.req = req
@@ -99,6 +100,9 @@ class RingSession:
         self._snooze_task: asyncio.Task[None] | None = None
         self._max_task: asyncio.Task[None] | None = None
         self._stopping = False
+        self._stopped = asyncio.Event()
+        self._dab_task: asyncio.Task[None] | None = None
+        self._trouble_logged: str | None = None
 
     @property
     def fallback(self) -> bool:
@@ -262,7 +266,8 @@ class RingSession:
         return round(start + (target - start) * frac)
 
     async def _ramp(self, epoch: int) -> None:
-        """Raise the volume to the alarm's over ramp_seconds. A change by hand while it ramps ends it: the knob wins."""
+        """Raise the volume to the alarm's over ramp_seconds. A change by hand while it ramps ends it: the knob wins.
+        A step the backend refuses is tried again at the next one, so the ramp never stalls at its quiet start."""
         last = self.audio.volume
         while not self._stale(epoch):
             if self.audio.volume != last:
@@ -271,13 +276,18 @@ class RingSession:
             done = self.tier == "buzzer" or self.req.ramp_seconds <= 0 or time.monotonic() - self._ramp_origin >= self.req.ramp_seconds
             v = self._ramp_level(self.tier)
             if v != last:
-                last = await self.audio.set_volume(v, persist=False, overlay=False)
+                try:
+                    last = await self.audio.set_volume(v, persist=False, overlay=False)
+                except Exception as e:  # noqa: BLE001
+                    self._trouble("setting the volume", e)
+                    last, done = self.audio.volume, False  # try the next step
             if done:
                 return
             await asyncio.sleep(0.5)
 
     async def _watch(self, tier: str, epoch: int, t0: float) -> None:
-        """Climb a rung when nothing has been heard by the deadline, or what was heard stops for a while."""
+        """Climb a rung when nothing has been heard by the deadline, or what was heard stops for a while. Nothing
+        here may end the watch early: a check that fails counts as silence, so the ladder still climbs."""
         deadline = max(t0 + self._wait(tier), time.monotonic() + MIN_HEARD_S.get(tier, 3.0))
         heard = False
         silent_since: float | None = None
@@ -285,7 +295,11 @@ class RingSession:
             await asyncio.sleep(1.0)
             if self._stale(epoch):
                 return
-            flowing = await self.audio.level_flowing("alarm")
+            try:
+                flowing = await self.audio.level_flowing("alarm")
+            except Exception as e:  # noqa: BLE001
+                self._trouble("checking for sound", e)
+                flowing = False
             if self._stale(epoch):
                 return
             now = time.monotonic()
@@ -295,9 +309,15 @@ class RingSession:
                 continue
             if tier == "buzzer":
                 self._set_audible(False)  # nothing above it: it keeps trying the next player, and the face beeps
+                if self.buzzer is not None and not self.buzzer.active:
+                    log.error("%s: the backup tone stopped; starting it again", self.req.label)
+                    self._go("buzzer")
+                    return
                 continue
-            if tier == "source" and not self.restarted_dab and now - t0 >= DAB_RESTART_AFTER_S and self._resolved(tier).startswith("dab:"):
-                await self._restart_dab_if_dead()
+            if (tier == "source" and not self.restarted_dab and now - t0 >= DAB_RESTART_AFTER_S
+                    and (self._dab_task is None or self._dab_task.done()) and self._resolved(tier).startswith("dab:")):
+                # in the background: a `systemctl restart` of a wedged welle-cli can take a minute and a half
+                self._dab_task = asyncio.create_task(self._restart_dab_if_dead(), name="ring-dab-restart")
             if not heard:
                 if now >= deadline:
                     self._set_audible(False)
@@ -309,6 +329,12 @@ class RingSession:
                     self._set_audible(False)
                     self._climb(tier, f"audio stopped for {now - silent_since:.0f} s", epoch)
                     return
+
+    def _trouble(self, what: str, e: BaseException) -> None:
+        msg = f"{what}: {e}"
+        if msg != self._trouble_logged:
+            self._trouble_logged = msg
+            log.warning("%s: %s failed (%s); carrying on", self.req.label, what, e)
 
     async def _restart_dab_if_dead(self) -> None:
         try:
@@ -328,11 +354,17 @@ class RingSession:
             self._publish()
 
     async def _max_ring(self) -> None:
+        """Counts ringing time (not snoozes) up to max_ring_minutes, and saves the ring every SAVE_EVERY_S so a
+        restart knows it was still going and for how long it had rung."""
         limit = self.req.max_ring_minutes * 60
+        saved = time.monotonic()
         while self.ring_elapsed < limit:
             await asyncio.sleep(1.0)
             if self.snoozed_until is None:
                 self.ring_elapsed += 1.0
+            if time.monotonic() - saved >= SAVE_EVERY_S:
+                saved = time.monotonic()
+                self._persist()
         log.warning("%s rang for %d min without response; stopping", self.req.label, self.req.max_ring_minutes)
         await self.stop("max_ring")
 
@@ -385,35 +417,41 @@ class RingSession:
 
     # ---- stop ------------------------------------------------------------
     async def stop(self, reason: str = "user", *, forget: bool = True) -> None:
-        """End the ring. `forget=False` (dawn-core shutting down) keeps it saved, so the restart carries on with it."""
+        """End the ring. `forget=False` (dawn-core shutting down) keeps it saved, so the restart carries on with it.
+        A second call waits for the first to finish: a ring that replaces this one must not start before this one
+        has let go of the alarm level and put the volume and mute back, or that would land on the new ring."""
         if self._stopping:
+            await self._stopped.wait()
             return
         self._stopping = True
-        self.active = False
-        self.epoch += 1
-        self._cancel_watch()
-        for t in (self._snooze_task, self._max_task):
-            if t and not t.done() and t is not asyncio.current_task():
-                t.cancel()
-        # the face first: tearing the audio down can wait for a DAB tune that is still under way
-        self.ctx.store.state.alarms.ringing = None
-        self.ctx.store.touch()
-        if forget and self._persist_cb and self.req.kind != "test":
-            self._persist_cb(None)
         try:
-            await self.audio.stop_level("alarm")
-        except Exception:  # noqa: BLE001
-            log.exception("stopping the alarm's sound failed")
-        if self.buzzer is not None:
-            with suppress(Exception):
-                await self.buzzer.stop()
-        try:
-            await self.audio.set_volume(self.prev_volume, overlay=False)
-            if self.prev_muted:
-                await self.audio.set_mute(True, overlay=False)
-        except Exception:  # noqa: BLE001
-            log.exception("restoring the volume after the alarm failed")
-        self.ctx.db.log_event("ring_stop", ring_kind=self.req.kind, label=self.req.label, reason=reason, snoozes=self.snooze_count, fallback=self.fallback, tier=self.tier)
+            self.active = False
+            self.epoch += 1
+            self._cancel_watch()
+            for t in (self._snooze_task, self._max_task):
+                if t and not t.done() and t is not asyncio.current_task():
+                    t.cancel()
+            # the face first: tearing the audio down can wait for a DAB tune that is still under way
+            self.ctx.store.state.alarms.ringing = None
+            self.ctx.store.touch()
+            if forget and self._persist_cb and self.req.kind != "test":
+                self._persist_cb(None, self.started_at.isoformat())
+            try:
+                await self.audio.stop_level("alarm")
+            except Exception:  # noqa: BLE001
+                log.exception("stopping the alarm's sound failed")
+            if self.buzzer is not None:
+                with suppress(Exception):
+                    await self.buzzer.stop()
+            try:
+                await self.audio.set_volume(self.prev_volume, overlay=False)
+                if self.prev_muted:
+                    await self.audio.set_mute(True, overlay=False)
+            except Exception:  # noqa: BLE001
+                log.exception("restoring the volume after the alarm failed")
+            self.ctx.db.log_event("ring_stop", ring_kind=self.req.kind, label=self.req.label, reason=reason, snoozes=self.snooze_count, fallback=self.fallback, tier=self.tier)
+        finally:
+            self._stopped.set()
         r = self.on_done(self, reason)
         if asyncio.iscoroutine(r):
             await r
@@ -433,12 +471,12 @@ class RingSession:
             "req": asdict(self.req), "started_at": self.started_at.isoformat(), "snooze_count": self.snooze_count,
             "snoozed_until": self.snoozed_until.isoformat() if self.snoozed_until else None, "tier": self.tier,
             "fallback_reason": self.fallback_reason, "prev_volume": self.prev_volume, "prev_muted": self.prev_muted,
-            "saved_at": self.ctx.store.iso(),
+            "ring_elapsed": self.ring_elapsed, "saved_at": self.ctx.store.iso(),
         }
 
     def _persist(self) -> None:
         if self._persist_cb and self.req.kind != "test" and not self._stopping:
-            self._persist_cb(self.snapshot())
+            self._persist_cb(self.snapshot(), self.started_at.isoformat())
 
     def _publish(self) -> None:
         if self._stopping:

@@ -19,7 +19,8 @@ const KEY = 'dawn.face.backup';
 /** What the face last heard from core about alarms. */
 export interface Heard {
   next: { id: number; label: string; at: string } | null;
-  ring: { label: string; started: string; snoozedUntil: string | null } | null;
+  // `beep`: core had asked the face to beep along (its own sound may not be getting out)
+  ring: { label: string; started: string; snoozedUntil: string | null; beep?: boolean } | null;
   at: number; // when (ms)
 }
 
@@ -32,9 +33,11 @@ export function owedRing(heard: Heard | null, now: number, silenced: readonly st
   if (!heard) return null;
   const cands: { key: string; label: string; due: number }[] = [];
   if (heard.ring) {
-    // core went away while ringing (rings again 45 s later), or while snoozed (rings 45 s after the snooze's end)
+    // core went away while ringing (rings again 45 s later; at once if the face was already beeping along, so there
+    // is no silent gap), or while snoozed (rings 45 s after the snooze's end)
     const snooze = heard.ring.snoozedUntil ? Date.parse(heard.ring.snoozedUntil) : NaN;
-    cands.push({ key: `ring:${heard.ring.started}`, label: heard.ring.label, due: (Number.isFinite(snooze) ? Math.max(snooze, heard.at) : heard.at) + LOCAL_AFTER_MS });
+    const wait = heard.ring.beep && !Number.isFinite(snooze) ? 0 : LOCAL_AFTER_MS;
+    cands.push({ key: `ring:${heard.ring.started}`, label: heard.ring.label, due: (Number.isFinite(snooze) ? Math.max(snooze, heard.at) : heard.at) + wait });
   }
   if (heard.next) {
     const at = Date.parse(heard.next.at);
@@ -48,7 +51,7 @@ export function hear(s: UIState, now: number): Heard {
   const r = s.alarms.ringing;
   return {
     next: s.alarms.next ? { id: s.alarms.next.id, label: s.alarms.next.label, at: s.alarms.next.at } : null,
-    ring: r ? { label: r.label, started: r.started_at, snoozedUntil: r.snoozed_until } : null,
+    ring: r ? { label: r.label, started: r.started_at, snoozedUntil: r.snoozed_until, beep: r.face_beep && !r.snoozed_until } : null,
     at: now,
   };
 }
@@ -134,7 +137,8 @@ function useCoreUp(connected: boolean, version: number): boolean {
     const check = async () => {
       const now = Date.now();
       const fresh = connected && now - lastState.current < STALE_MS;
-      if (!fresh) {
+      if (fresh) lastHealth.current = now; // so core counts as down only STALE_MS after it was last heard, not at once
+      else {
         const ctl = new AbortController();
         const t = window.setTimeout(() => ctl.abort(), 3000);
         try {
@@ -187,18 +191,21 @@ export function useBackup(s: UIState, connected: boolean): Backup {
     return () => clearInterval(id);
   }, []);
 
-  // start a ring of its own when core is down and one is owed; hand it back when core rings again; give up at the max
+  // start a ring of its own when core is down and one is owed; hand it back when core rings again (on state that
+  // came after the face's ring began: the state from before the outage says nothing); give up at the max
+  const stateAt = useRef(0);
+  useEffect(() => { if (connected && s.version > 0) stateAt.current = Date.now(); }, [connected, s.version]);
   useEffect(() => {
     const now = Date.now();
     if (local) {
-      if (coreUp && s.alarms.ringing) setLocal(null);
+      if (connected && stateAt.current > local.since && s.alarms.ringing) setLocal(null);
       else if (now - local.since > LOCAL_MAX_MS) setLocal(null);
       return;
     }
     if (coreUp) return;
     const owed = owedRing(saved.current.heard, now, saved.current.silenced);
     if (owed) setLocal({ key: owed.key, label: owed.label, since: now, snoozedUntil: null });
-  }, [tick, coreUp, s.alarms.ringing, local]);
+  }, [tick, coreUp, connected, s.alarms.ringing, local]);
 
   const r = s.alarms.ringing;
   const coreBeep = coreUp && !!r && r.face_beep && !r.snoozed_until;

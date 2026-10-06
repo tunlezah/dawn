@@ -210,7 +210,13 @@ class Arbiter:
             nxt.source.error = str(e)
 
     def _changed(self) -> None:
+        """Tell the owner (it republishes the state). Its failure is logged, never raised: the source has already
+        started or stopped by then, and the caller must not take it for that having failed."""
         if self._on_change:
-            r = self._on_change()
+            try:
+                r = self._on_change()
+            except Exception:  # noqa: BLE001
+                log.exception("arbiter change callback failed")
+                return
             if asyncio.iscoroutine(r):
                 asyncio.ensure_future(r)

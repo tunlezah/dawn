@@ -182,8 +182,11 @@ each section. Every entry says what was decided and why, so it can be revisited.
   rung is watched each second through the alarm level's own slot (not whatever happens to be on top): no audio
   `fallback_after_s` (15 s) after the ring, or 5 s after a slow start (a retune), moves to the chime; the chime
   gets `buzzer_after_s` (8 s); audio that stops for 10 s (5 s for the chime) counts as failed, so a brief DAB
-  dropout does not drop the station. A DAB source whose welle-cli is unreachable gets one restart attempt after
-  3 s; with no SDR the chime starts at once. A chime alarm goes straight from its chime to the tone. The ramp
+  dropout does not drop the station. A check that fails (PipeWire not answering) counts as silence, so a broken
+  audio stack climbs the ladder instead of stalling on it. A DAB source whose welle-cli is unreachable gets one
+  restart attempt after 3 s, in the background, so a slow restart cannot hold up the watch; with no SDR the chime
+  starts at once. A chime alarm goes straight from its chime to the tone, and a tone that stops is started again.
+  The ramp
   counts from the ring, so it carries on across rungs; the tone goes straight to the alarm's volume. A volume
   change by hand while ringing ends the ramp (the knob wins).
 - **The backup tone needs neither mpv nor the source.** Core generates the beeps (four 120 ms beeps at 2 kHz, a
@@ -211,17 +214,26 @@ each section. Every entry says what was decided and why, so it can be revisited.
   after it: the chime rang through a snooze, or rang on with no session left to stop it. Every start now carries
   an epoch: snooze and stop bump it, and an overtaken start pauses or releases what it started instead of
   carrying on. Stop clears the face before tearing the audio down (which can wait on a tune), and a stopped ring
-  never publishes again.
+  never publishes again. A second stop (the button and the web at once) waits for the first to finish, so the
+  caller never goes on to start the next ring while the old one is still being torn down.
 - **Bookkeeping can fail, the alarm cannot.** An occurrence is marked handled after its ring has started (if the
   start raised, the next tick tries again within the grace window). The engine's own changes (handled
   occurrence, spent skip, a once-alarm switching itself off) take effect in memory and are saved best-effort, so a
   read-only SD card or a full disk neither silences an alarm nor makes it ring every second; the event log never
   raises; a damaged row is logged once and skipped while the others ring; when the table cannot be read the last
-  copy is used; out-of-range values in a row ring with the defaults. Backups must contain valid alarms.
+  copy is used; out-of-range values in a row ring with the defaults. Nothing on the way to the sound needs the
+  database: the last source is kept in memory, a DAB retune that cannot save the channel tunes anyway, and a
+  station row that cannot be read is skipped. Switching an alarm off and on again does not forget that today's
+  occurrence has rung. Backups must contain valid alarms.
 - **A ring survives a restart of dawn-core.** The session is saved (`alarms.ring`: request, rung, snooze, the
-  volume from before) and carried on at the next start, ringing again or still snoozed, if it would still be
-  going (rung within its max-ring time, or a snooze that ended at most `missed_grace_minutes` ago) and is under 4
-  hours old. A shutdown keeps it, a stop or the max ring drops it. The nap timer is saved the same way.
+  volume from before, the time rung so far; again every 30 s while ringing) and carried on at the next start,
+  ringing again or still snoozed, if it would still be going and is under 4 hours old. The time core was down
+  counts as ringing time (the alarm was meant to be sounding), so a ring that crashes in a loop still ends at its
+  max-ring time; a snooze carries on if it ended at most `missed_grace_minutes` ago. A shutdown keeps it, a stop
+  or the max ring drops it. When dropping it cannot be saved (a read-only card), a marker in `/run/dawn` keeps
+  that stopped ring from coming back at the next start: the unit sets `RuntimeDirectoryPreserve=yes`, since
+  systemd otherwise deletes the directory whenever the service stops, and it is a tmpfs, so the marker never
+  outlives a reboot. The nap timer is saved the same way.
 - **The watchdog is fed only while the alarm engine ticks** (within 30 s): the tick is quick now, so a stuck one
   is a reason for systemd to restart dawn-core, after which the saved ring carries on. `dawn-core.service` has
   `StartLimitIntervalSec=0`: systemd's default gave up after five fast restarts, leaving no alarms at all.
@@ -230,7 +242,8 @@ each section. Every entry says what was decided and why, so it can be revisited.
   restarted, the tuner moved to the station's channel and checked for sync and the station on air. Someone
   listening on another channel keeps listening ("busy": it retunes when the alarm rings). A failure seen on two
   checks in a row (or no SDR, or an unknown station) starts the ring on the chime at once, since waiting 15 s in
-  silence would not bring the station back; a check older than 60 s decides nothing. Steps under way (a retune)
+  silence would not bring the station back; with no audio output at all it starts on the backup tone, whose last
+  players go to the sound card directly. A check older than 60 s decides nothing. Steps under way (a retune)
   are `pending`, not problems. Scans are refused into a DAB alarm's window plus the scan's own length; retunes,
   decoder restarts and gain changes by hand wait while one rings or is snoozed; the alarm's own restart is always
   allowed.

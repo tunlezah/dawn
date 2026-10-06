@@ -8,8 +8,8 @@ All notable changes to Dawn are recorded here. The format follows
 ### Changed
 - Alarms: new options `alarm_defaults.buzzer_after_s`, `prepare_minutes` and `buzzer.gpio_pin` /
   `gpio_active_high`; the installer adds `alsa-utils` (`aplay` for the backup tone);
-  `dawn-core.service` sets `StartLimitIntervalSec=0`; the systemd watchdog is fed only while the
-  alarm engine ticks. While ringing, any press of the big button stops (no shutdown countdown) and the
+  `dawn-core.service` sets `StartLimitIntervalSec=0` and keeps `/run/dawn` across restarts
+  (`RuntimeDirectoryPreserve=yes`); the systemd watchdog is fed only while the alarm engine ticks. While ringing, any press of the big button stops (no shutdown countdown) and the
   encoder hold snoozes; the screen lights as for a tap. A test ring while an alarm rings answers 409, and
   so do scans into a DAB alarm and retunes or decoder restarts while one rings. Unit tests no longer
   reach a simulator left running.
@@ -187,6 +187,14 @@ All notable changes to Dawn are recorded here. The format follows
   - The once-a-minute SDR check ran `rtl_test` (blocking the event loop and opening the stick welle-cli
     needs); `vcgencmd` blocked it every 5 s. PipeWire not answering at start left the ALSA fallback in
     place for the whole run.
+  - Found by an independent review of the changes above, each reproduced first: with the database
+    unreadable a DAB alarm lost its station (the source lookup and the retune both needed it); a sound
+    check that raised stopped the ladder where it was; a backup tone that died stayed silent; a slow
+    decoder restart held up the watch; a stop still finishing could mute or silence the next ring; a ring
+    carried over a restart started its max-ring clock again, and one stopped while the card was read-only
+    came back; an alarm that rang while the card was read-only rang again when switched on from the web
+    (it already was); with no audio output the ring still began on its source; the face could hand its own
+    ring back on stale state, and waited 45 s before beeping for a core that had gone away mid-tone.
 - DAB with upstream welle-cli (the version the installer builds): ensemble and station labels
   are objects and showed as `{'label': …}`; sync was read from a field that does not exist
   (now the FIG 0/0 frame counter); the channel was never read back (now `GET /channel`);

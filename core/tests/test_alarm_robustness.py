@@ -306,6 +306,9 @@ async def test_event_log_failure_does_not_stop_an_alarm(svc, monkeypatch) -> Non
     monkeypatch.setattr(ctx.db, "session", full)  # nothing can be read or written any more
     await a.tick(now=AT)  # the alarms come from the copy read when the alarm was created
     assert a.ring is not None and a.ring.req.label == "EV"
+    await a.ring.settled()
+    await asyncio.sleep(0.3)
+    assert a.ring.tier == "source"  # and it plays its own sound, not a fallback
     await a.stop_ringing()
 
 
@@ -689,3 +692,166 @@ async def test_ringing_lights_the_screen_like_a_tap(svc) -> None:
     await d.tick()
     assert d.controller.target < ctx.config.display.sleep.wake_percent  # snoozed: back to the room's level
     await a.stop_ringing()
+
+
+# ---- found by an independent review of the above -----------------------------------
+async def test_an_unreadable_database_does_not_push_a_playing_alarm_down_the_ladder(svc, monkeypatch) -> None:
+    """Publishing the state after a start reads the presets; that failing must not count as the start failing."""
+    a, ctx = svc
+    monkeypatch.setattr(ctx.db, "session", lambda *x, **k: (_ for _ in ()).throw(sqlite3.OperationalError("disk I/O error")))
+    await a.start_ring(RingRequest(kind="alarm", label="IO", source="chime:birds", volume=50, ramp_seconds=0))
+    await a.ring.settled()
+    await asyncio.sleep(0.5)
+    assert a.ring.tier == "source" and ctx.svc(AudioService).arbiter.slot("alarm").source.kind == "chime"
+    await a.stop_ringing()
+
+
+async def test_a_failing_sound_check_still_climbs(svc, fast, monkeypatch) -> None:
+    a, ctx = svc
+    audio: AudioService = ctx.svc(AudioService)
+    _factory(audio, "fake", flows=False)
+
+    async def flaky(level: str) -> bool:
+        raise OSError(11, "Resource temporarily unavailable")  # pw-dump could not even be started
+
+    monkeypatch.setattr(audio, "level_flowing", flaky)
+    await a.start_ring(RingRequest(kind="alarm", label="W", source="fake:x", volume=50, ramp_seconds=0, fallback_after_s=1, buzzer_after_s=1))
+    await _until(lambda: a.ring.tier == "buzzer")  # every check counts as silence: up the whole ladder
+    await a.stop_ringing()
+
+
+async def test_a_backup_tone_that_stopped_is_started_again(svc, fast) -> None:
+    a, ctx = svc
+    _factory(ctx.svc(AudioService), "chime", flows=False)
+    await a.start_ring(RingRequest(kind="alarm", label="T", source="chime:birds", volume=50, ramp_seconds=0, buzzer_after_s=1))
+    await _until(lambda: a.ring.tier == "buzzer" and a.buzzer.active)
+    await a.buzzer.stop()  # its task died, or something took it down
+    await _until(lambda: a.buzzer.active)
+    await a.stop_ringing()
+
+
+async def test_a_read_only_database_does_not_stop_a_dab_alarm_that_retunes(radio, monkeypatch) -> None:
+    a, ctx, dab, fw = radio
+    monkeypatch.setattr(ctx.db, "set", lambda *x, **k: (_ for _ in ()).throw(sqlite3.OperationalError("attempt to write a readonly database")))
+    await a.start_ring(RingRequest(kind="alarm", label="RO", source="dab:2002", volume=40, ramp_seconds=0))  # on 9A: needs 9C
+    await a.ring.settled()
+    assert fw.channel == "9C" and a.ring.tier == "source"
+    await a.stop_ringing()
+
+
+async def test_a_slow_decoder_restart_does_not_hold_the_ladder(svc, fast, monkeypatch) -> None:
+    a, ctx = svc
+    dab: DabService = ctx.svc(DabService)
+    _factory(ctx.svc(AudioService), "dab", flows=False)
+    ctx.store.state.dab.sdr_present = True
+
+    async def unhealthy() -> bool:
+        return False
+
+    async def slow_restart(force: bool = False, reason: str = "") -> bool:
+        await asyncio.sleep(30)  # systemctl waiting on a welle-cli stuck in a USB read
+        return True
+
+    monkeypatch.setattr(dab, "healthy", unhealthy)
+    monkeypatch.setattr(dab, "restart_welle", slow_restart)
+    monkeypatch.setattr(ringing, "DAB_RESTART_AFTER_S", 0.5)
+    await a.start_ring(RingRequest(kind="alarm", label="Slow", source="dab:2002", volume=50, ramp_seconds=0, fallback_after_s=3))
+    await _until(lambda: a.ring.tier == "chime")  # at its time, not after the restart
+    assert a.ring.restarted_dab
+    await a.stop_ringing()
+
+
+async def test_a_stop_still_finishing_does_not_land_on_the_next_ring(svc) -> None:
+    a, ctx = svc
+    audio: AudioService = ctx.svc(AudioService)
+    await audio.set_mute(True, overlay=False)  # muted at bedtime
+    await a.start_ring(RingRequest(kind="alarm", label="A", source="chime:birds", volume=60, ramp_seconds=0))
+    await a.ring.settled()
+    orig = audio.stop_level
+
+    async def slow_stop_level(level: str) -> None:  # mpv IPC or wpctl taking a moment
+        await asyncio.sleep(0.3)
+        await orig(level)
+
+    audio.stop_level = slow_stop_level  # type: ignore[method-assign]
+    stopping = asyncio.create_task(a.stop_ringing())  # A is stopped...
+    await asyncio.sleep(0.05)
+    audio.stop_level = orig  # type: ignore[method-assign]
+    await a.start_ring(RingRequest(kind="alarm", label="B", source="chime:birds", volume=60, ramp_seconds=0))  # ...as B fires
+    await stopping
+    await a.ring.settled()
+    assert a.ring.req.label == "B" and not audio.muted and audio.arbiter.slot("alarm").state == "playing"
+    await a.stop_ringing()
+    assert audio.muted  # and B's own stop puts the bedtime mute back
+
+
+async def test_a_resumed_ring_keeps_its_ring_time(tmp_config) -> None:
+    app, life = await _restart(tmp_config)
+    async with life:
+        ctx = app.state.ctx
+        now = ctx.store.now()
+        ten = (now - timedelta(minutes=10)).isoformat()
+        ctx.db.set("alarms.ring", {"req": {"kind": "alarm", "label": "Long", "source": "chime:birds", "volume": 50, "max_ring_minutes": 30},
+                                   "started_at": (now - timedelta(minutes=25)).isoformat(), "saved_at": ten, "ring_elapsed": 15 * 60.0,
+                                   "snoozed_until": None, "tier": "source"})
+    app2, life2 = await _restart(tmp_config)
+    async with life2:
+        a2: AlarmService = app2.state.ctx.svc(AlarmService)
+        assert a2.ring is not None and 24 * 60 < a2.ring.ring_elapsed < 26 * 60  # 15 min rung + 10 min down: 5 min left
+        await a2.stop_ringing()
+        app2.state.ctx.db.set("alarms.ring", {"req": {"kind": "alarm", "label": "Done", "source": "chime:birds", "volume": 50, "max_ring_minutes": 30},
+                                              "started_at": (now - timedelta(minutes=40)).isoformat(), "saved_at": ten, "ring_elapsed": 25 * 60.0,
+                                              "snoozed_until": None, "tier": "source"})
+    app3, life3 = await _restart(tmp_config)
+    async with life3:
+        assert app3.state.ctx.svc(AlarmService).ring is None  # would have run out: a crash loop cannot ring past it
+
+
+async def test_a_ring_stopped_while_the_database_is_read_only_does_not_come_back(tmp_config, monkeypatch) -> None:
+    app, life = await _restart(tmp_config)
+    async with life:
+        ctx = app.state.ctx
+        a: AlarmService = ctx.svc(AlarmService)
+        await a.start_ring(RingRequest(kind="alarm", label="RO stop", source="chime:birds", volume=50, ramp_seconds=0))
+        await a.ring.settled()
+        monkeypatch.setattr(ctx.db, "set", lambda *x, **k: (_ for _ in ()).throw(sqlite3.OperationalError("readonly")))
+        await a.stop_ringing()  # the saved ring cannot be cleared
+        monkeypatch.undo()
+        assert ctx.db.get("alarms.ring") is not None and (ctx.runtime_dir / "ring-stopped").exists()
+    app2, life2 = await _restart(tmp_config)
+    async with life2:
+        assert app2.state.ctx.svc(AlarmService).ring is None
+
+
+async def test_switching_an_enabled_alarm_on_again_keeps_what_was_handled(svc, monkeypatch) -> None:
+    a, ctx = svc
+    row = a.create(AlarmIn(label="E", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0), now=BEFORE)
+    real_patch = a.patch
+    monkeypatch.setattr(a, "patch", lambda *x, **k: (_ for _ in ()).throw(sqlite3.OperationalError("readonly")))
+    await a.tick(now=AT)
+    await a.stop_ringing()
+    monkeypatch.setattr(a, "patch", real_patch)  # saving works again
+    a.set_enabled(row.id, True)  # a no-op toggle from the web
+    await a.tick(now=AT + timedelta(seconds=5))
+    assert a.ring is None  # the 06:30 that already rang does not ring again
+
+
+async def test_nothing_to_play_to_starts_on_the_backup_tone(svc) -> None:
+    a, ctx = svc
+    audio: AudioService = ctx.svc(AudioService)
+    a.create(AlarmIn(label="Mute", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0), now=BEFORE)
+    audio._sinks = []  # no output found
+    await _prepare(a, AT - timedelta(minutes=2))
+    assert ctx.store.state.alarms.prepare.start_tier == "buzzer"
+    await a.tick(now=AT)
+    assert a.ring.tier == "buzzer"
+    await a.stop_ringing()
+
+
+async def test_the_engine_counts_as_alive_until_it_has_started(tmp_config) -> None:
+    ctx_app = create_app(ConfigManager(tmp_config, poll_s=10))
+    from dawn_core.wiring import build_services
+
+    ctx = ctx_app.state.ctx
+    build_services(ctx)
+    assert ctx.svc(AlarmService).alive()  # the heartbeat starts first and must not starve the watchdog at boot

@@ -216,9 +216,17 @@ class Buzzer:
         raise RuntimeError("nowhere to write the backup tone")
 
     async def _run(self) -> None:
-        if self.ctx.sim:
-            await self._run_sim()
-            return
+        while True:
+            try:
+                await (self._run_sim() if self.ctx.sim else self._cycle())
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001
+                log.exception("backup tone loop failed; starting it again")
+                self.sounding = False
+                await asyncio.sleep(1.0)
+
+    async def _cycle(self) -> None:
         while True:
             try:
                 cmds = player_commands(str(self.wav_path()))

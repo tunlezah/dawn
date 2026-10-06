@@ -148,7 +148,10 @@ class AlarmService(Service):
         return BuzzerSource(self.buzzer)
 
     def alive(self, max_age_s: float = 30.0) -> bool:
-        """The engine is ticking (the systemd watchdog is only fed while it is)."""
+        """The engine is ticking (the systemd watchdog is only fed while it is). Before it has started (the services
+        start one after another at boot, the heartbeat first) it counts as alive."""
+        if self.started is None:
+            return True
         if self._task is None or self._task.done():
             return False
         now = time.monotonic()
@@ -248,10 +251,10 @@ class AlarmService(Service):
             return None
         if enabled and (not row.enabled or alarm_id in self._disabled):
             out = self.patch(alarm_id, enabled=True, last_fired_occurrence=self._armed(now))
-        else:
-            out = self.patch(alarm_id, enabled=enabled)
-        self._forget(alarm_id)
-        return out
+            self._forget(alarm_id)  # armed from now: what the engine remembered no longer applies
+            return out
+        # anything else keeps an occurrence handled but not saved, so it cannot ring twice once saving works again
+        return self.patch(alarm_id, enabled=enabled)
 
     def set_skip_next(self, alarm_id: int, skip: bool) -> AlarmRow | None:
         out = self.patch(alarm_id, skip_next=skip)
@@ -508,11 +511,14 @@ class AlarmService(Service):
             pending = pending and not failed
             source_player_ok = not any(p.startswith(f"{family} player") for p in failed)
             chime_ok = not any(p.startswith("chime player") for p in failed)
-            if not audio.has_output():
+            no_output = not audio.has_output()
+            if no_output:
                 problems.append("no audio output found")
                 pending = False
             if family and not source_player_ok:
                 start = "chime" if family != "chime" else "buzzer"
+            if no_output:
+                start = "buzzer"  # nothing to play to: the GPIO buzzer and the face at once
             if ref.startswith("dab:") and start == "source":
                 dab_problem, hard, under_way = await self._prepare_dab(ref[4:], key)
                 if dab_problem:
@@ -608,8 +614,17 @@ class AlarmService(Service):
         await session.start()
         return session
 
-    def _persist_ring(self, data: dict[str, Any] | None) -> None:
-        self.ctx.db.try_set("alarms.ring", data)
+    def _persist_ring(self, data: dict[str, Any] | None, started: str) -> None:
+        ok = self.ctx.db.try_set("alarms.ring", data)
+        marker = self.ctx.runtime_dir / "ring-stopped"
+        try:
+            if data is None and not ok:
+                # the database still holds the ring: note in /run that it was stopped, so a restart does not bring it back
+                marker.write_text(started)
+            elif ok and marker.exists():
+                marker.unlink()
+        except OSError:
+            pass
 
     async def _resume_ring(self) -> None:
         """A ring that a restart of dawn-core cut short (a crash, the watchdog, an update) carries on: ringing again
@@ -631,11 +646,18 @@ class AlarmService(Service):
             self.ctx.db.try_set("alarms.ring", None)
             return
         grace = timedelta(minutes=self.ctx.config.alarm_defaults.missed_grace_minutes)
+        elapsed = float(data.get("ring_elapsed") or 0.0)
         if snoozed is not None:
             alive = now - snoozed <= grace  # still snoozed, or the snooze ended while core was down
         else:
-            alive = now - saved <= max(timedelta(minutes=req.max_ring_minutes), grace)
-        if not alive or now - started > RESUME_MAX_AGE or started > now + timedelta(minutes=10):
+            # it would still be ringing: the time core was down counts, so a crash loop cannot ring past its max ring
+            elapsed += max(0.0, (now - saved).total_seconds())
+            alive = elapsed < req.max_ring_minutes * 60
+        try:
+            stopped = (self.ctx.runtime_dir / "ring-stopped").read_text().strip() == data["started_at"]
+        except OSError:
+            stopped = False
+        if not alive or stopped or now - started > RESUME_MAX_AGE or started > now + timedelta(minutes=10):
             self.ctx.db.try_set("alarms.ring", None)
             return
         req.start_tier = str(data.get("tier") or "source")
@@ -647,6 +669,7 @@ class AlarmService(Service):
         session.snooze_count = int(data.get("snooze_count") or 0)
         session.prev_volume = int(data.get("prev_volume", session.prev_volume))
         session.prev_muted = bool(data.get("prev_muted", False))
+        session.ring_elapsed = elapsed if snoozed is None else float(data.get("ring_elapsed") or 0.0)
         self.ring = session
         self._light_wake_dismissed = req.occurrence
         await session.start(snoozed_until=snoozed)
