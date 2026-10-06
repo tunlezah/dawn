@@ -15,9 +15,12 @@ import { Menu } from './overlays/Menu';
 import { ShutdownOverlay } from './overlays/ShutdownOverlay';
 import { useNow } from '../shared/time';
 import { orbitAt, secondsOfDay } from './burnin';
+import { useBackup } from './backup';
 
 export function Face() {
   const { state: s, connected } = useDawn();
+  // the face's own safety net: beeps along when core asks, rings by itself when core is down at an alarm
+  const backup = useBackup(s, connected);
 
   // sleep mode is always amber on black, whatever the room's light
   const palette = s.face.mode === 'sleep' ? 'night' : s.display.palette;
@@ -47,7 +50,7 @@ export function Face() {
   // otherwise tell core (it opens the menu / wakes the face).
   const onPointerDown = () => {
     lastTouch.current = Date.now();
-    if (s.face.mode === 'ringing') return;
+    if (s.face.mode === 'ringing' || backup.local) return;
     if (ambient) setAmbient(false);
     else if (s.face.mode === 'message' || s.face.mode === 'lightwake') actions.dismissMessage().catch(() => {});
     else if (s.face.menu_open) actions.faceMenu(false).catch(() => {});
@@ -55,7 +58,8 @@ export function Face() {
   };
 
   let screen;
-  switch (s.face.mode) {
+  if (backup.local) screen = <Ringing local={{ label: backup.local.label, snoozedUntil: backup.local.snoozedUntil, onSnooze: backup.snooze, onStop: backup.stop }} />;
+  else switch (s.face.mode) {
     case 'ringing': screen = <Ringing />; break;
     case 'playing': screen = ambient ? <Ambient compact /> : <Playing />; break;
     case 'countdown': screen = <Countdown />; break;
@@ -67,14 +71,14 @@ export function Face() {
   }
 
   return (
-    <div className={`face-root ${s.display.layout === 'round' ? 'round' : ''}`} onPointerDown={onPointerDown}>
+    <div className={`face-root ${s.display.layout === 'round' ? 'round' : ''}`} onPointerDown={onPointerDown} data-beep={backup.beeping ? '1' : undefined}>
       <div className="face-canvas" style={{ ['--ox' as string]: `${orbit.x}px`, ['--oy' as string]: `${orbit.y}px` }}>
         {screen}
-        {s.face.menu_open && s.face.mode !== 'ringing' && <Menu />}
+        {s.face.menu_open && s.face.mode !== 'ringing' && !backup.local && <Menu />}
         <VolumeOverlay />
         {s.face.shutdown_countdown !== null && <ShutdownOverlay seconds={s.face.shutdown_countdown} />}
         {!connected && <div className="absolute top-[2vmin] right-[3vmin] face-dots z-40"><span className="dot dot-err" />offline</div>}
-        {s.display.overlay_dim > 0 && <div className="face-dim" style={{ opacity: Math.min(0.92, s.display.overlay_dim) }} />}
+        {s.display.overlay_dim > 0 && !backup.local && <div className="face-dim" style={{ opacity: Math.min(0.92, s.display.overlay_dim) }} />}
       </div>
     </div>
   );

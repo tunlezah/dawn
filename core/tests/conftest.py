@@ -16,6 +16,8 @@ def tmp_config(tmp_path: Path) -> Path:
         "audio:\n  backend: sim\ndisplay:\n  backlight:\n    driver: sim\n  lux_sensor:\n    driver: sim\n"
         "  sleep:\n    enabled: false\n"  # on by default; off here so face-mode tests do not depend on the hour
         "inputs:\n  pin_factory: mock\ntime_sources:\n  gps:\n    source: sim\nsystem:\n  watchdog: false\n"
+        # nothing here may reach a simulator left running by `make sim` (its long polls outlive a test's event loop)
+        "sim:\n  hub_url: http://127.0.0.1:9\ndab:\n  welle_url: http://127.0.0.1:9\n"
         % (tmp_path / "data", tmp_path / "run")
     )
     os.environ["DAWN_DATA_DIR"] = str(tmp_path / "data")

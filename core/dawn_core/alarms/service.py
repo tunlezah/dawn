@@ -497,6 +497,7 @@ class AlarmService(Service):
     async def _prepare(self, row: AlarmRow, at: datetime, key: tuple[int, str]) -> None:
         """Get one alarm's sound ready, and work out the rung it will start on if nothing changes."""
         problems: list[str] = []
+        pending = True  # every problem so far is a step under way (tuning), not something wrong
         start = "source"
         ref = self._resolve(row.source)
         family = source_family(ref)
@@ -504,16 +505,19 @@ class AlarmService(Service):
             audio = self.ctx.svc(AudioService)
             failed = await audio.prepare_players([f for f in dict.fromkeys([family, "chime"]) if f])
             problems += failed
+            pending = pending and not failed
             source_player_ok = not any(p.startswith(f"{family} player") for p in failed)
             chime_ok = not any(p.startswith("chime player") for p in failed)
             if not audio.has_output():
                 problems.append("no audio output found")
+                pending = False
             if family and not source_player_ok:
                 start = "chime" if family != "chime" else "buzzer"
             if ref.startswith("dab:") and start == "source":
-                dab_problem, hard = await self._prepare_dab(ref[4:], key)
+                dab_problem, hard, under_way = await self._prepare_dab(ref[4:], key)
                 if dab_problem:
                     problems.append(dab_problem)
+                    pending = pending and under_way
                     if hard:
                         start = "chime"
             if start == "chime" and not chime_ok:
@@ -521,44 +525,46 @@ class AlarmService(Service):
         except Exception as e:  # noqa: BLE001
             log.exception("preparing %s failed", row.label)
             problems.append(f"preparation failed: {e}")
+            pending = False
         if key != self._prep_key:
             return  # the target moved on while this ran
         prev = self._prep
         self._prep = AlarmPrep(
-            alarm_id=key[0], label=row.label, at=at.isoformat(timespec="seconds"), source=ref, ready=not problems, problems=problems,
-            start_tier=start, checked_at=self.ctx.store.iso(),  # type: ignore[arg-type]
+            alarm_id=key[0], label=row.label, at=at.isoformat(timespec="seconds"), source=ref, ready=not problems, pending=bool(problems) and pending,
+            problems=problems, start_tier=start, checked_at=self.ctx.store.iso(),  # type: ignore[arg-type]
         )
         self._prep_at = time.monotonic()
         self._prep_due = self._prep_at + (PREP_EVERY_S if not problems else PREP_RETRY_S)
         self.ctx.store.state.alarms.prepare = self._prep
         self.ctx.store.touch()
         if prev is None or prev.problems != problems:
-            if problems:
-                log.warning("%s at %s: %s (starts on the %s)", row.label, at.strftime("%H:%M"), "; ".join(problems), start)
-            else:
+            if not problems:
                 log.info("%s at %s is ready", row.label, at.strftime("%H:%M"))
+            else:
+                (log.info if self._prep.pending else log.warning)("%s at %s: %s (starts on the %s)", row.label, at.strftime("%H:%M"), "; ".join(problems), start)
             self.ctx.db.log_event("alarm_prepare", id=key[0], label=row.label, occurrence=key[1], ready=not problems, problems=problems, start_tier=start)
 
-    async def _prepare_dab(self, sid: str, key: tuple[int, str]) -> tuple[str | None, bool]:
-        """(what is wrong, whether the ring should start on the chime because of it)."""
+    async def _prepare_dab(self, sid: str, key: tuple[int, str]) -> tuple[str | None, bool, bool]:
+        """(what is not ready, whether the ring should start on the chime because of it, whether it is a step
+        under way rather than a fault)."""
         try:
             from ..dab.service import DabService
 
             dab = self.ctx.svc(DabService)
         except (ImportError, KeyError):
-            return "no DAB service", True
+            return "no DAB service", True, False
         audio = self.ctx.svc(AudioService)
         listening = [s for s in (audio.arbiter.slot("user"), audio.arbiter.slot("sleep"))
                      if s is not None and s.source.kind == "dab" and s.state in ("playing", "starting", "ducked")]
         status, msg = await dab.prepare_for(sid, may_retune=not listening)
         if status == "ok":
             self._dab_fail.pop(key, None)
-            return None, False
+            return None, False, False
         if status in ("busy", "tuning"):
-            return msg, False
+            return msg, False, True
         n = self._dab_fail[key] = self._dab_fail.get(key, 0) + 1
         # one failed check may be the tuner settling; two in a row will not come right in time
-        return msg, status == "fail" and (n >= 2 or msg in ("no SDR", "station unknown"))
+        return msg, status == "fail" and (n >= 2 or msg in ("no SDR", "station unknown")), False
 
     def _start_tier(self, alarm_id: int, occurrence: datetime) -> tuple[str, str | None]:
         """Where a ring starts: below its source when a recent check found the source will not play."""

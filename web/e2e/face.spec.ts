@@ -54,6 +54,50 @@ test('ringing: holding the screen for 2 s stops without snoozing', async ({ page
   expect(s.alarms.ringing).toBeNull();
 });
 
+test('ringing: when nothing can be heard it climbs to the backup tone and the face beeps along', async ({ page }) => {
+  test.setTimeout(45_000);
+  await page.goto('/face');
+  await hub({ audio_flowing: false }); // nothing reaches the speaker: not the source, not the chime
+  await post('/api/alarms/test', { source: 'chime:gentle_bell', label: 'E2E silent', volume: 40 });
+  const s = await waitFor((x) => x.alarms.ringing?.tier === 'buzzer', 20_000);
+  expect(s.alarms.ringing.face_beep).toBe(true);
+  await expect(page.locator('.face-screen')).toContainText('backup tone');
+  await expect(page.locator('.face-root[data-beep="1"]')).toHaveCount(1);
+  await page.locator('.face-root').tap(); // snoozed: the face goes quiet too
+  await waitFor((x) => x.alarms.ringing?.snoozed_until);
+  await expect(page.locator('.face-root[data-beep="1"]')).toHaveCount(0);
+  await post('/api/input', { event: 'button_short' });
+  await waitFor((x) => x.alarms.ringing === null);
+});
+
+test('core not answering at alarm time: the face rings by itself, snoozes and stops locally', async ({ page }) => {
+  test.setTimeout(75_000);
+  // what the face heard before core went away: an alarm a minute ago
+  const at = new Date(Date.now() - 60_000).toISOString();
+  await page.addInitScript((heard) => localStorage.setItem('dawn.face.backup', JSON.stringify({ heard, silenced: [] })),
+    { next: { id: 99, label: 'E2E backup', at }, ring: null, at: Date.now() - 120_000 });
+  // core is down as far as the face can tell: no state over the socket, no answer from /api/health
+  await page.routeWebSocket(/\/ws$/, (ws) => ws.close());
+  await page.route('**/api/health', (route) => route.abort());
+  await page.goto('/face');
+  const ring = page.locator('.f-ring.local');
+  await expect(ring).toBeVisible({ timeout: 45_000 });
+  await expect(ring).toContainText('E2E backup');
+  await expect(ring).toContainText('Dawn is not responding');
+  await expect(page.locator('.face-root[data-beep="1"]')).toHaveCount(1);
+  await ring.tap(); // tap = snooze, on the face itself
+  await expect(ring).toContainText('Snoozed until');
+  await expect(page.locator('.face-root[data-beep="1"]')).toHaveCount(0);
+  const box = (await ring.boundingBox())!; // hold = stop
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.waitForTimeout(2300);
+  await page.mouse.up();
+  await expect(ring).toHaveCount(0);
+  const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('dawn.face.backup') || '{}'));
+  expect(saved.silenced).toContain(`alarm:99:${at}`); // stays stopped after a reload
+});
+
 test('menu sheet: the slider sets the volume and the Standby tile is the big button', async ({ page }) => {
   // Radio on plays the first preset, so make sure there is one
   const presets = await (await fetch(`${BASE}/api/presets`)).json();

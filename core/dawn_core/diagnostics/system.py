@@ -137,6 +137,8 @@ def checks(f: dict[str, Any]) -> list[Check]:
         when = p["at"][11:16]
         if p["ready"]:
             alarm("next", "Next alarm", "ok", f"{p['label']} at {when} is ready to ring ({p['source']}).")
+        elif p.get("pending"):
+            alarm("next", "Next alarm", "info", f"{p['label']} at {when} is getting ready: " + "; ".join(p["problems"]) + ".")
         else:
             alarm("next", "Next alarm", "warn" if p["start_tier"] == "source" else "fail",
                   f"{p['label']} at {when}: " + "; ".join(p["problems"]) + f". It will start on {tier_name[p['start_tier']]}.",

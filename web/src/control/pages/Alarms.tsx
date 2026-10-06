@@ -3,6 +3,7 @@ import { useState } from '../../shared/store';
 import { Card, Empty, Row, Sheet, Switch } from '../../shared/components';
 import { api, actions } from '../../shared/api';
 import { fmtDayTime } from '../../shared/time';
+import { ringNote } from '../../shared/alarms';
 import type { AlarmSummary, DabService } from '../../shared/types';
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -64,7 +65,7 @@ export function Alarms() {
       {s.alarms.ringing && (
         <Card className="border-accent">
           <div className="flex items-center justify-between gap-3">
-            <div><div className="text-accent font-semibold">{s.alarms.ringing.snoozed_until ? 'Snoozed' : 'Ringing'} · {s.alarms.ringing.label}</div><div className="text-xs text-muted">{s.alarms.ringing.fallback ? 'chime fallback' : s.alarms.ringing.source} · snoozes {s.alarms.ringing.snooze_count}</div></div>
+            <div><div className="text-accent font-semibold">{s.alarms.ringing.snoozed_until ? 'Snoozed' : 'Ringing'} · {s.alarms.ringing.label}</div><div className="text-xs text-muted">{ringNote(s.alarms.ringing)} · snoozes {s.alarms.ringing.snooze_count}</div></div>
             <div className="flex gap-2">{!s.alarms.ringing.snoozed_until && <button className="btn" onClick={() => actions.snooze()}>Snooze</button>}<button className="btn btn-danger" onClick={() => actions.stopRinging()}>Stop</button></div>
           </div>
         </Card>

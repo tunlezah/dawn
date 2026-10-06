@@ -153,7 +153,8 @@ const EVENT_LABEL: Record<string, (e: DiagEvent) => string> = {
   dab_restart: (e) => `DAB decoder restarted${e.reason ? ` (${String(e.reason)})` : ''}`,
   dab_scan: () => 'DAB scan',
   ring_start: (e) => `Alarm rang${e.label ? `: ${String(e.label)}` : ''}`,
-  ring_fallback: () => 'Alarm fell back to the chime',
+  ring_fallback: (e) => `Alarm fell back to the ${e.tier === 'buzzer' ? 'backup tone' : 'chime'}${e.reason ? ` (${String(e.reason)})` : ''}`,
+  ring_restored: (e) => `Alarm carried on after a restart${e.label ? `: ${String(e.label)}` : ''}`,
   alarm_fire: (e) => `Alarm${e.label ? ` ${String(e.label)}` : ''}`,
   alarm_missed: (e) => `Alarm missed${e.label ? `: ${String(e.label)}` : ''}`,
   hotspot_start: () => 'Setup hotspot on', hotspot_stop: () => 'Setup hotspot off',
@@ -171,8 +172,8 @@ export const EVENTS: Record<string, (e: DiagEvent) => boolean> = {
   gps: (e) => POWER.includes(e.kind) || action(e, 'gps.'),
   time: (e) => POWER.includes(e.kind) || action(e, 'time.', 'gps.'),
   network: (e) => ['hotspot_start', 'hotspot_stop', 'wifi_connect', ...POWER].includes(e.kind),
-  devices: (e) => ['ring_start', 'ring_fallback', 'light_wake', 'sleep_mode', ...POWER].includes(e.kind) || action(e, 'audio.', 'airplay.', 'display.'),
-  system: (e) => [...POWER, 'update_start', 'restore', 'alarm_missed'].includes(e.kind) || e.kind === 'diag_action',
+  devices: (e) => ['ring_start', 'ring_fallback', 'ring_restored', 'light_wake', 'sleep_mode', ...POWER].includes(e.kind) || action(e, 'audio.', 'airplay.', 'display.'),
+  system: (e) => [...POWER, 'update_start', 'restore', 'alarm_missed', 'ring_restored'].includes(e.kind) || e.kind === 'diag_action',
 };
 
 export interface ChartSpec {

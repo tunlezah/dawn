@@ -4,6 +4,7 @@ import { Card, Dot, Slider } from '../../shared/components';
 import { fmtDate, fmtTime, useNow, fmtDayTime, fmtIn, fmtDuration } from '../../shared/time';
 import { actions } from '../../shared/api';
 import { navigate } from '../../shared/router';
+import { prepNote, ringNote } from '../../shared/alarms';
 
 export function Home() {
   const s = useState();
@@ -50,7 +51,7 @@ export function Home() {
       {s.alarms.ringing && (
         <Card className="border-accent">
           <div className="flex items-center justify-between gap-3">
-            <div><div className="text-accent font-semibold">{s.alarms.ringing.snoozed_until ? 'Snoozed' : 'Ringing'} · {s.alarms.ringing.label}</div><div className="text-sm text-muted">{s.alarms.ringing.fallback ? 'Chime fallback active' : s.alarms.ringing.source}</div></div>
+            <div><div className="text-accent font-semibold">{s.alarms.ringing.snoozed_until ? 'Snoozed' : 'Ringing'} · {s.alarms.ringing.label}</div><div className="text-sm text-muted">{ringNote(s.alarms.ringing)}</div></div>
             <div className="flex gap-2">
               {!s.alarms.ringing.snoozed_until && <button className="btn" onClick={() => actions.snooze()}>Snooze</button>}
               <button className="btn btn-danger" onClick={() => actions.stopRinging()}>Stop</button>
@@ -87,10 +88,16 @@ export function Home() {
 
       <Card title="Next alarm" action={<button className="btn btn-sm" onClick={() => navigate('/alarms')}>Alarms</button>}>
         {s.alarms.next ? (
-          <div className="flex items-center justify-between">
-            <div><div className="text-lg">{s.alarms.next.label}</div><div className="text-muted text-sm">{fmtDayTime(s.alarms.next.at, s.tz, s.settings.clock_24h)}</div></div>
-            <div className="text-muted text-sm">in {fmtIn(s.alarms.next.in_seconds)}</div>
-          </div>
+          <>
+            <div className="flex items-center justify-between">
+              <div><div className="text-lg">{s.alarms.next.label}</div><div className="text-muted text-sm">{fmtDayTime(s.alarms.next.at, s.tz, s.settings.clock_24h)}</div></div>
+              <div className="text-muted text-sm">in {fmtIn(s.alarms.next.in_seconds)}</div>
+            </div>
+            {(() => {
+              const p = prepNote(s.alarms.prepare, s.alarms.next?.id);
+              return p && <div className={`text-xs mt-2 flex items-center gap-2 ${p.ok ? 'text-muted' : 'text-warn'}`}><Dot state={p.ok ? 'ok' : 'warn'} />{p.text}</div>;
+            })()}
+          </>
         ) : <div className="text-muted">{s.alarms.on_leave_until ? `On leave until ${s.alarms.on_leave_until}` : 'No alarm scheduled'}</div>}
       </Card>
 

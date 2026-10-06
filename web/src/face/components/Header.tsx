@@ -17,7 +17,7 @@ export function FaceHeader({ left }: { left?: ReactNode }) {
   );
 }
 
-export const SOURCE_LABEL: Record<SourceKind, string> = { dab: 'DAB', airplay: 'AirPlay', bluetooth: 'Bluetooth', url: 'Stream', playlist: 'Playlist', chime: 'Chime', none: 'Ready' };
+export const SOURCE_LABEL: Record<SourceKind, string> = { dab: 'DAB', airplay: 'AirPlay', bluetooth: 'Bluetooth', url: 'Stream', playlist: 'Playlist', chime: 'Chime', buzzer: 'Backup tone', none: 'Ready' };
 
 export function SourceIcon({ source }: { source: SourceKind }) {
   if (source === 'airplay') return <IconAirplay />;

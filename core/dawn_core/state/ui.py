@@ -184,6 +184,7 @@ class AlarmPrep(BaseModel):
     at: str
     source: str
     ready: bool = False
+    pending: bool = False  # not ready only because a step is under way (tuning; the radio in use until the alarm)
     problems: list[str] = Field(default_factory=list)
     start_tier: RingTier = "source"  # where it will start if nothing changes before it rings
     checked_at: str | None = None
