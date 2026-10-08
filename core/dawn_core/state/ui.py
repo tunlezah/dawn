@@ -11,7 +11,8 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 FaceMode = Literal["standby", "sleep", "playing", "ringing", "countdown", "setup", "message", "lightwake"]
-SourceKind = Literal["dab", "chime", "url", "playlist", "airplay", "bluetooth", "none"]
+SourceKind = Literal["dab", "chime", "url", "playlist", "airplay", "bluetooth", "buzzer", "none"]
+RingTier = Literal["source", "chime", "buzzer"]  # an alarm's own source, then the chime, then the backup tone
 
 
 class FaceMessage(BaseModel):
@@ -166,9 +167,27 @@ class RingingInfo(BaseModel):
     snoozed_until: str | None = None
     snooze_count: int = 0
     source: str
-    fallback: bool = False
+    fallback: bool = False  # not the alarm's own source: the chime or the backup tone
+    tier: RingTier = "source"
+    fallback_reason: str | None = None  # why it left the rung above
+    audible: bool | None = None  # audio confirmed flowing on this rung (None: not known yet)
+    face_beep: bool = False  # the face beeps too: core's own sound may not be getting out
     volume_target: int = 70
     ends_at: str | None = None
+
+
+class AlarmPrep(BaseModel):
+    """The next alarm's sound, checked and made ready in the minutes before it rings (alarm_defaults.prepare_minutes)."""
+
+    alarm_id: int
+    label: str
+    at: str
+    source: str
+    ready: bool = False
+    pending: bool = False  # not ready only because a step is under way (tuning; the radio in use until the alarm)
+    problems: list[str] = Field(default_factory=list)
+    start_tier: RingTier = "source"  # where it will start if nothing changes before it rings
+    checked_at: str | None = None
 
 
 class AlarmsState(BaseModel):
@@ -177,6 +196,7 @@ class AlarmsState(BaseModel):
     ringing: RingingInfo | None = None
     on_leave_until: str | None = None
     light_wake_active: bool = False
+    prepare: AlarmPrep | None = None
 
 
 class TimerInfo(BaseModel):

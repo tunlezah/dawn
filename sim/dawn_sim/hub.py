@@ -262,8 +262,11 @@ def create_app() -> FastAPI:
         return PlainTextResponse(f"{refid},{stratum},1700000000.0,0.000000400,0.000000300,0.000001,1.2,0.001,0.5,0.0001,0.0005,0.0010,Normal\n")
 
     @app.get("/audio/flowing")
-    async def audio_flowing() -> dict[str, bool]:
-        return {"flowing": STATE.audio_flowing and STATE.sdr_present and STATE.dab_sync}
+    async def audio_flowing(client: str = "") -> dict[str, bool]:
+        """Fake PipeWire stream activity per client: the DAB players need the stick and sync, everything else
+        (chimes, the backup tone, media) only the "Audio flowing" toggle."""
+        dab = "dab" in client or not client
+        return {"flowing": STATE.audio_flowing and (not dab or (STATE.sdr_present and STATE.dab_sync))}
 
     @app.get("/network")
     async def network() -> dict[str, Any]:

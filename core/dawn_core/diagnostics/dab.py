@@ -73,7 +73,8 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "stations": len(known), "ensembles": ensembles, "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
         "presets_unknown": presets_unknown, "alarms_unknown": alarms_unknown,
         "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") != "manual"],
-        "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback"],
+        # a DAB alarm that left the radio for the chime (not the chime's own climb to the backup tone)
+        "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback" and str(e.get("source", "")).startswith("dab:") and e.get("from_tier", "source") == "source"],
         "messages": [{"at": at, "text": line.replace("\n.", ".").strip()} for at, line in list(dab.messages)[-60:]],
     }
 

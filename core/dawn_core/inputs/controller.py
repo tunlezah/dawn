@@ -1,9 +1,11 @@
 """Control semantics. Never ambiguous:
 
 Big button  short: ringing -> stop; playing -> standby; standby -> wake face 20 s
-            hold 3 s: safe shutdown with on-screen countdown
+            hold 3 s: safe shutdown with on-screen countdown, except while ringing: then any press,
+            short or long, stops the alarm (a sleepy hand must not power the clock off, nor have a
+            slightly long press do nothing)
 Encoder     rotate: volume; push while ringing: snooze; push otherwise: next preset
-            hold: nap-timer picker on the face
+            hold: nap-timer picker on the face; while ringing: snooze, like a push
 Touch       ringing: snooze (whole screen); otherwise: face menu
 Snooze and stop are never on the same control.
 
@@ -45,6 +47,7 @@ class InputController:
         self._hold_task: asyncio.Task[None] | None = None
         self._held_fired = False
         self._countdown_shown = False
+        self._ring_press = False  # the button went down while ringing: its release stops the alarm
 
     async def handle(self, event: str) -> None:
         try:
@@ -63,23 +66,34 @@ class InputController:
             else:
                 await self.a.next_preset()
         elif event == "encoder_long":
-            await self.a.open_nap_picker()
+            if await self.a.is_ringing():
+                await self.a.snooze()
+            else:
+                await self.a.open_nap_picker()
         elif event == "button_down":
             self._held_fired = False
             self._countdown_shown = False
             self._cancel_hold()
-            self._hold_task = asyncio.create_task(self._hold_countdown())
+            self._ring_press = await self.a.is_ringing()
+            if not self._ring_press:  # while ringing there is no shutdown countdown
+                self._hold_task = asyncio.create_task(self._hold_countdown())
         elif event == "button_up":
-            fired, shown = self._held_fired, self._countdown_shown
+            fired, shown, ring_press = self._held_fired, self._countdown_shown, self._ring_press
+            self._ring_press = False
             self._cancel_hold()
             await self.a.shutdown_countdown(None)
-            if not fired and not shown:
+            if ring_press:
+                await self.a.stop_ringing()
+            elif not fired and not shown:
                 await self.button_short()
             # released while the countdown was showing: cancelled, nothing else happens
         elif event == "button_short":
             await self.button_short()
         elif event == "button_long":
-            await self.a.shutdown()
+            if await self.a.is_ringing():
+                await self.a.stop_ringing()
+            else:
+                await self.a.shutdown()
         elif event == "touch":
             if await self.a.is_ringing():
                 await self.a.snooze()
@@ -108,6 +122,8 @@ class InputController:
                 remaining -= 1.0
             self._held_fired = True
             await self.a.shutdown_countdown(0)
+            if await self.a.is_ringing():
+                return  # an alarm started during the hold: never power off under a ringing alarm
             await self.a.shutdown()
         except asyncio.CancelledError:
             pass

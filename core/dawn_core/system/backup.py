@@ -26,10 +26,25 @@ def make_backup(ctx: DawnContext) -> dict[str, Any]:
     return out
 
 
+def _check_alarm(r: dict[str, Any]) -> None:
+    """An alarm row from a backup must make a valid alarm (time, days, ranges), or the whole restore is refused."""
+    from ..alarms.schemas import AlarmIn
+
+    fields = {k: r[k] for k in AlarmIn.model_fields if k in r and k != "days"}
+    days = r.get("days")
+    fields["days"] = [int(x) for x in str(days).split(",") if x.strip()] if isinstance(days, str) else (days or [])
+    try:
+        AlarmIn.model_validate(fields)
+    except ValueError as e:
+        raise ValueError(f"alarm {r.get('label', r.get('id'))!r} in the backup is not valid: {e}") from e
+
+
 async def restore_backup(ctx: DawnContext, doc: dict[str, Any]) -> dict[str, int]:
     if doc.get("dawn_backup") != 1:
         raise ValueError("not a Dawn backup document")
     cfg = DawnConfig.model_validate(doc.get("config") or {})
+    for r in doc.get("db", {}).get("alarms") or []:
+        _check_alarm(dict(r))
     counts: dict[str, int] = {}
     with ctx.db.session() as s:
         for name, model in TABLES.items():
@@ -63,6 +78,7 @@ async def restore_backup(ctx: DawnContext, doc: dict[str, Any]) -> dict[str, int
     from ..audio.service import AudioService
 
     try:
+        ctx.svc(AlarmService).reset_memory()
         ctx.svc(AlarmService).publish(force=True)
         ctx.svc(AudioService).publish()
     except Exception:  # noqa: BLE001

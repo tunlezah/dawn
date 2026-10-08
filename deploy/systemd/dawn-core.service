@@ -3,6 +3,8 @@ Description=Dawn core (state, alarms, audio arbiter, API)
 Documentation=https://github.com/tunlezah/dawn
 After=network.target chrony.service bluetooth.service user@@UID@.service
 Wants=user@@UID@.service
+# never give up restarting: the alarms live here (systemd's default stops after 5 starts in 10 s)
+StartLimitIntervalSec=0
 
 [Service]
 Type=notify
@@ -22,6 +24,9 @@ WatchdogSec=60
 TimeoutStartSec=90
 RuntimeDirectory=dawn
 RuntimeDirectoryMode=0755
+# kept until reboot (systemd deletes it whenever the service stops by default): a ring stopped while the
+# database could not be written leaves a marker here, so the restart does not bring it back
+RuntimeDirectoryPreserve=yes
 StateDirectory=dawn
 # modest hardening (GPIO/I2C/audio need device access, so no PrivateDevices)
 NoNewPrivileges=false

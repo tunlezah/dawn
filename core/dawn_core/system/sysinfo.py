@@ -50,6 +50,7 @@ class SysInfoService(Service):
         self._task: asyncio.Task[None] | None = None
         self.hw = hwmod.HardwareInfo()
         self.booted = time.time()
+        self._stall_logged = False
 
     async def start(self) -> None:
         cfg = self.ctx.config
@@ -86,12 +87,20 @@ class SysInfoService(Service):
     async def _loop(self) -> None:
         while True:
             try:
-                self._tick()
+                await self._tick()
             except Exception:  # noqa: BLE001
                 log.exception("sysinfo tick failed")
             await asyncio.sleep(self.ctx.config.system.heartbeat_interval_s)
 
-    def _tick(self) -> None:
+    def _alarms_alive(self) -> bool:
+        try:
+            from ..alarms.service import AlarmService
+
+            return self.ctx.svc(AlarmService).alive()
+        except (ImportError, KeyError):
+            return True
+
+    async def _tick(self) -> None:
         cfg = self.ctx.config
         st = self.ctx.store.state.system
         temp = hwmod._read(cfg.system.cpu_temp_path)
@@ -114,24 +123,32 @@ class SysInfoService(Service):
         if self.hw.is_pi:
             # under-voltage (bit 0x10000 since boot) is the first thing to check on a single 5 V supply,
             # and with a passive heatsink thermal throttling has to stay visible too
-            th = hwmod.read_throttled(cfg.system.vcgencmd_binary)
+            th = await asyncio.to_thread(hwmod.read_throttled, cfg.system.vcgencmd_binary)
             if th != st.throttled and th:
                 log.warning("vcgencmd get_throttled=0x%x (%s)", th, ", ".join(hwmod.throttle_flags(th)))
             st.throttled = th
             st.throttle_flags = hwmod.throttle_flags(th)
         st.heartbeat_at = self.ctx.store.iso()
-        # heartbeat file + systemd watchdog
+        # heartbeat file + systemd watchdog. The watchdog is only fed while the alarm engine ticks: an engine stuck
+        # on something is a reason for systemd to restart dawn-core (a ring in progress carries on afterwards).
         try:
             (self.ctx.runtime_dir / "heartbeat").write_text(str(int(time.time())))
         except OSError:
             pass
         if cfg.system.watchdog:
-            sd_notify("WATCHDOG=1")
+            if self._alarms_alive():
+                sd_notify("WATCHDOG=1")
+                self._stall_logged = False
+            elif not self._stall_logged:
+                self._stall_logged = True
+                log.error("the alarm engine has stopped ticking; holding back the watchdog so systemd restarts dawn-core")
         if not self.ctx.sim and st.uptime_s % 60 < cfg.system.heartbeat_interval_s:
-            # re-check SDR presence once a minute (hot plug)
-            present, tuner, _ = hwmod.detect_sdr()
+            # re-check SDR presence once a minute (hot plug), from the USB ids only: rtl_test would open the stick,
+            # and a welle-cli starting at that moment (an alarm restarting it) would find it taken
+            present, generic = await asyncio.to_thread(hwmod.sdr_on_usb)
             if present != st.sdr_present:
-                log.info("SDR presence changed: %s (%s)", present, tuner)
+                log.info("SDR presence changed: %s", present)
+            tuner = (st.sdr_tuner or generic) if present else None
             st.sdr_present, st.sdr_tuner = present, tuner
             self.ctx.store.state.dab.sdr_present = present
             self.ctx.store.state.dab.tuner = tuner

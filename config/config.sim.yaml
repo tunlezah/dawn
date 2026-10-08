@@ -186,10 +186,15 @@ alarm_defaults:
   ramp_start_percent: 10
   snooze_minutes: 9
   fallback_after_s: 15
+  buzzer_after_s: 8
+  prepare_minutes: 5
   max_ring_minutes: 30
   missed_grace_minutes: 10
   light_wake_minutes: 10
   chime: gentle_bell
+  buzzer:
+    gpio_pin: null
+    gpio_active_high: true
 timers:
   sleep_choices_min:
   - 15

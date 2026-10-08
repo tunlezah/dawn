@@ -95,7 +95,7 @@ PKGS=(
   libusb-1.0-0-dev libfaad-dev libmpg123-dev libmp3lame-dev libfftw3-dev libasound2-dev
   libpopt-dev libconfig-dev libavahi-client-dev libssl-dev libsoxr-dev libplist-dev libsodium-dev
   libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev
-  mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth
+  mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth alsa-utils
   bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
 )

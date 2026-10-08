@@ -18,9 +18,45 @@ http://localhost:8099/.
   - sim: hub *SDR plugged → off*, then *Alarms → test ring* on the DAB alarm: the chime starts
     immediately (`ring_fallback reason="no SDR"`). With the SDR present but no audio flowing
     (hub *Audio flowing → off*) the chime takes over at `fallback_after_s` (15 s default; 4 s in the
-    scripted check). welle-cli gets one restart attempt after 3 s when it is unreachable.
+    scripted check). welle-cli gets one restart attempt after 3 s when it is unreachable. A DAB alarm
+    whose preparation (5 minutes ahead) already found no SDR or no signal starts on the chime at once:
+    `test_alarm_robustness.py::test_a_dab_alarm_that_will_not_play_starts_on_the_chime`.
   - device: pull the stick, trigger the alarm, expect the chime ≤ 15 s; `journalctl -u dawn-core`
     shows `ring_fallback` and `dab_restart`.
+
+- [x] **Nothing can be heard (no mpv, no chime): the alarm climbs to the backup tone and the face beeps
+  along.**
+  - sim: hub *Audio flowing → off*, then a test ring: chime, then the backup tone after 8 s; the face
+    says "backup tone" and beeps (Playwright "ringing: when nothing can be heard it climbs to the backup
+    tone…"). Tests: `test_silent_source_then_silent_chime_reach_the_backup_tone`,
+    `test_everything_broken_still_reaches_the_backup_tone`, `test_buzzer.py` (player cascade, GPIO).
+  - device: `sudo mv /usr/bin/mpv /usr/bin/mpv.off`, ring a test alarm: the backup tone within ~10 s and
+    `journalctl -u dawn-core | grep "backup tone"` names the player; then `sudo systemctl --user -M
+    dawn@ stop pipewire pipewire.socket` (or kill PipeWire) and ring again: it plays via `aplay` on the
+    card. Put mpv back.
+
+- [x] **A DAB alarm is ready minutes ahead: tuned, in sync, scans refused.**
+  - sim: an alarm on a station of another channel 2 minutes out: the tuner moves within seconds,
+    *Home → Next alarm* says "Ready to ring", `POST /api/dab/scan` answers 409; it rings on the radio at
+    the minute (checked live; tests `test_a_dab_alarm_is_tuned_and_checked_minutes_ahead`,
+    `test_scans_wait_for_a_dab_alarm_and_retunes_wait_while_it_rings`).
+  - device: the same with a real station; `journalctl -u dawn-core | grep prepar`.
+
+- [x] **dawn-core crashing during a ring or a snooze does not drop it.**
+  - sim: `kill -9` the core process while an alarm rings: the launcher restarts it and the same ring
+    carries on within seconds (checked live: back in 3.5 s, `ring_restored`). Tests
+    `test_a_ringing_alarm_carries_on_after_a_restart`, `test_a_snoozed_alarm_stays_snoozed_across_a_restart`.
+  - device: `sudo systemctl kill -s KILL dawn-core` during a ring; it rings again after the restart.
+
+- [x] **dawn-core down at alarm time: the face rings by itself.**
+  - Playwright "core not answering at alarm time: the face rings by itself, snoozes and stops locally".
+  - device: `sudo systemctl stop dawn-core` a minute before an alarm; ~45 s after the alarm the face shows
+    "backup alarm · Dawn is not responding" and beeps; tap snoozes, hold stops. Start dawn-core again.
+
+- [x] **A read-only or full SD card, or a damaged alarm row, does not stop alarms.**
+  - tests: `test_alarm_rings_once_with_a_read_only_database`, `test_event_log_failure_does_not_stop_an_alarm`,
+    `test_one_malformed_alarm_does_not_stop_the_others`, `test_a_failing_publish_does_not_lose_the_alarm`.
+    *Diagnostics → System → Saving to storage* reports failed writes.
 
 - [x] **Cover the lux sensor: face dims to night palette within 3 s; uncover: returns within 3 s;
   slider override holds until sunrise.**
@@ -151,8 +187,9 @@ these need the hardware.
 |---|---|
 | Config schema, hot reload, API | `test_config.py`, `test_api_smoke.py` |
 | Scheduling: DST gap/overlap, leap day, skip-next, holidays, leave, grace | `test_scheduler.py`, `test_holidays.py`, `test_alarm_engine.py` |
+| Alarm robustness: the ladder to the backup tone, own players, snooze/stop during a start, storage failures, bad rows, restarts, preparation, tuner holds, inputs and backlight while ringing | `test_alarm_robustness.py`, `test_alarm_support.py`, `test_buzzer.py`, `web/e2e/backup.unit.spec.ts` |
 | Arbiter priority, duck/pause/resume | `test_arbiter.py` |
-| Input semantics (button/encoder/touch, hold countdown) | `test_input_controller.py` |
+| Input semantics (button/encoder/touch, hold countdown; nothing powers off while ringing) | `test_input_controller.py`, `test_alarm_robustness.py` |
 | Reference hardware: volume ceiling, EQ limits, sink pinning, throttle flags, encoder on mock GPIO | `test_hardware_profile.py` |
 | Brightness curve, hysteresis, slew, 3 s scenario | `test_brightness.py` |
 | Time sources: chrony parsing, NMEA | `test_timesync.py` |

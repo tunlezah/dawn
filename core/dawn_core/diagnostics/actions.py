@@ -24,9 +24,12 @@ async def _unit(host: Host, unit: str) -> Result:
 
 
 async def dab_restart(ctx: DawnContext, host: Host, _v: Any) -> Result:
-    from ..dab.service import DabService
+    from ..dab.service import DabService, TunerBusy
 
-    ok = await ctx.svc(DabService).restart_welle(force=True, reason="manual")
+    try:
+        ok = await ctx.svc(DabService).restart_welle(force=True, reason="manual")
+    except TunerBusy as e:
+        return False, str(e)
     return (True, "Restarting the DAB decoder; it takes a few seconds to sync again.") if ok else (False, "It was restarted moments ago; wait a few seconds.")
 
 
@@ -48,21 +51,24 @@ async def dab_retune(ctx: DawnContext, host: Host, value: Any) -> Result:
     if ch not in CHANNEL_MHZ:
         return False, f"Unknown channel {value!r}."
     try:
-        await ctx.svc(DabService).tune(ch)
+        await ctx.svc(DabService).user_tune(ch)
     except RuntimeError as e:
         return False, str(e)
     return True, f"Tuned to {ch} ({CHANNEL_MHZ[ch]:.3f} MHz)."
 
 
 async def dab_gain(ctx: DawnContext, host: Host, value: Any) -> Result:
-    from ..dab.service import DabService
+    from ..dab.service import DabService, TunerBusy
     from ..dab.welle import R82XX_GAINS_DB, gain_index
 
     gain = None if value in (None, "", "auto") else float(value)
     if gain is not None and not 0 <= gain <= 60:
         return False, "Gain must be between 0 and 60 dB, or auto."
     await ctx.cfg_mgr.update({"dab": {"gain": gain}})
-    restarted = await ctx.svc(DabService).restart_welle(force=True, reason="manual")
+    try:
+        restarted = await ctx.svc(DabService).restart_welle(force=True, reason="manual")
+    except TunerBusy:
+        restarted = False  # an alarm on the radio is ringing: the new gain applies at the next restart
     what = "Tuner gain set to automatic (AGC)." if gain is None else f"Tuner gain fixed at {R82XX_GAINS_DB[gain_index(gain)]} dB."
     return True, what + (" The decoder restarts." if restarted else " Restart the decoder in a few seconds to apply it.")
 

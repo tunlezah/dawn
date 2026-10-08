@@ -15,5 +15,7 @@ export default defineConfig({
   projects: [
     { name: 'face', use: { viewport: { width: 800, height: 480 }, hasTouch: true }, testMatch: /face\.spec\.ts/ },
     { name: 'control-mobile', use: { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true }, testMatch: /control\.spec\.ts/ },
+    // pure logic, no browser and no simulator needed
+    { name: 'unit', testMatch: /\.unit\.spec\.ts/ },
   ],
 });

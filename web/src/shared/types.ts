@@ -1,7 +1,9 @@
 // Mirrors core/dawn_core/state/ui.py. Keep in sync when the state model changes.
 
 export type FaceMode = 'standby' | 'sleep' | 'playing' | 'ringing' | 'countdown' | 'setup' | 'message' | 'lightwake';
-export type SourceKind = 'dab' | 'chime' | 'url' | 'playlist' | 'airplay' | 'bluetooth' | 'none';
+export type SourceKind = 'dab' | 'chime' | 'url' | 'playlist' | 'airplay' | 'bluetooth' | 'buzzer' | 'none';
+/** An alarm's ladder of sounds: its own source, then the chime, then the backup tone. */
+export type RingTier = 'source' | 'chime' | 'buzzer';
 
 export interface FaceMessage { title: string; body: string; level: 'info' | 'warning' | 'error'; until: string | null }
 export interface SetupInfo { ssid: string; password: string | null; url: string; qr_payload: string }
@@ -38,9 +40,17 @@ export interface AlarmSummary {
 export interface NextAlarm { id: number; label: string; at: string; in_seconds: number; light_wake_at: string | null }
 export interface RingingInfo {
   kind: 'alarm' | 'nap'; alarm_id: number | null; label: string; started_at: string; snoozed_until: string | null;
-  snooze_count: number; source: string; fallback: boolean; volume_target: number; ends_at: string | null;
+  snooze_count: number; source: string; fallback: boolean; tier: RingTier; fallback_reason: string | null;
+  audible: boolean | null; face_beep: boolean; volume_target: number; ends_at: string | null;
 }
-export interface AlarmsState { items: AlarmSummary[]; next: NextAlarm | null; ringing: RingingInfo | null; on_leave_until: string | null; light_wake_active: boolean }
+export interface AlarmPrep {
+  alarm_id: number; label: string; at: string; source: string; ready: boolean; pending: boolean; problems: string[]; start_tier: RingTier;
+  checked_at: string | null;
+}
+export interface AlarmsState {
+  items: AlarmSummary[]; next: NextAlarm | null; ringing: RingingInfo | null; on_leave_until: string | null; light_wake_active: boolean;
+  prepare: AlarmPrep | null;
+}
 export interface TimerInfo { kind: 'sleep' | 'nap'; ends_at: string; total_s: number; remaining_s: number; fading: boolean }
 export interface TimersState { sleep: TimerInfo | null; nap: TimerInfo | null; sleep_choices: number[]; nap_choices: number[] }
 export interface DabService {
@@ -98,7 +108,7 @@ export const EMPTY_STATE: UIState = {
     orbit: true, strip_autohide_s: 120, scene_daily: true },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
-  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false },
+  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null },
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
   dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown' },
   presets: [],

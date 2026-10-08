@@ -32,7 +32,29 @@ class TimerService(Service):
 
     async def start(self) -> None:
         self._tick_task = asyncio.create_task(self._tick(), name="timers-tick")
+        self._restore_nap()
         self.publish()
+
+    def _restore_nap(self) -> None:
+        """A nap counting down when dawn-core restarted carries on, or rings now if it ran out meanwhile."""
+        try:
+            data = self.ctx.db.get("timers.nap")
+        except Exception:  # noqa: BLE001
+            return
+        if not isinstance(data, dict):
+            return
+        try:
+            end, total = datetime.fromisoformat(data["ends_at"]), int(data["total_s"])
+        except (KeyError, TypeError, ValueError):
+            self.ctx.db.try_set("timers.nap", None)
+            return
+        now = self.ctx.store.now()
+        if end < now - timedelta(minutes=self.ctx.config.alarm_defaults.missed_grace_minutes) or end > now + timedelta(seconds=total + 60):
+            self.ctx.db.try_set("timers.nap", None)
+            return
+        self._nap_total, self._nap_end = total, end
+        self._nap_task = asyncio.create_task(self._run_nap(max(0.0, (end - now).total_seconds())), name="nap-timer")
+        log.warning("nap timer carried on after a restart (ends %s)", end.isoformat(timespec="seconds"))
 
     async def stop(self) -> None:
         for t in (self._sleep_task, self._nap_task, self._tick_task):
@@ -109,19 +131,18 @@ class TimerService(Service):
         self._nap_total = minutes * 60
         self._nap_end = self.ctx.store.now() + timedelta(seconds=self._nap_total)
         self._nap_task = asyncio.create_task(self._run_nap(), name="nap-timer")
+        self.ctx.db.try_set("timers.nap", {"ends_at": self._nap_end.isoformat(), "total_s": self._nap_total})
         self.ctx.db.log_event("nap_start", minutes=minutes)
         self.publish()
 
-    async def _run_nap(self) -> None:
-        try:
-            await asyncio.sleep(self._nap_total)
-            self._nap_end = None
-            self.publish()
-            from .service import AlarmService
+    async def _run_nap(self, seconds: float | None = None) -> None:
+        await asyncio.sleep(self._nap_total if seconds is None else seconds)
+        self._nap_end = None
+        self.ctx.db.try_set("timers.nap", None)  # from here on the ring itself is saved
+        self.publish()
+        from .service import AlarmService
 
-            await self.ctx.svc(AlarmService).ring_nap()
-        except asyncio.CancelledError:
-            raise
+        await self.ctx.svc(AlarmService).ring_nap()
 
     async def cancel_nap(self, log: bool = True) -> None:
         if self._nap_task and not self._nap_task.done():
@@ -129,6 +150,8 @@ class TimerService(Service):
             if log:
                 self.ctx.db.log_event("nap_cancel")
         self._nap_task = None
+        if self._nap_end is not None:
+            self.ctx.db.try_set("timers.nap", None)
         self._nap_end = None
         self.publish()
 

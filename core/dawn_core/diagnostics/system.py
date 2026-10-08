@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any
 
 from ..context import DawnContext
@@ -40,6 +41,8 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     bl = cfg.display.backlight.sysfs_path or (sysinfo.hw.backlight_sysfs if sysinfo else None)
     conns = ctx.ws_hub.connections() if ctx.ws_hub else []
     last_input = inputs.last_event if inputs else None
+    alarms = _svc(ctx, "dawn_core.alarms.service", "AlarmService")
+    events = await asyncio.to_thread(ctx.db.events_since, ctx.store.now() - timedelta(hours=24), ["ring_fallback", "alarm_missed", "ring_restored"])
     return {
         "units": units,
         "audio": {
@@ -47,6 +50,14 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "pinned": cfg.audio.pinned_sink, "volume": st.audio.volume, "muted": st.audio.muted, "active_source": st.audio.active_source,
             "flowing": st.audio.audio_flowing, "eq_present": bool(audio and audio.backend.eq_present), "ceiling": cfg.audio.output_ceiling_percent,
             "max_volume": cfg.audio.max_volume, "sources": [s.model_dump() for s in st.audio.sources],
+        },
+        "alarms": {
+            "engine_alive": alarms.alive() if alarms else None, "prepare": st.alarms.prepare.model_dump() if st.alarms.prepare else None,
+            "ringing": st.alarms.ringing.model_dump() if st.alarms.ringing else None,
+            "backup_tone_24h": [e for e in events if e["kind"] == "ring_fallback" and e.get("tier") == "buzzer"],
+            "missed_24h": [e for e in events if e["kind"] == "alarm_missed"],
+            "restored_24h": [e for e in events if e["kind"] == "ring_restored"],
+            "backup_tone_problem": alarms.buzzer.problem if alarms else None, "gpio_buzzer": cfg.alarm_defaults.buzzer.gpio_pin,
         },
         "airplay": {"enabled": cfg.airplay.enabled, "available": st.airplay.available, "name": st.airplay.name, "active": st.airplay.active,
                     "pipe": await host.exists(cfg.airplay.metadata_pipe)},
@@ -72,6 +83,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "disk_data": {"path": str(ctx.data_dir), "total": data[0], "free": data[1]} if data else None,
             "disk_root": {"total": root[0], "free": root[1]} if root else None,
             "errors": recent[-8:], "error_count": len(recent), "update_running": st.system.update_running,
+            "db_write_errors": ctx.db.write_errors, "db_last_write_error": ctx.db.last_write_error,
         },
     }
 
@@ -108,6 +120,42 @@ def checks(f: dict[str, Any]) -> list[Check]:
             None if a["flowing"] else "For DAB see DAB radio; otherwise check the output and play a test tone.", None if a["flowing"] else ["audio.test_tone"])
     else:
         add("audio", "test", "Speaker test", "info", "Nothing is playing.", "Play a short test tone to check the speaker.", ["audio.test_tone"])
+    # ---- alarms (in the audio area: what they need is sound)
+    al = f.get("alarms") or {}
+
+    def alarm(id_: str, title: str, status: str, detail: str, hint: str | None = None, actions: list[str] | None = None) -> None:
+        c.append(Check(f"audio.alarm.{id_}", "audio", title, status, detail, hint, actions or [], group="Alarms"))  # type: ignore[arg-type]
+
+    tier_name = {"source": "its own source", "chime": "the chime", "buzzer": "the backup tone"}
+    if al.get("engine_alive") is False:
+        alarm("engine", "Alarm engine", "fail", "The alarm engine has stopped ticking.", "systemd restarts dawn-core within about a minute; see System → Logs.")
+    r = al.get("ringing")
+    if r and r["tier"] != "source":
+        alarm("ringing", "Ringing now", "warn" if r["tier"] == "chime" else "fail", f"{r['label']} is ringing on {tier_name[r['tier']]}: {r.get('fallback_reason') or 'its source gave no audio'}.")
+    p = al.get("prepare")
+    if p:
+        when = p["at"][11:16]
+        if p["ready"]:
+            alarm("next", "Next alarm", "ok", f"{p['label']} at {when} is ready to ring ({p['source']}).")
+        elif p.get("pending"):
+            alarm("next", "Next alarm", "info", f"{p['label']} at {when} is getting ready: " + "; ".join(p["problems"]) + ".")
+        else:
+            alarm("next", "Next alarm", "warn" if p["start_tier"] == "source" else "fail",
+                  f"{p['label']} at {when}: " + "; ".join(p["problems"]) + f". It will start on {tier_name[p['start_tier']]}.",
+                  "For a DAB alarm see DAB radio; otherwise check the output and play a test tone.", ["audio.test_tone"])
+    if al.get("backup_tone_24h"):
+        n = len(al["backup_tone_24h"])
+        alarm("backup", "Alarm sound", "fail", f"{n} alarm{'s' if n > 1 else ''} in the last 24 hours fell back to the backup tone: neither the alarm's source nor the chime could be heard."
+              + (f" Backup tone: {al['backup_tone_problem']}." if al["backup_tone_problem"] else ""),
+              "Check the output and Audio flowing above, and play a test tone. A buzzer on a GPIO pin (alarm_defaults.buzzer.gpio_pin) sounds even when the speaker cannot.",
+              ["audio.test_tone"])
+    if al.get("missed_24h"):
+        n = len(al["missed_24h"])
+        alarm("missed", "Missed alarms", "warn", f"{n} alarm{'s were' if n > 1 else ' was'} missed in the last 24 hours: dawn-core was not running, or the clock was wrong, until after its grace time.",
+              "See System → Logs around that time, and Time sync for the clock.")
+    if al.get("restored_24h"):
+        alarm("restored", "Rings carried over a restart", "warn", f"dawn-core restarted during a ring {len(al['restored_24h'])} time(s) in the last 24 hours; the ring carried on.",
+              "See System → Logs for why it restarted.")
     # ---- airplay
     ap = f["airplay"]
     if not ap["enabled"]:
@@ -175,6 +223,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
     s = f["system"]
     if s["config_error"]:
         add("system", "config", "Configuration", "fail", f"config.yaml was rejected: {s['config_error']}", "Fix the value under Settings → All options; the last good config is in use.")
+    if s.get("db_write_errors"):
+        add("system", "db_writes", "Saving to storage", "fail", f"{s['db_write_errors']} write(s) to the database failed since start; last: {s['db_last_write_error']}.",
+            "The storage may have gone read-only (a failing SD card) or be full; see Data storage. Alarms keep working from memory, but changes made now are lost at the next restart.")
     for name, err in s["failed_services"].items():
         add("system", f"svc.{name}", f"Service {name}", "fail", f"Failed to start: {err}", "See System → Logs.")
     th = s["throttled"]

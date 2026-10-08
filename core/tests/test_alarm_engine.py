@@ -103,6 +103,7 @@ async def test_snooze_and_stop_restore_volume(svc) -> None:
     await audio.set_volume(33, overlay=False)
     a.create(AlarmIn(label="V", time="07:00", repeat="daily", source="chime:birds", volume=80, ramp_seconds=0, snooze_minutes=1), now=BEFORE)
     await a.tick(now=datetime(2026, 10, 2, 7, 0, 1, tzinfo=SYD))
+    await a.ring.settled()  # the sound starts in the background
     assert audio.volume == 80
     assert await a.snooze()
     assert ctx.store.state.alarms.ringing.snoozed_until is not None

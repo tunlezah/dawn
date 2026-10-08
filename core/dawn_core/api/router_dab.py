@@ -8,7 +8,7 @@ from sqlmodel import select
 
 from ..audio.service import AudioService
 from ..context import DawnContext
-from ..dab.service import DabService
+from ..dab.service import DabService, TunerBusy
 from ..dab.welle import norm_sid
 from ..db.models import PresetRow
 from .deps import get_ctx
@@ -74,7 +74,9 @@ async def play(body: PlayBody, ctx: DawnContext = Depends(get_ctx)) -> dict[str,
 @router.post("/dab/channel")
 async def tune(body: ChannelBody, d: DabService = Depends(dab)) -> dict[str, Any]:
     try:
-        await d.tune(body.channel)
+        await d.user_tune(body.channel)
+    except TunerBusy as e:
+        raise HTTPException(409, str(e)) from e
     except RuntimeError as e:
         raise HTTPException(503, str(e)) from e
     return {"channel": d.channel}
@@ -82,7 +84,10 @@ async def tune(body: ChannelBody, d: DabService = Depends(dab)) -> dict[str, Any
 
 @router.post("/dab/restart")
 async def restart(d: DabService = Depends(dab)) -> dict[str, Any]:
-    return {"restarted": await d.restart_welle(reason="manual")}
+    try:
+        return {"restarted": await d.restart_welle(reason="manual")}
+    except TunerBusy as e:
+        raise HTTPException(409, str(e)) from e
 
 
 @router.get("/dab/logo/{sid}")
