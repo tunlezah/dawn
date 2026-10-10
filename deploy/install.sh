@@ -94,7 +94,7 @@ PKGS=(
   python3 python3-venv python3-dev python3-pip python3-systemd python3-libgpiod
   libusb-1.0-0-dev libfaad-dev libmpg123-dev libmp3lame-dev libfftw3-dev libasound2-dev
   libpopt-dev libconfig-dev libavahi-client-dev libssl-dev libsoxr-dev libplist-dev libsodium-dev
-  libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev
+  libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev libglib2.0-dev libplist-utils libswresample-dev systemd-dev
   mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth alsa-utils
   bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
@@ -209,8 +209,8 @@ build_shairport() {
   [ -d shairport-sync ] || git clone --depth 1 "$SPS_REPO" shairport-sync
   cd shairport-sync && git pull --ff-only || true
   autoreconf -fi >/dev/null
-  ./configure --sysconfdir=/etc --with-alsa --with-pw --with-avahi --with-ssl=openssl --with-soxr --with-metadata --with-dbus-interface --with-airplay-2 --with-systemd >/dev/null
-  make -j"$(nproc)" >/dev/null && make install >/dev/null
+  ./configure --sysconfdir=/etc --with-alsa --with-pipewire --with-avahi --with-ssl=openssl --with-soxr --with-metadata --with-dbus-interface --with-airplay-2 --with-systemd-startup >/dev/null || return 1
+  make -j"$(nproc)" >/dev/null && make install >/dev/null || return 1
   echo "shairport-sync installed: $(shairport-sync -V | head -1)"
 }
 if [ "$NO_BUILD" -eq 0 ]; then
@@ -287,6 +287,7 @@ install -D -m 0644 "$D/wireplumber/52-dawn-alsa.conf" /etc/wireplumber/wireplumb
 [ "$AUDIO" = hifiberry ] && sed -i -E 's/^(\s*pinned_sink:\s*)null\s*$/\1hifiberry/' /etc/dawn/config.yaml || true
 [ -f /etc/shairport-sync.conf ] && [ ! -f /etc/shairport-sync.conf.dawn-orig ] && cp /etc/shairport-sync.conf /etc/shairport-sync.conf.dawn-orig || true
 install -m 0644 "$D/shairport-sync/shairport-sync.conf" /etc/shairport-sync.conf
+install -D -m 0644 "$D/dbus/dawn-shairport-sync.conf" /etc/dbus-1/system.d/dawn-shairport-sync.conf
 install -m 0644 "$D/logrotate/dawn" /etc/logrotate.d/dawn
 install -D -m 0644 "$D/polkit/50-dawn.rules" /etc/polkit-1/rules.d/50-dawn.rules
 install -D -m 0644 "$D/avahi/dawn.service" /etc/avahi/services/dawn.service
@@ -302,6 +303,9 @@ udevadm control --reload-rules && udevadm trigger || true
 # chrony SHM units: gpsd creates 0 and 1; make sure unit 2 (dawn-timed) can be created unprivileged
 echo 'kernel.shmmax = 268435456' >/etc/sysctl.d/90-dawn.conf; sysctl -q --system || true
 
+# dtparam=i2c_arm=on only enables the bus; the light sensor is read through /dev/i2c-1, which needs i2c-dev
+echo i2c-dev >/etc/modules-load.d/dawn-i2c.conf; modprobe i2c-dev || true
+
 # ---------------------------------------------------------------------------
 # systemd units (uid substituted)
 # ---------------------------------------------------------------------------
@@ -315,9 +319,13 @@ systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.serv
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true
 systemctl enable NetworkManager avahi-daemon bluetooth chrony gpsd >/dev/null 2>&1 || true
+# Raspberry Pi OS ships with Bluetooth rfkill soft-blocked; systemd-rfkill keeps the unblock across reboots
+rfkill unblock bluetooth 2>/dev/null || true
 command -v nqptp >/dev/null 2>&1 && systemctl enable nqptp >/dev/null 2>&1 || true
 command -v shairport-sync >/dev/null 2>&1 && systemctl enable shairport-sync >/dev/null 2>&1 || true
-systemctl enable dawn-core dawn-dab dawn-timed dawn-face >/dev/null
+systemctl enable dawn-core dawn-dab dawn-timed >/dev/null
+# reenable: moves an older install's graphical.target symlink to multi-user.target
+systemctl reenable dawn-face >/dev/null 2>&1
 systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
 systemctl restart dawn-core dawn-dab dawn-timed || true
 systemctl restart dawn-face >/dev/null 2>&1 || true
@@ -338,7 +346,7 @@ if [ "$READONLY" -eq 1 ]; then
 fi
 
 echo
-echo "=== Dawn installed. Face: http://$(hostname).local/face  Control UI: http://$(hostname).local/ ==="
+echo "=== Dawn installed. Face: http://$(hostname).local:8080/face  Control UI: http://$(hostname).local:8080/ ==="
 echo "Logs: journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f"
 [ "$UPDATE" -eq 0 ] && [ "$IS_PI" -eq 1 ] && echo "A reboot is recommended after the first install (overlays, groups, watchdog)."
 exit 0

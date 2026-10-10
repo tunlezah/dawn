@@ -112,10 +112,14 @@ class AirPlayService(Service):
                 self.publish()
                 await asyncio.sleep(10)
                 continue
-            try:
-                fd = await loop.run_in_executor(None, lambda: os.open(path, os.O_RDONLY))
+            # shairport-sync creates the FIFO at start-up but only opens it for writing once a
+            # sender connects, so the blocking open below waits until then: the pipe being
+            # there is what says AirPlay is ready
+            if not self._available:
                 self._available = True
                 self.publish()
+            try:
+                fd = await loop.run_in_executor(None, lambda: os.open(path, os.O_RDONLY))
                 log.info("reading AirPlay metadata from %s", path)
                 while True:
                     chunk = await loop.run_in_executor(None, os.read, fd, 65536)
