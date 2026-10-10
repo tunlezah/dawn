@@ -109,10 +109,10 @@ export function Alarms() {
               <input type="text" value={editing.label} onChange={(e) => set('label', e.target.value)} placeholder="Label" />
             </div>
             <div className="flex flex-wrap gap-2">
-              {['once', 'weekdays', 'weekends', 'daily', 'custom'].map((r) => <button key={r} className={`chip ${editing.repeat === r ? 'text-accent border-accent' : ''}`} onClick={() => set('repeat', r)}>{r}</button>)}
+              {['once', 'weekdays', 'weekends', 'daily', 'custom'].map((r) => <button key={r} className={`chip ${editing.repeat === r ? 'chip-on' : ''}`} aria-pressed={editing.repeat === r} onClick={() => set('repeat', r)}>{r}</button>)}
             </div>
             {editing.repeat === 'custom' && (
-              <div className="flex gap-1">{DAYS.map((d, i) => <button key={d} className={`chip ${editing.days.includes(i) ? 'text-accent border-accent' : ''}`} onClick={() => set('days', editing.days.includes(i) ? editing.days.filter((x) => x !== i) : [...editing.days, i].sort())}>{d}</button>)}</div>
+              <div className="flex gap-1">{DAYS.map((d, i) => <button key={d} className={`chip ${editing.days.includes(i) ? 'chip-on' : ''}`} aria-pressed={editing.days.includes(i)} onClick={() => set('days', editing.days.includes(i) ? editing.days.filter((x) => x !== i) : [...editing.days, i].sort())}>{d}</button>)}</div>
             )}
             <Row label="Source">
               <select value={editing.source.startsWith('url:') || editing.source.startsWith('playlist:') ? '__custom' : editing.source} onChange={(e) => set('source', e.target.value === '__custom' ? 'url:' : e.target.value)} className="w-56">

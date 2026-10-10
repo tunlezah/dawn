@@ -5,6 +5,17 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-10
+
+### Fixed
+- Control UI: selected buttons now look selected. The alarm editor's repeat and day chips highlight (tinted
+  fill and accent outline) as you tap them, and the Light wake row keeps its minutes box small instead of
+  stretching across the row and squashing the toggle. The theme's own styles (`.chip`, `.btn`, `.card`,
+  `.switch`, form inputs) now sit in Tailwind's `base` / `components` layers; unlayered, they had beaten
+  every utility class put on the same element, so per-use colours and widths were silently ignored. The
+  same fix brings back the coloured status chips (time sync, night/sleep), the ringing card's accent
+  border, the red Delete button and the set widths of inputs and selects.
+
 ## [0.2.0] - 2026-10-10
 
 From this release every PR raises the version (`python scripts/version.py bump X.Y.Z`) and adds a section
