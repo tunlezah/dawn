@@ -21,6 +21,7 @@ from dawn_core.audio.service import AudioService
 from dawn_core.audio.sources import AudioSource
 from dawn_core.config import ConfigManager
 from dawn_core.dab.service import DabService, TunerBusy
+from dawn_core.dab.welle import parse_mux
 from dawn_core.db.models import AlarmRow, DabServiceRow
 
 SYD = ZoneInfo("Australia/Sydney")
@@ -601,6 +602,68 @@ async def test_a_scan_running_into_a_dab_alarm_is_stopped(radio) -> None:
     status, msg = await dab.prepare_for("2002", may_retune=True)
     assert status == "tuning" and "scan" in msg and dab._scan_stop.is_set()
     dab._scan_task.cancel()
+
+
+async def test_a_station_on_a_slow_ensemble_tunes_in_the_background(radio) -> None:
+    a, ctx, dab, fw = radio
+    audio: AudioService = ctx.svc(AudioService)
+    fw.synced["9C"] = False  # 9C takes a while to lock after the retune
+    slot = await audio.play("dab:2002")  # returns at once: the arbiter is not held while welle syncs
+    src = slot.source
+    await _until(lambda: fw.tunes == ["9C"])
+    assert src.tuning and not audio.players["dawn-dab"].loaded_url
+    assert src.status(slot.priority, slot.state).state == "starting" and src.now_playing().dls == "Tuning to 9C…"
+    await audio.play("dab:2002")  # pressed again while it syncs: no second retune (that restarts welle's search)
+    await asyncio.sleep(1.0)
+    assert fw.tunes == ["9C"]
+    fw.synced["9C"] = True
+    await _until(lambda: audio.players["dawn-dab"].loaded_url is not None)
+    src = audio.arbiter.slot("user").source
+    assert not src.tuning and src.error is None and src.status(60, "playing").state == "playing"
+    await audio.stop_level("user")
+
+
+async def test_a_station_with_no_signal_fails_after_the_sync_timeout(radio, monkeypatch) -> None:
+    a, ctx, dab, fw = radio
+    audio: AudioService = ctx.svc(AudioService)
+    monkeypatch.setattr(ctx.config.dab, "sync_timeout_s", 3.0)
+    fw.synced["9C"] = False
+    slot = await audio.play("dab:2002")
+    await _until(lambda: not slot.source.tuning)
+    assert slot.source.error == "No DAB signal on 9C after 3 s"
+    assert slot.source.status(slot.priority, slot.state).state == "error" and slot.source.now_playing().dls == slot.source.error
+    assert not audio.players["dawn-dab"].loaded_url
+    await audio.stop_level("user")
+
+
+async def test_picking_another_station_while_tuning_tunes_that_one(radio) -> None:
+    a, ctx, dab, fw = radio
+    audio: AudioService = ctx.svc(AudioService)
+    fw.synced["9C"] = False
+    first = (await audio.play("dab:2002")).source
+    await _until(lambda: fw.tunes == ["9C"])
+    await audio.play("dab:1001")  # back to 9A before 9C locked
+    assert not first.tuning
+    await _until(lambda: audio.players["dawn-dab"].loaded_url is not None)
+    assert fw.tunes == ["9C", "9A"] and audio.players["dawn-dab"].loaded_url.endswith("/mp3/0x1001")
+    await audio.stop_level("user")
+
+
+async def test_an_unknown_station_fails_at_once(radio) -> None:
+    a, ctx, dab, fw = radio
+    slot = await ctx.svc(AudioService).play("dab:7777")
+    assert slot.state == "error" and "unknown" in (slot.source.error or "") and fw.tunes == []
+
+
+async def test_a_stopped_scan_keeps_the_stations_it_did_not_reach(radio) -> None:
+    a, ctx, dab, fw = radio
+    fw.stations["9C"] = [("2002", "Station B"), ("2003", "Station C")]
+    found = {"9C": parse_mux({"ensemble": {"label": "Ensemble 9C"}, "demodulator": {"snr": 12.0},
+                               "services": [{"sid": "0x2002", "label": "Station B"}, {"sid": "0x2003", "label": "Station C"}]})}
+    dab._store_scan(found, replace_all=False)
+    assert sorted((s.sid, s.channel) for s in dab.services()) == [("1001", "9A"), ("2002", "9C"), ("2003", "9C")]
+    dab._store_scan(found)  # a complete scan replaces the list
+    assert sorted(s.sid for s in dab.services()) == ["2002", "2003"]
 
 
 async def test_preempted_radio_retunes_when_the_alarm_ends(radio) -> None:

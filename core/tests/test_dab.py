@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dawn_core.dab.logos import monogram_letters, monogram_svg, service_colour
 from dawn_core.dab.scanner import scan, scan_order
-from dawn_core.dab.welle import R82XX_GAINS_DB, MuxInfo, ServiceInfo, floats, gain_index, norm_sid, parse_mux, welle_args, welle_sid
+from dawn_core.dab.welle import CHANNEL_MHZ, R82XX_GAINS_DB, MuxInfo, ServiceInfo, floats, gain_index, norm_sid, parse_mux, welle_args, welle_sid
 
 
 def test_norm_sid_variants() -> None:
@@ -182,3 +182,11 @@ async def test_scan_waits_longer_on_a_channel_with_signal() -> None:
 async def test_scan_gives_up_at_dwell_without_signal_wait() -> None:
     found = await scan(_SlowLockClient(polls_to_lock=4), ["9C"], dwell_s=0.6)  # type: ignore[arg-type]
     assert found == {}
+
+
+def test_channel_table_matches_etsi() -> None:
+    # EN 300 401 table 1 (and welle-cli's channels.cpp): 1.712 MHz steps within a block, wider gaps between blocks
+    assert CHANNEL_MHZ["5A"] == 174.928 and CHANNEL_MHZ["8D"] == 201.072 and CHANNEL_MHZ["9C"] == 206.352 and CHANNEL_MHZ["13F"] == 239.2
+    for block in range(5, 13):
+        a, b, c, d = (CHANNEL_MHZ[f"{block}{x}"] for x in "ABCD")
+        assert round(b - a, 3) == round(c - b, 3) == round(d - c, 3) == 1.712
