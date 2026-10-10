@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from dawn_core.dab.logos import monogram_letters, monogram_svg, service_colour
-from dawn_core.dab.scanner import scan_order
-from dawn_core.dab.welle import R82XX_GAINS_DB, floats, gain_index, norm_sid, parse_mux, welle_args, welle_sid
+from dawn_core.dab.scanner import scan, scan_order
+from dawn_core.dab.welle import R82XX_GAINS_DB, MuxInfo, ServiceInfo, floats, gain_index, norm_sid, parse_mux, welle_args, welle_sid
 
 
 def test_norm_sid_variants() -> None:
@@ -150,3 +150,35 @@ def test_monogram() -> None:
     assert svg.startswith("<svg") and ">TJ<" in svg
     assert service_colour("1002") == service_colour("1002") and service_colour("1002") != service_colour("1003")
     assert monogram_letters("2GB & Co") == "2&"
+
+
+class _SlowLockClient:
+    """9C has a weak ensemble that shows SNR at once but only decodes after a few polls; 9A is empty."""
+
+    def __init__(self, polls_to_lock: int) -> None:
+        self.ch = ""
+        self.polls = 0
+        self.polls_to_lock = polls_to_lock
+
+    async def set_channel(self, ch: str) -> bool:
+        self.ch, self.polls = ch, 0
+        return True
+
+    async def mux(self) -> MuxInfo:
+        self.polls += 1
+        if self.ch != "9C":
+            return MuxInfo(snr=0.0)
+        if self.polls < self.polls_to_lock:
+            return MuxInfo(snr=8.0)
+        return MuxInfo(ensemble_label="CA ABC&SBS RADIO", snr=11.0, sync=True, services=[ServiceInfo(sid="1001", label="ABC")])
+
+
+async def test_scan_waits_longer_on_a_channel_with_signal() -> None:
+    found = await scan(_SlowLockClient(polls_to_lock=4), ["9A", "9C"], dwell_s=0.6, signal_wait_s=4.0)  # type: ignore[arg-type]
+    assert list(found) == ["9C"]
+    assert found["9C"].ensemble_label == "CA ABC&SBS RADIO"
+
+
+async def test_scan_gives_up_at_dwell_without_signal_wait() -> None:
+    found = await scan(_SlowLockClient(polls_to_lock=4), ["9C"], dwell_s=0.6)  # type: ignore[arg-type]
+    assert found == {}

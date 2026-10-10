@@ -318,6 +318,9 @@ class DabConfig(StrictModel):
         description="All Band III channels considered by a scan.",
     )
     scan_dwell_s: float = Field(6.0, ge=2, le=30, description="Seconds to wait for sync on each channel.")
+    scan_signal_wait_s: float = Field(
+        40.0, ge=0, le=120, description="Seconds to keep waiting on a channel that shows a DAB signal but has not decoded yet (weak ensembles can take 20 s or more to lock)."
+    )
     sync_timeout_s: float = Field(12.0, ge=3, le=60, description="Seconds to wait for audio after tuning.")
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
     gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")

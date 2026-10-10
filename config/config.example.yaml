@@ -303,6 +303,8 @@ dab:
   - 13F
   # Seconds to wait for sync on each channel.
   scan_dwell_s: 6.0
+  # Seconds to keep waiting on a channel that shows a DAB signal but has not decoded yet (weak ensembles can take 20 s or more to lock).
+  scan_signal_wait_s: 40.0
   # Seconds to wait for audio after tuning.
   sync_timeout_s: 12.0
   # No audio flowing for this long = failure.

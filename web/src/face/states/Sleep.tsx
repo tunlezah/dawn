@@ -37,7 +37,7 @@ export function Sleep() {
   return (
     <div className="f-sleep" data-testid="sleep" style={{ ['--lvl' as string]: `${s.display.sleep_level}%` }}>
       <div className={`f-sleep-clock ${visible ? '' : 'out'}`} style={{ left: `${p.x}%`, top: `${p.y}%` }}>
-        <div className="t tnum">{t.hm}{t.ampm && <span className="ampm">{t.ampm}</span>}</div>
+        <div className="t tnum">{t.hm}{t.ampm && <span className="f-ampm">{t.ampm}</span>}</div>
         {(alarm || w.available) && (
           <div className="a tnum">
             {alarm && <><IconAlarm /><span>{alarm}</span></>}

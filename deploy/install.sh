@@ -3,8 +3,12 @@
 #
 #   sudo ./deploy/install.sh                 full install (builds rtl-sdr-blog, welle.io, shairport-sync + nqptp)
 #   sudo ./deploy/install.sh --update        after `git pull`: reinstall python/web/configs, skip finished builds
-#   sudo ./deploy/install.sh --audio hifiberry   I2S amp (Pimoroni Audio Amp SHIM / HiFiBerry): hifiberry-dac overlay,
-#                                                onboard audio off, mono EQ chain, output pinned (default: auto)
+#   sudo ./deploy/install.sh --audio shim|usb|headphones|hdmi|auto   speaker output (default: shim):
+#       shim (or hifiberry)  Pimoroni Audio Amp SHIM / HiFiBerry I2S amp: hifiberry-dac overlay, onboard audio off,
+#                            mono EQ chain, output pinned to the amp
+#       usb | headphones (or jack) | hdmi   onboard audio on, stereo EQ chain, output pinned to that kind
+#       auto                 onboard audio on, no pin: audio.sink_priority picks at boot
+#     The choice is remembered (/etc/dawn/audio-output), so a later run without --audio keeps it.
 #   sudo ./deploy/install.sh --display hyperpixel4|waveshare_dsi|hdmi   force the panel overlay (default: auto)
 #   sudo ./deploy/install.sh --data-device /dev/mmcblk0p3   mount /var/lib/dawn from an ext4 partition (data=journal)
 #   sudo ./deploy/install.sh --data-image-mb 1024          ...or from a loop-mounted ext4 image (data=journal)
@@ -21,7 +25,7 @@ DAWN_USER=dawn
 LOG=/var/log/dawn-install.log
 SRC_DIR=/usr/local/src
 UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0
-DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO=auto PANEL=auto
+DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO="" PANEL=auto
 RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
 SPS_REPO=https://github.com/mikebrady/shairport-sync.git
@@ -38,7 +42,7 @@ while [ $# -gt 0 ]; do
     --display) PANEL="$2"; shift;;
     --data-device) DATA_DEVICE="$2"; shift;;
     --data-image-mb) DATA_IMAGE_MB="$2"; shift;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0;;
     *) echo "unknown option $1"; exit 2;;
   esac
   shift
@@ -72,12 +76,18 @@ detect_panel() {
   case "$MODEL" in *"Zero 2"*) echo hdmi;; *) echo waveshare_dsi;; esac   # Zero 2 W has no DSI connector
 }
 PANEL_DETECTED="$(detect_panel)"
-# --update runs without --audio: keep an I2S amp set up by an earlier install (or already loaded)
+# Speaker output: --audio, else what an earlier install chose, else the Audio Amp SHIM (reference build).
+AUDIO_FILE=/etc/dawn/audio-output
 detect_audio() {
-  [ "$AUDIO" != auto ] && { echo "$AUDIO"; return; }
-  awk '/^# >>> dawn >>>/{d=1} /^# <<< dawn <<</{d=0} d && /^dtoverlay=hifiberry-dac/{f=1} END{exit !f}' "$BOOTCFG" 2>/dev/null && { echo hifiberry; return; }
-  grep -qsi 'hifiberry' /proc/asound/cards && { echo hifiberry; return; }
-  echo auto
+  local a="$AUDIO"
+  [ -n "$a" ] || a="$(cat "$AUDIO_FILE" 2>/dev/null || true)"
+  [ -n "$a" ] || a=hifiberry
+  case "$a" in
+    shim|amp-shim|hifiberry) echo hifiberry;;
+    jack|headphones) echo headphones;;
+    usb|hdmi|auto) echo "$a";;
+    *) echo "unknown --audio $a (shim, usb, headphones, hdmi or auto)" >&2; exit 2;;
+  esac
 }
 AUDIO="$(detect_audio)"
 echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTED audio=$AUDIO"
@@ -282,9 +292,12 @@ if [ "$AUDIO" = hifiberry ]; then EQ_CONF=dawn-eq-mono.conf; else EQ_CONF=dawn-e
 install -D -m 0644 "$D/pipewire/$EQ_CONF" /etc/pipewire/pipewire.conf.d/dawn-eq.conf
 install -D -m 0644 "$D/wireplumber/51-dawn-bluetooth.conf" /etc/wireplumber/wireplumber.conf.d/51-dawn-bluetooth.conf
 install -D -m 0644 "$D/wireplumber/52-dawn-alsa.conf" /etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf
-# The I2S amp is the only speaker: pin it so a USB audio device plugged in later (usb ranks first
-# in audio.sink_priority) cannot take over. Only replaces an unset pin; a user's choice stays.
-[ "$AUDIO" = hifiberry ] && sed -i -E 's/^(\s*pinned_sink:\s*)null\s*$/\1hifiberry/' /etc/dawn/config.yaml || true
+# Pin the chosen output so a USB audio device plugged in later (usb ranks first in audio.sink_priority)
+# cannot take over the speaker; auto unpins. Only an unset pin or a sink kind is replaced: a specific
+# PipeWire node picked in the web UI stays.
+[ "$AUDIO" = auto ] && PIN=null || PIN="$AUDIO"
+sed -i -E 's/^(\s*pinned_sink:\s*)(null|usb|hifiberry|headphones|hdmi)?\s*$/\1'"$PIN"'/' /etc/dawn/config.yaml || true
+echo "$AUDIO" >"$AUDIO_FILE"
 [ -f /etc/shairport-sync.conf ] && [ ! -f /etc/shairport-sync.conf.dawn-orig ] && cp /etc/shairport-sync.conf /etc/shairport-sync.conf.dawn-orig || true
 install -m 0644 "$D/shairport-sync/shairport-sync.conf" /etc/shairport-sync.conf
 install -D -m 0644 "$D/dbus/dawn-shairport-sync.conf" /etc/dbus-1/system.d/dawn-shairport-sync.conf

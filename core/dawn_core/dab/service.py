@@ -452,7 +452,7 @@ class DabService(Service):
             return False
         cfg = self.ctx.config.dab
         # a scan holds the tuner for minutes: not into an alarm on the radio, nor its preparation
-        hold = self._alarm_conflict(len(scan_order(cfg.scan_channels, cfg.scan_priority)) * cfg.scan_dwell_s + 30)
+        hold = self._alarm_conflict(len(scan_order(cfg.scan_channels, cfg.scan_priority)) * cfg.scan_dwell_s + 3 * cfg.scan_signal_wait_s + 30)
         if hold:
             raise TunerBusy(f"{hold}; scanning waits until it has rung")
         audio = self.ctx.svc(AudioService)
@@ -483,7 +483,7 @@ class DabService(Service):
             self.ctx.store.touch()
 
         try:
-            found = await scan(self.client, channels, cfg.scan_dwell_s, progress, self._scan_stop)
+            found = await scan(self.client, channels, cfg.scan_dwell_s, progress, self._scan_stop, cfg.scan_signal_wait_s)
             if found:
                 self._store_scan(found)
             st.last_scan_at = scanned_at()

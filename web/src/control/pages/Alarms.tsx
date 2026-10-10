@@ -1,6 +1,6 @@
 import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
-import { Card, Empty, Row, Sheet, Switch } from '../../shared/components';
+import { Card, ClockInput, Empty, Row, Sheet, Switch } from '../../shared/components';
 import { api, actions } from '../../shared/api';
 import { fmtDayTime } from '../../shared/time';
 import { ringNote } from '../../shared/alarms';
@@ -105,7 +105,7 @@ export function Alarms() {
         {editing && (
           <div className="space-y-3">
             <div className="flex gap-3">
-              <input type="time" value={editing.time} onChange={(e) => set('time', e.target.value)} className="text-2xl tnum w-40" />
+              <ClockInput label="Alarm time" value={editing.time} onChange={(v) => set('time', v)} h24={s.settings.clock_24h} className="text-xl shrink-0" />
               <input type="text" value={editing.label} onChange={(e) => set('label', e.target.value)} placeholder="Label" />
             </div>
             <div className="flex flex-wrap gap-2">

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
-import { Card, Row, Slider, Switch } from '../../shared/components';
+import { Card, ClockInput, Row, Slider, Switch } from '../../shared/components';
 import { actions, api, ApiError } from '../../shared/api';
 import { fmtDayTime, fmtShort } from '../../shared/time';
 
@@ -47,16 +47,9 @@ function OptionalNumField({ value, min, max, onCommit, label, placeholder }: { v
     onChange={(e) => setV(e.target.value)} onBlur={(e) => commit(e.currentTarget)} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
 }
 
-/** HH:MM committed when the field is left: typing "1", "1" must not save 13:30 on the way to 11:30. */
 function TimeField({ value, onCommit, label, disabled }: { value: string; onCommit: (v: string) => void; label: string; disabled?: boolean }) {
-  const [v, setV] = useReactState(value);
-  useEffect(() => setV(value), [value]);
-  const commit = () => {
-    if (!/^\d{2}:\d{2}$/.test(v)) return setV(value);
-    if (v !== value) onCommit(v);
-  };
-  return <input type="time" aria-label={label} value={v} disabled={disabled} className="!w-36"
-    onChange={(e) => setV(e.target.value)} onBlur={commit} onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }} />;
+  const s = useState();
+  return <ClockInput label={label} value={value} onChange={(v) => v !== value && onCommit(v)} h24={s.settings.clock_24h} disabled={disabled} />;
 }
 
 function CommitSlider({ value, min, max, onCommit, label }: { value: number; min: number; max: number; onCommit: (v: number) => void; label: string }) {

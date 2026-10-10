@@ -52,7 +52,7 @@ export function Ringing({ local }: { local?: LocalRingProps }) {
   return (
     <div className={`f-ring face-screen fade-in ${local ? 'local' : ''}`} onPointerDown={onDown} onPointerUp={onUp} onPointerCancel={onUp}>
       <div className="f-glow" />
-      <div className={`face-time f-ambient-clock ${snoozed ? '' : 'pulse'}`}>{t.hm}{t.ampm && <span className="f-sub ml-[2vmin]" style={{ fontSize: '8vmin', color: 'inherit', opacity: 0.7 }}>{t.ampm}</span>}</div>
+      <div className={`face-time f-ambient-clock ${snoozed ? '' : 'pulse'}`}>{t.hm}{t.ampm && <span className="f-ampm" style={{ color: 'inherit', opacity: 0.7 }}>{t.ampm}</span>}</div>
       <div className="f-label">{local ? local.label : r?.label || 'Alarm'}{note && <span className="f-meta ml-[2.4vmin]">{note}</span>}</div>
       <div className="f-hint">{hint}</div>
       <div className={`f-holdbar ${holding ? 'holding' : ''}`}><div /></div>

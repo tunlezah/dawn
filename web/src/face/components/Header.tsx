@@ -12,7 +12,7 @@ export function FaceHeader({ left }: { left?: ReactNode }) {
   return (
     <div className="f-header">
       <div className="f-status">{left}</div>
-      <div className="face-time f-clock tnum">{t.hm}{t.ampm && <span className="f-meta ml-[1.2vmin]">{t.ampm}</span>}</div>
+      <div className="face-time f-clock tnum">{t.hm}{t.ampm && <span className="f-ampm">{t.ampm}</span>}</div>
     </div>
   );
 }

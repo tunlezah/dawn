@@ -11,6 +11,9 @@ from .welle import MuxInfo, WelleClient
 
 log = logging.getLogger("dawn.dab.scan")
 
+# welle-cli reports 0-2 dB on an empty channel; a real ensemble shows 5 dB or more well before it syncs
+SIGNAL_SNR_DB = 5.0
+
 Progress = Callable[[int, int, str, int, int], Awaitable[None] | None]
 
 
@@ -29,8 +32,12 @@ async def scan(
     dwell_s: float,
     on_progress: Progress | None = None,
     stop: asyncio.Event | None = None,
+    signal_wait_s: float = 0.0,
 ) -> dict[str, MuxInfo]:
-    """Returns {channel: MuxInfo} for channels where an ensemble was found."""
+    """Returns {channel: MuxInfo} for channels where an ensemble was found.
+
+    A channel gets `dwell_s` to sync; one that shows a DAB signal (SNR) but has not decoded yet gets up to
+    `signal_wait_s` in all, since a weak ensemble can take 20 s or more for welle-cli to lock on."""
     found: dict[str, MuxInfo] = {}
     n_services = 0
     for i, ch in enumerate(channels):
@@ -46,13 +53,16 @@ async def scan(
             await asyncio.sleep(1)
             continue
         best: MuxInfo | None = None
-        deadline = asyncio.get_running_loop().time() + dwell_s
+        start = asyncio.get_running_loop().time()
+        deadline = start + dwell_s
         stable = 0
         while asyncio.get_running_loop().time() < deadline:
             await asyncio.sleep(0.5)
             if stop and stop.is_set():
                 break
             m = await client.mux()
+            if m and not best and (m.snr or 0.0) >= SIGNAL_SNR_DB:
+                deadline = max(deadline, start + signal_wait_s)
             if m and m.sync and m.services:
                 if best and len(m.services) == len(best.services):
                     stable += 1

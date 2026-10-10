@@ -76,6 +76,42 @@ exist. Installer now writes `/etc/modules-load.d/dawn-i2c.conf` (`i2c-dev`) and 
 Final line printed `http://dawn.local/face` / `http://dawn.local/`; core listens on 8080 only.
 Now prints `:8080`.
 
+## 11. Mouse cursor shown on the face (Pi screen only)
+
+- **Symptom:** a cursor sits on the 4.3" panel; the same page in a browser has none.
+- **Cause:** the Pi's HDMI-CEC remote inputs (`vc4-hdmi-0`, `vc4-hdmi-1`) advertise `REL_X/REL_Y` and udev tags
+  them `ID_INPUT_POINTINGSTICK`, so cage sees two mice and draws its own cursor. The page's `cursor: none`
+  can't hide the compositor's cursor.
+- **Fix:** `deploy/udev/99-dawn.rules` sets `LIBINPUT_IGNORE_DEVICE=1` on them (Dawn doesn't use CEC keys).
+
+## 12. DAB+ scan finds nothing
+
+- **Symptom:** `dab_scan {'ensembles': 0, 'services': 0}`, though a radio nearby receives DAB+.
+- **Cause:** each channel got `scan_dwell_s` (6 s) to sync and list services. With a modest antenna
+  (SNR 8–11 dB) welle-cli took ~22 s to lock on 9C (Canberra, "CA ABC&SBS RADIO", 20 services).
+- **Fix:** `scanner.scan` keeps waiting up to `dab.scan_signal_wait_s` (new, default 40 s) on a channel whose
+  SNR shows a DAB signal (≥ 5 dB; empty channels read 0–2 dB). Tests in `test_dab.py`.
+
+## 13. Alarm time picker ignores the 12/24-hour setting
+
+`<input type="time">` follows the browser's locale, not `display.clock_24h`. The alarm editor and the sleep
+times on Display now use `ClockInput` (hour / minute / am-pm selects) from `shared/components.tsx`.
+
+## 14. Audio Amp SHIM is now the installer default
+
+`install.sh` used `--audio auto` (onboard audio, nothing pinned) unless `--audio hifiberry` was given, so a plain
+install of the reference build had no sound from the SHIM. Now `--audio` defaults to `shim` (alias `hifiberry`);
+`usb`, `headphones` (`jack`), `hdmi` and `auto` pick other outputs, pin `audio.pinned_sink` to that kind (`auto`
+unpins; a specific PipeWire node chosen in the web UI is left alone), and the choice is kept in
+`/etc/dawn/audio-output` so `--update` / `dawn-update` keep it.
+
+## 15. AM/PM letters crowded on the face
+
+The clocks use a tight negative `letter-spacing` in `em`; it is inherited as an absolute length sized for the
+big digits, so the small "pm" span had its letters squashed together. New `.f-ampm` / `.f-clock-sec` classes
+(`face.css`) reset the spacing and size the suffix relative to its clock; AM/PM is now upper case, spaced off
+the digits, and also shown on the light-wake screen.
+
 ## Not fixed (notes for upstream)
 
 - **Panel detection can't tell if a DSI panel is attached.** With `vc4-kms-dsi-7inch` loaded,
