@@ -299,6 +299,22 @@ each section. Every entry says what was decided and why, so it can be revisited.
   covers every combination for a few kilobytes, stays soft rather than busy,
   and respects the low-CPU and night-palette modes. Colours are mixed in code
   from four sky palettes and four hill palettes so the look stays coherent.
+- **The scene draws the forecast hour coming up, not the last reading.** Core
+  publishes the next 24 Open-Meteo hours (`weather.hours`: code, cloud, rain,
+  wind, gusts, visibility); the face picks the hour nearest half an hour ahead,
+  so the picture turns over on the hour by itself, between fetches and offline,
+  and falls back to the current conditions when no hour fits. Ten kinds
+  (clear, partly, mostly cloudy, overcast, fog, drizzle, rain, storm, hail,
+  snow) plus wind, frost (<= 1 °C, nothing falling), heat (>= 32 °C) and haze
+  or smoke (visibility under 12 km without fog or rain) cover what Canberra
+  and most of Australia get. South of the equator the hills use Australian
+  seasons: cured grass in summer, green in winter, wattle in spring.
+- **What moves in the scene is a composited layer.** Clouds sit on a strip
+  two screens wide that slides sideways; rain, snow and hail on a tile that
+  falls and is tilted by the wind; a storm flashes by opacity. The SVGs are
+  rasterised once and the GPU moves them, so the Pi does not repaint at 60 Hz,
+  and the clouds never stopping helps against image retention. Low-CPU mode
+  freezes all of it.
 - **Demo parameters live in the URL, not in core.** `?at=`, `?weather=` and
   `?temp=` shift the face's clock and weather purely client-side, so design
   review and screenshots never put fake state into the real store.
@@ -368,7 +384,8 @@ each section. Every entry says what was decided and why, so it can be revisited.
 
 ## Weather and control UI
 
-- **Open-Meteo is fetched every 15 min and cached to `weather.json`**; the face
+- **Open-Meteo is fetched every 15 min and cached to `weather.json`**, two days
+  of hourly forecast included so a long outage still has hours to draw; the face
   shows the cached forecast with a "stale" marker once it is older than 2 h.
   Sunrise/sunset for brightness come from astral, not from the forecast, so the
   display schedule works offline.

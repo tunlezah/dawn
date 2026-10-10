@@ -6,6 +6,14 @@ All notable changes to Dawn are recorded here. The format follows
 ## [Unreleased]
 
 ### Changed
+- The standby scene follows the forecast for the hour coming up instead of the last reading,
+  and changes on the hour by itself. Core asks Open-Meteo for two days of hourly weather, cloud,
+  rain, wind and visibility and publishes the next 24 hours as `weather.hours`. New looks:
+  mostly cloudy, drizzle, heavy rain, thunderstorms with lightning, hail, wind, frost, heat haze
+  and smoke, a moon in its real phase crossing the night sky, and Australian seasons south of
+  the equator. Clouds drift with the wind and rain or snow falls at its slant, on composited layers
+  (cheap on the Pi; frozen in low-CPU mode); the hills shift a few pixels over the day against
+  burn-in. The simulator's forecast changes every hour. Demo URLs take `wind`, `cloud`, `rain` and `vis`.
 - Alarms: new options `alarm_defaults.buzzer_after_s`, `prepare_minutes` and `buzzer.gpio_pin` /
   `gpio_active_high`; the installer adds `alsa-utils` (`aplay` for the backup tone);
   `dawn-core.service` sets `StartLimitIntervalSec=0` and keeps `/run/dawn` across restarts

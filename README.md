@@ -26,9 +26,12 @@ system: the clock always sits top-right, a status line top-left says which mode 
 and whether audio is flowing, the middle is a 40/60 artwork/identity split, and a
 persistent control bar runs along the bottom. Left alone while playing, the face becomes
 an ambient clock with a now-playing strip (`display.ambient_after_s`); a tap brings the
-player back. Standby sits on a soft procedural scene (sky, sun or moon, stars, clouds,
-rain or snow, hills and trees) drawn from the current time relative to sunrise and sunset,
-the weather feed and the season; it switches off in the night palette and can be disabled
+player back. Standby sits on a soft procedural scene (sky, sun, moon in its phase, stars, clouds,
+drizzle, rain, storms with lightning, hail or snow, fog, frost, heat haze and smoke, hills and
+trees) drawn from the time relative to sunrise and sunset, the *forecast for the hour coming
+up* (Open-Meteo's hourly weather, cloud, rain, wind and visibility) and the season, with
+Australian seasons south of the equator (straw-gold summers, green winters, wattle in spring);
+the clouds drift with the wind and the rain or snow falls at its slant, so it is never still; it switches off in the night palette and can be disabled
 with `display.scene`. At night the face goes into [sleep mode](#sleep-mode-and-burn-in): the
 clock alone, small and amber on black, moving every couple of minutes. Anything that can go
 wrong (DAB reception, GPS, each time source into chrony, network, audio, the Pi itself) is
@@ -242,8 +245,9 @@ minutes. Set it under *Display → Sleep mode* (`display.sleep`):
 
 The panel is an IPS LCD, so the risk is image retention from things that never move. Besides
 the moving sleep clock: the face's text drifts a few pixels over time (pixel orbit), the
-Standby status strip fades after two minutes without a touch, and the background's hills and
-trees are redrawn from the date each day (*Display → Burn-in protection*, `display.burn_in`).
+Standby status strip fades after two minutes without a touch, the background never stands
+still (clouds drift, the sun and moon cross the sky, the hills shift a few pixels over the day),
+and its hills and trees are redrawn from the date each day (*Display → Burn-in protection*, `display.burn_in`).
 
 ## Laptop simulator
 

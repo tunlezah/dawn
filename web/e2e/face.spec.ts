@@ -11,6 +11,20 @@ test('standby shows the time, date and status dots', async ({ page }) => {
   await expect(page.locator('.face-dots')).toContainText('DAB');
 });
 
+test('standby scene draws the forecast hour coming up, and its clouds keep drifting', async ({ page }) => {
+  const w = await (await fetch(`${BASE}/api/weather`)).json();
+  expect(w.hours.length).toBeGreaterThan(1);
+  await page.goto('/face');
+  const scene = page.locator('.f-scene');
+  // the hour nearest half an hour from now
+  const key = (d: Date) => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23' })
+    .format(d).replace(', ', 'T') + ':00';
+  await expect(scene).toHaveAttribute('data-hour', key(new Date(Date.now() + 30 * 60_000)));
+  const drift = () => page.evaluate(() => { const d = document.querySelector('.sc-drift'); return d ? getComputedStyle(d).transform : null; });
+  const first = await drift();
+  if (first) await expect.poll(drift).not.toBe(first);
+});
+
 test('tapping the face opens the menu sheet and the nap picker starts a countdown', async ({ page }) => {
   await page.goto('/face');
   await page.locator('.face-root').tap();

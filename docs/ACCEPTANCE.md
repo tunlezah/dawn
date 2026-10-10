@@ -195,7 +195,7 @@ these need the hardware.
 | Time sources: chrony parsing, NMEA | `test_timesync.py` |
 | DAB: mux parsing, SID normalisation, scan order, monograms | `test_dab.py` |
 | dawn-timed: FIC/FIG 0/10 round trip, SHM layout, utctime | `dawn-timed/tests/test_fic_shm.py` |
-| Weather WMO mapping | `test_weather.py` |
+| Weather WMO mapping, forecast hours; the scene's hour, kinds, seasons and moon | `test_weather.py`, `web/e2e/forecast.unit.spec.ts`, `web/e2e/face.spec.ts` |
 | AirPlay metadata pipe | `test_airplay_meta.py` |
 | Wi-Fi parsing, backup/restore | `test_net_backup.py` |
 | Sleep mode planner (bedtime/dark/morning/alarm/bright, DST, boot, steps) and its face path | `test_sleep.py` |

@@ -109,11 +109,19 @@
 .f-ambient.scenic .f-bar .label .top, .f-ambient.scenic .f-bar .vol { color: #f4f6fa; }
 .f-ambient.scenic .f-bar .label .bottom, .f-ambient.scenic .f-bar .cell > .f-icon, .f-ambient.scenic .face-dots { color: #b9c1cf; }
 .f-ambient.scenic .f-bar .vsep { background: rgba(255, 255, 255, 0.12); }
-@keyframes sc-fall { from { transform: translateY(-120px); } to { transform: translateY(0); } }
-@keyframes sc-drift { from { transform: translateY(-120px) translateX(0); } to { transform: translateY(0) translateX(18px); } }
-.f-scene .sc-rain { animation: sc-fall 0.9s linear infinite; }
-.f-scene .sc-snow { animation: sc-drift 5s linear infinite; }
-.f-scene.static .sc-rain, .f-scene.static .sc-snow { animation: none; }
+/* scene layers (components/Scene.tsx): only composited transforms and opacity move, so the Pi never repaints the SVG */
+.f-scene { overflow: hidden; }
+.f-scene > .sc-layer, .f-scene > .sc-flash, .f-scene > .sc-flash > svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.f-scene .sc-drift { position: absolute; top: 0; left: 0; width: 200%; height: 100%; will-change: transform; animation: sc-drift var(--sc-secs, 300s) linear infinite; }
+.f-scene .sc-drift > svg, .f-scene .sc-fall > svg { display: block; width: 100%; height: 100%; }
+.f-scene .sc-tilt { position: absolute; inset: -50%; }
+.f-scene .sc-fall { position: absolute; top: 0; left: 0; width: 100%; height: 200%; will-change: transform; animation: sc-fall var(--sc-secs, 1s) linear infinite; }
+.f-scene .sc-flash { opacity: 0; will-change: opacity; animation: sc-flash 11s linear infinite; }
+@keyframes sc-drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes sc-fall { from { transform: translateY(-50%); } to { transform: translateY(0); } }
+@keyframes sc-flash { 0%, 86% { opacity: 0; } 86.6% { opacity: 0.8; } 87.4% { opacity: 0.1; } 88.2% { opacity: 0.6; } 90% { opacity: 0; } 100% { opacity: 0; } }
+.f-scene.static .sc-drift, .f-scene.static .sc-fall { animation: none; }
+.f-scene.static .sc-flash { display: none; }
 .f-ambient > * { position: relative; z-index: 1; }
 .f-ambient > .f-horizon, .f-ambient > .f-scene { position: absolute; z-index: 0; }
 .f-ambient .f-ambient-clock { margin-top: 3vmin; }
