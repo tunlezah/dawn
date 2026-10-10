@@ -289,9 +289,28 @@ def create_app() -> FastAPI:
         if temperature_unit == "fahrenheit":
             temp = temp * 9 / 5 + 32
         day = now.date().isoformat()
+        # two days of hours whose weather moves along every hour, so the face's scene can be seen changing
+        cycle = [0, 1, 2, 3, 45, 51, 61, 65, 80, 95, 96, 2, 1, 0]
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        hourly: dict[str, list[Any]] = {k: [] for k in ("time", "temperature_2m", "weather_code", "cloud_cover", "precipitation_probability", "precipitation", "wind_speed_10m", "wind_gusts_10m", "visibility", "is_day")}
+        for i in range(48):
+            t = start + _dt.timedelta(hours=i)
+            c = cycle[(now.day + i) % len(cycle)]
+            th = 14 + 8 * max(0.0, 1 - abs(t.hour - 14) / 8)
+            hourly["time"].append(t.strftime("%Y-%m-%dT%H:%M"))
+            hourly["temperature_2m"].append(round(th * 9 / 5 + 32 if temperature_unit == "fahrenheit" else th, 1))
+            hourly["weather_code"].append(c)
+            hourly["cloud_cover"].append({0: 0, 1: 20, 2: 50}.get(c, 100))
+            hourly["precipitation_probability"].append(80 if c >= 51 and c != 45 else 5)
+            hourly["precipitation"].append({51: 0.2, 61: 1.0, 65: 8.0, 80: 3.0, 95: 6.0, 96: 10.0}.get(c, 0.0))
+            hourly["wind_speed_10m"].append(45.0 if c in (2, 95, 96) else 12.0)
+            hourly["wind_gusts_10m"].append(70.0 if c in (2, 95, 96) else 20.0)
+            hourly["visibility"].append(400.0 if c == 45 else 24000.0)
+            hourly["is_day"].append(1 if 6 <= t.hour < 18 else 0)
         return JSONResponse({
             "latitude": latitude, "longitude": longitude, "timezone": timezone,
             "current": {"time": now.strftime("%Y-%m-%dT%H:%M"), "temperature_2m": round(temp, 1), "weather_code": code, "is_day": is_day},
+            "hourly": hourly,
             "daily": {"time": [day], "temperature_2m_max": [round(temp + 3, 1)], "temperature_2m_min": [round(temp - 6, 1)], "sunrise": [f"{day}T05:32"], "sunset": [f"{day}T17:58"], "weather_code": [code]},
         })
 

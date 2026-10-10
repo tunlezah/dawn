@@ -154,15 +154,15 @@ await board('board', ['airplay', 'playing', 'presets', 'standby'].map((n) => `${
 
 // Scenic standby across the day, weather and seasons, via the face's demo query (?at=&weather=&temp=).
 const SCENES = [
-  ['dawn', '2026-04-14T06:30:00+10:00', 'clear-day', 12], ['morning', '2026-04-14T10:24:00+10:00', 'clear-day', 18],
-  ['afternoon', '2026-04-14T14:17:00+10:00', 'partly-day', 22], ['dusk', '2026-04-14T17:52:00+10:00', 'clear-day', 20],
-  ['evening', '2026-04-14T19:36:00+10:00', 'cloudy', 16], ['night', '2026-04-14T22:10:00+10:00', 'clear-night', 12],
-  ['winter', '2026-07-15T07:28:00+10:00', 'snow', -1], ['rain', '2026-04-16T08:15:00+10:00', 'rain', 11],
-  ['fog', '2026-04-16T11:50:00+10:00', 'fog', 15], ['autumn', '2026-04-16T15:32:00+10:00', 'clear-day', 19],
-  ['spring', '2026-10-16T18:09:00+11:00', 'partly-day', 17], ['summer', '2026-01-20T13:23:00+11:00', 'clear-day', 29],
+  ['dawn', '2026-04-14T06:30:00+10:00', 'clear-day', 12], ['frost', '2026-07-15T07:45:00+10:00', 'clear-day', -3],
+  ['spring', '2026-10-10T09:00:00+11:00', 'partly-day', 17, '&cloud=60'], ['summer', '2026-01-20T13:23:00+11:00', 'clear-day', 38],
+  ['smoke', '2026-01-05T15:00:00+11:00', 'partly-day', 33, '&vis=3000&cloud=20'], ['storm', '2026-12-10T16:20:00+11:00', 'thunder', 27, '&wind=45&rain=8'],
+  ['autumn', '2026-04-16T15:32:00+10:00', 'clear-day', 19], ['rain', '2026-02-10T11:00:00+11:00', 'rain', 22, '&rain=12&wind=30'],
+  ['dusk', '2026-04-14T17:52:00+10:00', 'clear-day', 20], ['fog', '2026-04-16T11:50:00+10:00', 'fog', 15],
+  ['night', '2026-10-24T23:00:00+11:00', 'clear-night', 9], ['winter', '2026-07-20T09:00:00+10:00', 'snow', 0, '&wind=25'],
 ];
-for (const [name, at, weather, temp] of SCENES) {
-  await face(`scene-${name}`, null, 900, `?at=${encodeURIComponent(at)}&weather=${weather}&temp=${temp}&tmin=${temp - 5}&tmax=${temp + 4}`);
+for (const [name, at, weather, temp, extra = ''] of SCENES) {
+  await face(`scene-${name}`, null, 900, `?at=${encodeURIComponent(at)}&weather=${weather}&temp=${temp}&tmin=${temp - 5}&tmax=${temp + 4}${extra}`);
 }
 await board('scenes', SCENES.map(([n]) => `${out}/face-scene-${n}.png`), 3);
 

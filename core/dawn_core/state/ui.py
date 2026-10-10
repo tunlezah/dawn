@@ -299,6 +299,22 @@ class TimeSourcesState(BaseModel):
     updated_at: str | None = None
 
 
+class WeatherHour(BaseModel):
+    """One hour of the forecast, for the face's scene (Open-Meteo hourly values at the top of the hour)."""
+
+    time: str  # local wall clock, "2026-10-10T15:00"
+    code: int | None = None
+    icon: str | None = None
+    temperature: float | None = None
+    cloud_cover: float | None = None  # %
+    precip_probability: float | None = None  # %
+    precipitation: float | None = None  # mm in the hour
+    wind_kmh: float | None = None
+    gusts_kmh: float | None = None
+    visibility_m: float | None = None
+    is_day: bool = True
+
+
 class WeatherState(BaseModel):
     available: bool = False
     stale: bool = False
@@ -314,6 +330,7 @@ class WeatherState(BaseModel):
     fetched_at: str | None = None
     units: str = "celsius"
     location_label: str | None = None
+    hours: list[WeatherHour] = []  # this hour onwards (up to a day): the face draws the hour coming up
 
 
 class NetworkInfo(BaseModel):

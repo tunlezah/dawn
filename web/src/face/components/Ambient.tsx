@@ -1,4 +1,4 @@
-import { useEffect, useState as useReactState } from 'react';
+import { useEffect, useMemo, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { fmtDate, fmtDayTime, fmtTime, useNow } from '../../shared/time';
 import { WeatherIcon } from '../../shared/icons/weather';
@@ -6,6 +6,7 @@ import { IconAlarm } from './icons';
 import { SOURCE_LABEL } from './Header';
 import { VolumeCell } from './ControlBar';
 import { Scene } from './Scene';
+import { sceneWeather, type SceneWeather } from '../forecast';
 import { DEMO_WEATHER } from '../../shared/demo';
 
 /** Ambient clock: standby, and the idle view while something plays. Huge clock, date, place + weather, next alarm,
@@ -22,6 +23,11 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   const next = s.alarms.next;
   const flowing = s.audio.audio_flowing || s.airplay.playing || s.bluetooth.playing;
   const place = w.location_label || s.settings.name;
+  // the scene redraws once a minute, and only when the hour it shows (or the time of day) has changed
+  const minute = Math.floor(now.getTime() / 60000);
+  const sceneNow = useMemo(() => new Date(minute * 60000), [minute]);
+  const wxKey = JSON.stringify(sceneWeather(w, sceneNow, s.tz));
+  const wx = useMemo(() => JSON.parse(wxKey) as SceneWeather | null, [wxKey]);
   // burn-in: in Standby the strip fades after a while without a touch; a touch, or a change worth seeing
   // (a time source lost or back, the network, the next alarm), brings it back
   const autohide = !compact && s.display.strip_autohide_s > 0;
@@ -37,7 +43,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`f-ambient fade-in ${compact ? 'compact' : ''} ${scene ? 'scenic' : ''}`}>
       {scene
-        ? <Scene now={now} tz={s.tz} icon={w.available ? w.icon : null} temperature={w.available ? w.temperature : null} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} daily={s.display.scene_daily} />
+        ? <Scene now={sceneNow} tz={s.tz} wx={wx} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} daily={s.display.scene_daily} />
         : <div className="f-horizon" />}
       <div className="face-time f-ambient-clock">
         {t.hm}

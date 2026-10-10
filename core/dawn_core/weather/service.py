@@ -8,16 +8,51 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import httpx
 
 from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
-from ..state.ui import WeatherState
+from ..state.ui import WeatherHour, WeatherState
 from .wmo import describe
 
 log = logging.getLogger("dawn.weather")
+
+# hourly fields the face's scene draws from (weather, cloud, rain, wind, haze)
+HOURLY = "temperature_2m,weather_code,cloud_cover,precipitation_probability,precipitation,wind_speed_10m,wind_gusts_10m,visibility,is_day"
+HOURS_AHEAD = 24
+
+
+def upcoming_hours(hourly: dict[str, Any] | None, now_local: str, ahead: int = HOURS_AHEAD) -> list[WeatherHour]:
+    """The forecast hours from the one now is in, `ahead` of them. `now_local` is local wall clock "YYYY-MM-DDTHH:MM"
+    (Open-Meteo's hourly times are local in the requested time zone, so plain string order is time order)."""
+    if not isinstance(hourly, dict):
+        return []
+    times = hourly.get("time") or []
+    this_hour = now_local[:13] + ":00"
+
+    def col(name: str, i: int) -> Any:
+        v = hourly.get(name)
+        return v[i] if isinstance(v, list) and i < len(v) else None
+
+    out: list[WeatherHour] = []
+    for i, t in enumerate(times):
+        if not isinstance(t, str) or t < this_hour:
+            continue
+        code = col("weather_code", i)
+        is_day = bool(col("is_day", i) if col("is_day", i) is not None else 1)
+        out.append(WeatherHour(
+            time=t, code=code, icon=describe(code, is_day)[0] if code is not None else None,
+            temperature=col("temperature_2m", i), cloud_cover=col("cloud_cover", i),
+            precip_probability=col("precipitation_probability", i), precipitation=col("precipitation", i),
+            wind_kmh=col("wind_speed_10m", i), gusts_kmh=col("wind_gusts_10m", i), visibility_m=col("visibility", i),
+            is_day=is_day,
+        ))
+        if len(out) >= ahead:
+            break
+    return out
 
 
 class WeatherService(Service):
@@ -84,8 +119,10 @@ class WeatherService(Service):
         params = {
             "latitude": f"{lat:.4f}", "longitude": f"{lon:.4f}",
             "current": "temperature_2m,weather_code,is_day",
+            "hourly": HOURLY,
             "daily": "temperature_2m_max,temperature_2m_min,sunrise,sunset,weather_code",
-            "timezone": self.ctx.config.general.timezone, "forecast_days": "1",
+            # two days of hours, so the hours after midnight are there and a missed fetch or two costs nothing
+            "timezone": self.ctx.config.general.timezone, "forecast_days": "2", "wind_speed_unit": "kmh",
             "temperature_unit": cfg.units,
         }
         self.last_attempt = self.ctx.store.iso()
@@ -130,4 +167,6 @@ class WeatherService(Service):
             st.t_max = (daily.get("temperature_2m_max") or [None])[0]
             st.sunrise = (daily.get("sunrise") or [None])[0]
             st.sunset = (daily.get("sunset") or [None])[0]
+            tz = ZoneInfo(cfg.general.timezone)
+            st.hours = upcoming_hours(data.get("hourly"), self.ctx.store.now().astimezone(tz).strftime("%Y-%m-%dT%H:%M"))
         self.ctx.store.replace("weather", st)
