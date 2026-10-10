@@ -305,8 +305,8 @@ dab:
   scan_dwell_s: 6.0
   # Seconds to keep waiting on a channel that shows a DAB signal but has not decoded yet (weak ensembles can take 20 s or more to lock).
   scan_signal_wait_s: 40.0
-  # Seconds to wait for audio after tuning.
-  sync_timeout_s: 12.0
+  # Seconds to wait for sync after tuning to a station on another ensemble (a weak ensemble can take 30 s to lock).
+  sync_timeout_s: 45.0
   # No audio flowing for this long = failure.
   audio_timeout_s: 15.0
   # Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).

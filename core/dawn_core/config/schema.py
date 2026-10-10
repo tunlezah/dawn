@@ -321,7 +321,9 @@ class DabConfig(StrictModel):
     scan_signal_wait_s: float = Field(
         40.0, ge=0, le=120, description="Seconds to keep waiting on a channel that shows a DAB signal but has not decoded yet (weak ensembles can take 20 s or more to lock)."
     )
-    sync_timeout_s: float = Field(12.0, ge=3, le=60, description="Seconds to wait for audio after tuning.")
+    sync_timeout_s: float = Field(
+        45.0, ge=3, le=120, description="Seconds to wait for sync after tuning to a station on another ensemble (a weak ensemble can take 30 s to lock)."
+    )
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
     gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")
     poll_interval_s: float = Field(1.0, ge=0.2, le=10, description="How often /mux.json is read for DLS/MOT.")

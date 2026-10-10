@@ -37,6 +37,11 @@ class TunerBusy(RuntimeError):
 
 
 class DabSource(PlayerSource):
+    """A DAB station. Starting one on another ensemble means a retune, and a weak ensemble can take half a minute
+    to sync, so tuning runs in the background (never under the arbiter's lock): the source counts as starting
+    meanwhile, and as failed if no sync comes within `dab.sync_timeout_s`. An alarm's ladder goes by whether
+    sound flows, so it climbs past a station that is still tuning without waiting for it."""
+
     kind = "dab"
 
     def __init__(self, player, url: str, svc: ServiceInfo, dab: DabService):
@@ -49,10 +54,15 @@ class DabSource(PlayerSource):
         self._reload: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        await self.dab.ensure_tuned_for(self.svc.sid)
-        self._channel = self.dab.channel
-        await super().start()
+        self._started = True
+        self.error = None
+        self.dab.channel_for(self.svc.sid)  # an unknown station fails at once
         self.dab.mark_active(self.svc.sid)
+        if self.dab.ready_for(self.svc.sid):
+            self._channel = self.dab.channel
+            await self.player.load(self.url)
+        else:
+            self._tune_in_background()
 
     async def stop(self) -> None:
         self._cancel_reload()
@@ -64,23 +74,35 @@ class DabSource(PlayerSource):
         await super().pause()
 
     async def resume(self) -> None:
-        if self._started and self.dab.channel != self._channel:
-            # something (an alarm on another station) retuned welle while this was paused, so its stream is gone.
-            # Tuning takes seconds: do it outside the arbiter's lock.
-            self._cancel_reload()
-            self._reload = asyncio.create_task(self._retune(), name=f"dab-resume-{self.svc.sid}")
+        if self._started and (self.dab.channel != self._channel or self.player.loaded_url != self.url or not self.dab.ready_for(self.svc.sid)):
+            # never got going (paused while tuning), or something (an alarm on another station) retuned welle while
+            # this was paused, so its stream is gone
+            self._tune_in_background()
             return
         await super().resume()
 
-    async def _retune(self) -> None:
+    def _tune_in_background(self) -> None:
+        self._cancel_reload()
+        self.error = None
+        self._reload = asyncio.create_task(self._tune_and_play(), name=f"dab-tune-{self.svc.sid}")
+        self._changed()
+
+    async def _tune_and_play(self) -> None:
         try:
             await self.dab.ensure_tuned_for(self.svc.sid)
             self._channel = self.dab.channel
             if self._started:
                 await self.player.load(self.url)
                 self.dab.mark_active(self.svc.sid)
+        except asyncio.CancelledError:
+            raise
         except Exception as e:  # noqa: BLE001
-            log.warning("could not resume %s after a retune: %s", self.svc.label, e)
+            self.error = str(e)
+            log.warning("could not start %s: %s", self.svc.label, e)
+        finally:
+            if self._reload is asyncio.current_task():
+                self._reload = None
+            self._changed()
 
     def _cancel_reload(self) -> None:
         if self._reload and not self._reload.done() and self._reload is not asyncio.current_task():
@@ -88,8 +110,25 @@ class DabSource(PlayerSource):
         self._reload = None
 
     @property
+    def tuning(self) -> bool:
+        return self._reload is not None and not self._reload.done()
+
+    @property
     def flowing(self) -> bool:
         return super().flowing and self.dab.live_sync
+
+    def status(self, priority: int, state: str):
+        if state == "playing" and self.tuning:
+            state = "starting"
+        elif state == "playing" and self.error:
+            state = "error"
+        return super().status(priority, state)
+
+    def _status_line(self) -> str | None:
+        if self.tuning:
+            ch = self.dab.channel_for(self.svc.sid, strict=False) or self.dab.channel
+            return f"Tuning to {ch}…" if ch else "Tuning…"
+        return self.error
 
     def now_playing(self) -> NowPlaying:
         live = self.dab.live.get(self.svc.sid)
@@ -98,7 +137,7 @@ class DabSource(PlayerSource):
             station=self.svc.label,
             station_sid=self.svc.sid,
             title=None,
-            dls=live.dls if live else None,
+            dls=self._status_line() or (live.dls if live else None),
             logo_url=self.dab.logos.url(self.svc.sid),
             slide_url=(f"/api/dab/slide/{self.svc.sid}?v={live.mot_lastchange}" if live and live.mot_lastchange else None),
             signal=snr_to_signal(self.dab.snr),
@@ -327,22 +366,40 @@ class DabService(Service):
         player = await audio.player(audio.player_name("dab", level))
         return DabSource(player, self.client.stream_url(svc), svc, self)
 
+    def channel_for(self, sid: str, *, strict: bool = True) -> str | None:
+        """The channel a station is on: from the scan, else None when the live ensemble has it. An unknown station
+        raises (or gives None when not `strict`)."""
+        sid = norm_sid(sid)
+        row = self.service_row(sid)
+        if row:
+            return row.channel.upper()
+        if sid in self.live or not strict:
+            return None
+        raise RuntimeError(f"service {sid} unknown; run a scan first")
+
+    def ready_for(self, sid: str) -> bool:
+        """welle is synced on the station's ensemble and has the station: its stream can be opened right away."""
+        sid = norm_sid(sid)
+        want = self.channel_for(sid, strict=False)
+        scanning = self._scan_task is not None and not self._scan_task.done()
+        return not scanning and self.live_sync and sid in self.live and want in (None, self.channel)
+
     async def ensure_tuned_for(self, sid: str) -> None:
         cfg = self.ctx.config.dab
+        sid = norm_sid(sid)
         if self._scan_task and not self._scan_task.done():
             # a scan retunes every few seconds: the station that is wanted now comes first
             log.warning("stopping the scan to play %s", sid)
             self._scan_stop.set()
             with suppress(Exception):
                 await asyncio.wait_for(asyncio.shield(self._scan_task), 8)
-        row = self.service_row(sid)
-        want = row.channel.upper() if row else None
+        want = self.channel_for(sid)
         if want is None:
-            if sid in self.live:
-                return
-            raise RuntimeError(f"service {sid} unknown; run a scan first")
-        if want != self.channel or not self.live_sync:
+            return  # not scanned, but on the live ensemble
+        if want != self.channel:
             await self.tune(want)
+        # Not again when welle is already on the channel: a retune throws away its sync search (and the frequency
+        # correction it has found), and a weak ensemble can need 30 s of it.
         deadline = time.monotonic() + cfg.sync_timeout_s
         while time.monotonic() < deadline:
             m = await self.client.mux()
@@ -354,7 +411,8 @@ class DabService(Service):
                     return
             await asyncio.sleep(0.5)
         if not self.live_sync:
-            raise RuntimeError(f"no DAB sync on channel {want}")
+            raise RuntimeError(f"No DAB signal on {want} after {cfg.sync_timeout_s:.0f} s")
+        raise RuntimeError(f"Station not on air in the {want} ensemble")
 
     async def tune(self, channel: str) -> None:
         channel = channel.upper()
@@ -482,10 +540,12 @@ class DabService(Service):
             st.scan.index, st.scan.total, st.scan.channel, st.scan.found_services, st.scan.found_ensembles = i, total, ch or None, n_svc, n_ens
             self.ctx.store.touch()
 
+        found: dict[str, MuxInfo] = {}
         try:
             found = await scan(self.client, channels, cfg.scan_dwell_s, progress, self._scan_stop, cfg.scan_signal_wait_s)
             if found:
-                self._store_scan(found)
+                # a scan that was stopped (cancelled, or a station picked) only saw some channels: keep the rest
+                self._store_scan(found, replace_all=not self._scan_stop.is_set())
             st.last_scan_at = scanned_at()
             self.ctx.db.set("dab.last_scan_at", st.last_scan_at)
             self.ctx.db.log_event("dab_scan", ensembles=len(found), services=sum(len(m.services) for m in found.values()))
@@ -501,11 +561,18 @@ class DabService(Service):
                 log.warning("could not retune to %s after scan", target)
             self.publish()
 
-    def _store_scan(self, found: dict[str, MuxInfo]) -> None:
+    def _store_scan(self, found: dict[str, MuxInfo], *, replace_all: bool = True) -> None:
+        """Save a scan: a complete one replaces the station list; a partial one replaces only the ensembles it
+        found (and stations that moved to them), so stopping a scan early never loses the stations it did not reach."""
         now = datetime.now(UTC)
         with self.ctx.db.session() as s:
-            s.exec(delete(DabEnsembleRow))  # type: ignore[arg-type]
-            s.exec(delete(DabServiceRow))  # type: ignore[arg-type]
+            if replace_all:
+                s.exec(delete(DabEnsembleRow))  # type: ignore[arg-type]
+                s.exec(delete(DabServiceRow))  # type: ignore[arg-type]
+            else:
+                sids = [svc.sid for m in found.values() for svc in m.services]
+                s.exec(delete(DabEnsembleRow).where(DabEnsembleRow.channel.in_(list(found))))  # type: ignore[arg-type,attr-defined]
+                s.exec(delete(DabServiceRow).where(DabServiceRow.channel.in_(list(found)) | DabServiceRow.sid.in_(sids)))  # type: ignore[arg-type,attr-defined]
             for ch, m in found.items():
                 s.add(DabEnsembleRow(channel=ch, eid=m.ensemble_id, label=m.ensemble_label, snr=m.snr, scanned_at=now))
                 for svc in m.services:
