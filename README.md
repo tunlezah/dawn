@@ -163,9 +163,16 @@ the 0–100 scale itself.
 
 ## Updating
 
-- From the UI: *Settings → Software update → Update now* (`git pull` + `install.sh --update`, services restart).
-- From a laptop: `make deploy HOST=dawn.local` builds the web UI and rsyncs the repo.
-- On the Pi: `cd /opt/dawn && sudo git pull && sudo ./deploy/install.sh --update`.
+- From the UI: *Settings → Software update → Check for updates*, then *Update now* (`dawn-update`: fast-forwards
+  `/opt/dawn` to GitHub `main`, runs `install.sh --update`, restarts the services; log in `/var/log/dawn-update.log`).
+  The version shown there goes up with every merged PR.
+- From a laptop: `make deploy HOST=dawn.local` builds the web UI and rsyncs the repo. The files then differ from
+  `/opt/dawn`'s git commit, so the UI update refuses to fast-forward until they match `main` again.
+- On the Pi: `cd /opt/dawn && sudo -u dawn git pull --ff-only && sudo ./deploy/install.sh --update`.
+
+The UI update needs `/opt/dawn` to be a git checkout of `main`. An install made from a copied folder whose
+history is not GitHub's is told so by *Update now*, along with the one-time fix:
+`sudo -u dawn git -C /opt/dawn reset --hard origin/main` (discards local commits and edits in `/opt/dawn`).
 
 ## Controls
 
@@ -362,6 +369,7 @@ make e2e           # Playwright smoke tests against a running simulator
 make screenshots   # docs/screenshots/*.png from the simulator
 make gen-config    # regenerate config/config.example.yaml from the schema
 make deploy HOST=dawn.local
+python scripts/version.py bump X.Y.Z   # every PR: raise the version (CI checks), add a CHANGELOG section
 ```
 
 Decisions are recorded in [`DECISIONS.md`](DECISIONS.md); changes in

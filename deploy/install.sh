@@ -30,6 +30,9 @@ RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
 SPS_REPO=https://github.com/mikebrady/shairport-sync.git
 NQPTP_REPO=https://github.com/mikebrady/nqptp.git
+DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"  # where Settings → Software update pulls from
+# npm/pip caches: dawn's home is read-only during an update from the UI (dawn-core has ProtectHome=read-only)
+NPM_CACHE=/var/cache/dawn/npm PIP_CACHE=/var/cache/dawn/pip
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -125,10 +128,20 @@ loginctl enable-linger "$DAWN_USER" || true
 
 if [ "$HERE" != "$DAWN_DIR" ]; then
   mkdir -p "$DAWN_DIR"
-  rsync -a --delete --exclude node_modules --exclude .venv --exclude var --exclude '__pycache__' "$HERE"/ "$DAWN_DIR"/
+  # a source without .git (a copied folder) must not delete the git checkout already in $DAWN_DIR
+  GIT_EXCL=(); [ -d "$HERE/.git" ] || GIT_EXCL=(--exclude .git)
+  rsync -a --delete --exclude node_modules --exclude .venv --exclude var --exclude '__pycache__' "${GIT_EXCL[@]}" "$HERE"/ "$DAWN_DIR"/
 fi
 chown -R "$DAWN_USER:$DAWN_USER" "$DAWN_DIR"
 git config --system --add safe.directory "$DAWN_DIR" || true
+# Software update (dawn-update) fetches from origin: make sure there is one
+if [ -d "$DAWN_DIR/.git" ]; then
+  git -C "$DAWN_DIR" remote get-url origin >/dev/null 2>&1 || { sudo -u "$DAWN_USER" git -C "$DAWN_DIR" remote add origin "$DAWN_REPO"; echo "git remote origin -> $DAWN_REPO"; }
+else
+  echo "WARNING: $DAWN_DIR is not a git checkout, so Software update cannot work; install from a clone of $DAWN_REPO"
+fi
+mkdir -p "$NPM_CACHE" "$PIP_CACHE"
+chown -R "$DAWN_USER:$DAWN_USER" /var/cache/dawn
 
 # data dir (optionally on its own ext4 with data=journal)
 mkdir -p /var/lib/dawn /etc/dawn
@@ -152,9 +165,10 @@ chown -R "$DAWN_USER:$DAWN_USER" /etc/dawn
 # ---------------------------------------------------------------------------
 step "python venv"
 [ -d "$DAWN_DIR/.venv" ] || sudo -u "$DAWN_USER" python3 -m venv --system-site-packages "$DAWN_DIR/.venv"
-sudo -u "$DAWN_USER" "$DAWN_DIR/.venv/bin/pip" install -q --upgrade pip
-sudo -u "$DAWN_USER" "$DAWN_DIR/.venv/bin/pip" install -q -e "$DAWN_DIR/core[pi]" -e "$DAWN_DIR/dawn-timed" || \
-  sudo -u "$DAWN_USER" "$DAWN_DIR/.venv/bin/pip" install -q -e "$DAWN_DIR/core" -e "$DAWN_DIR/dawn-timed"
+PIP=(sudo -u "$DAWN_USER" env PIP_CACHE_DIR="$PIP_CACHE" "$DAWN_DIR/.venv/bin/pip")
+"${PIP[@]}" install -q --upgrade pip
+"${PIP[@]}" install -q -e "$DAWN_DIR/core[pi]" -e "$DAWN_DIR/dawn-timed" || \
+  "${PIP[@]}" install -q -e "$DAWN_DIR/core" -e "$DAWN_DIR/dawn-timed"
 
 # ---------------------------------------------------------------------------
 # Web UI
@@ -163,7 +177,8 @@ step "web ui"
 if [ "$NO_WEB" -eq 0 ]; then
   if command -v npm >/dev/null 2>&1; then
     if [ ! -f "$DAWN_DIR/web/dist/index.html" ] || [ -n "$(find "$DAWN_DIR/web/src" "$DAWN_DIR/web/face" -newer "$DAWN_DIR/web/dist/index.html" -print -quit 2>/dev/null)" ]; then
-      (cd "$DAWN_DIR/web" && sudo -u "$DAWN_USER" npm ci --no-audit --no-fund && sudo -u "$DAWN_USER" npm run build)
+      NPM=(sudo -u "$DAWN_USER" env npm_config_cache="$NPM_CACHE" npm)
+      (cd "$DAWN_DIR/web" && "${NPM[@]}" ci --no-audit --no-fund && "${NPM[@]}" run build)
     else
       echo "web/dist up to date"
     fi
