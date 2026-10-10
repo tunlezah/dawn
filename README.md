@@ -58,7 +58,7 @@ auto-detected at boot and the fallbacks stay supported:
 | GPS | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS | none (DAB and NTP time) |
 | Display | Waveshare 4.3" DSI 43H-800480-IPS-CT, 800×480, Goodix touch over the ribbon, sysfs backlight 0–255 (`dtoverlay=vc4-kms-dsi-7inch`) | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
 | Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10, behind a window facing the room | VEML7700, BH1750; none (sunrise/sunset schedule) |
-| Audio | Pimoroni Audio Amp SHIM (MAX98357A, I2S, mono ~2.5 W into 4 Ω; `--audio hifiberry`) → Dayton PC68-4 2.5" 4 Ω full-range in a ~0.5 L sealed box | USB DAC; HiFiBerry DAC/MiniAmp; 3.5 mm jack; HDMI |
+| Audio | Pimoroni Audio Amp SHIM (MAX98357A, I2S, mono ~2.5 W into 4 Ω; the installer default) → Dayton PC68-4 2.5" 4 Ω full-range in a ~0.5 L sealed box | USB DAC; HiFiBerry DAC/MiniAmp; 3.5 mm jack; HDMI |
 | Inputs | touch (everything is on the screen) + Adafruit 377 bare rotary encoder with push switch (internal pull-ups) | optional big arcade button (off by default; GPIO, `gpiozero` + `lgpio`) |
 | Backup buzzer | none: the backup tone plays through the speaker and the face | optional active 3.3 V piezo buzzer on a free GPIO (`alarm_defaults.buzzer.gpio_pin`), sounding even when the speaker path cannot |
 
@@ -67,7 +67,7 @@ PipeWire filter chain mixes left and right to mono, high-passes at 110 Hz
 (`audio.eq.highpass_hz`) and allows bass cuts but no boost (`audio.eq.bass_max_db`);
 `audio.output_ceiling_percent` sets where volume 100 lands, so calibrate it on the device
 to sit just below audible clipping (see [Calibrating the volume ceiling](#calibrating-the-volume-ceiling)).
-Sink priority at boot is USB › I2S amp › headphone jack › HDMI; `--audio hifiberry`
+Sink priority at boot is USB › I2S amp › headphone jack › HDMI; the installer
 pins the I2S amp (`audio.pinned_sink: hifiberry`) so a USB audio device plugged in later
 cannot take over. Pin something else in *Audio* (web UI) or in the config.
 
@@ -119,20 +119,20 @@ SDR antenna lead: the SHIM's output is unfiltered ~300 kHz PWM.
    ```bash
    sudo apt-get install -y git
    sudo git clone https://github.com/tunlezah/dawn /opt/dawn
-   sudo /opt/dawn/deploy/install.sh --audio hifiberry   # the Audio Amp SHIM (omit for a USB DAC)
+   sudo /opt/dawn/deploy/install.sh   # Audio Amp SHIM; --audio usb|headphones|hdmi|auto for other outputs
    sudo reboot
    ```
    The installer detects the board and display, writes the `config.txt`
    overlays, builds `rtl-sdr-blog`, `welle.io`, `shairport-sync` + `nqptp`,
    installs gpsd/chrony/PipeWire/BlueZ/cage/Chromium, creates the `dawn` user
    and enables the `dawn-core`, `dawn-dab`, `dawn-timed` and `dawn-face` units.
-   It is idempotent; re-run it any time, and `--update` keeps the I2S amp set-up from an
-   earlier install. Options: `--display`, `--audio`, `--data-device`, `--data-image-mb`,
+   It is idempotent; re-run it any time; a run without `--audio` keeps the output chosen by an
+   earlier install (`/etc/dawn/audio-output`). Options: `--display`, `--audio`, `--data-device`, `--data-image-mb`,
    `--readonly`, `--no-build`, `--rebuild`.
 
-   With `--audio hifiberry` the `config.txt` block gets `dtparam=audio=off`,
+   With the SHIM (default, `--audio shim`) the `config.txt` block gets `dtparam=audio=off`,
    `dtoverlay=hifiberry-dac` and `gpio=25=op,dh`; the mono filter chain
-   (`deploy/pipewire/dawn-eq-mono.conf`) is installed; WirePlumber keeps the sink running
+   (`deploy/pipewire/dawn-eq-mono.conf`) is installed and `audio.pinned_sink` set to `hifiberry`; WirePlumber keeps the sink running
    while idle so the MAX98357A does not pop. The DSI panel gets `dtoverlay=vc4-kms-dsi-7inch`.
    If the case mounts the panel rotated, set `display.rotation` (90/180/270) in
    `/etc/dawn/config.yaml` and re-run the installer: it adds
@@ -334,7 +334,7 @@ set the tuner gain, poll the time sources, play a test tone):
 | Face shows "backup alarm · Dawn is not responding" | dawn-core was down at alarm time and the face rang by itself; `journalctl -b -u dawn-core` for why, `systemctl status dawn-core` |
 | No sound | *Audio* page: sink list and active sink; `wpctl status` as user dawn (`sudo -u dawn XDG_RUNTIME_DIR=/run/user/$(id -u dawn) wpctl status`); with the SHIM, `aplay -l` should list `snd_rpi_hifiberry_dac` and `config.txt` must have `gpio=25=op,dh` |
 | Pop when audio starts or stops | `/etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf` present; `wpctl inspect` on the hardware sink shows `session.suspend-timeout-seconds = 0` |
-| Only one side of a stereo track | the mono filter chain is not loaded: re-run `install.sh --audio hifiberry` and check `/etc/pipewire/pipewire.conf.d/dawn-eq.conf` says "mono" |
+| Only one side of a stereo track | the mono filter chain is not loaded: re-run `install.sh --audio shim` and check `/etc/pipewire/pipewire.conf.d/dawn-eq.conf` says "mono" |
 | Distortion at high volume | lower `audio.output_ceiling_percent`; keep `audio.eq.bass_max_db` at 0 |
 | Random resets, SD errors, *Status → Hardware → Power and throttling* warns | `vcgencmd get_throttled`: bit 0x10000 = under-voltage since boot; use the 5 V 3 A supply directly, no hub |
 | Time not synced | *Diagnostics → Time sync* (the first failing step in each chain); `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |

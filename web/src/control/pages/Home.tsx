@@ -21,7 +21,7 @@ export function Home() {
       <Card>
         <div className="flex items-end justify-between">
           <div>
-            <div className="text-5xl font-semibold tnum tracking-tight">{t.hm}{t.ampm && <span className="text-2xl text-muted ml-1">{t.ampm}</span>}</div>
+            <div className="text-5xl font-semibold tnum tracking-tight">{t.hm}{t.ampm && <span className="text-xl text-muted ml-2 tracking-wider uppercase">{t.ampm}</span>}</div>
             <div className="text-muted mt-1">{fmtDate(now, s.tz)}</div>
           </div>
           <div className="flex gap-3 text-xs text-muted">

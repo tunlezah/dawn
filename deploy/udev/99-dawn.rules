@@ -18,3 +18,7 @@ SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys/class/backlig
 SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
 SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
 KERNEL=="gpiochip*", GROUP="gpio", MODE="0660"
+
+# The Pi's HDMI-CEC remote inputs (vc4-hdmi-0/1) advertise REL_X/REL_Y, so libinput sees two mice and cage
+# draws its cursor in the middle of the face. Dawn doesn't use CEC keys: keep them away from the compositor.
+SUBSYSTEM=="input", KERNEL=="event*", ATTRS{name}=="vc4-hdmi*", ENV{LIBINPUT_IGNORE_DEVICE}="1"

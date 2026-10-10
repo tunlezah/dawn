@@ -41,8 +41,8 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
         : <div className="f-horizon" />}
       <div className="face-time f-ambient-clock">
         {t.hm}
-        {s.display.show_seconds && <span className="f-sub ml-[2vmin]" style={{ fontSize: '9vmin' }}>{t.sec}</span>}
-        {t.ampm && <span className="f-sub ml-[2vmin]" style={{ fontSize: '8vmin' }}>{t.ampm}</span>}
+        {s.display.show_seconds && <span className="f-clock-sec">{t.sec}</span>}
+        {t.ampm && <span className="f-ampm">{t.ampm}</span>}
       </div>
       <div className="f-date">{fmtDate(now, s.tz)}</div>
       {w.available && (

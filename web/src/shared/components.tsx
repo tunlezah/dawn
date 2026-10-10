@@ -70,3 +70,32 @@ export function Empty({ children }: { children: ReactNode }) {
 export function Spinner() {
   return <span className="inline-block w-4 h-4 border-2 border-muted border-t-accent rounded-full animate-spin" />;
 }
+
+const pad2 = (n: number) => String(n).padStart(2, '0');
+
+/** "HH:MM" (24 h) picked as hour / minute (/ am-pm) selects, so it follows the clock setting rather than the
+ *  browser's locale like <input type="time"> does. */
+export function ClockInput({ value, onChange, h24, label, disabled, className = '' }: { value: string; onChange: (v: string) => void; h24: boolean; label: string; disabled?: boolean; className?: string }) {
+  const [h, m] = /^\d{1,2}:\d{2}$/.test(value) ? value.split(':').map(Number) : [7, 0];
+  const pm = h >= 12;
+  const set = (hour: number, minute: number) => onChange(`${pad2(hour)}:${pad2(minute)}`);
+  const hours = h24 ? [...Array(24).keys()] : [12, ...Array.from({ length: 11 }, (_, i) => i + 1)];
+  return (
+    <span className={`inline-flex items-center gap-1 tnum ${className}`} role="group" aria-label={label}>
+      <select aria-label={`${label} hour`} disabled={disabled} className="!w-auto" value={h24 ? h : h % 12 || 12}
+        onChange={(e) => { const v = Number(e.target.value); set(h24 ? v : (v % 12) + (pm ? 12 : 0), m); }}>
+        {hours.map((x) => <option key={x} value={x}>{h24 ? pad2(x) : x}</option>)}
+      </select>
+      <span>:</span>
+      <select aria-label={`${label} minute`} disabled={disabled} className="!w-auto" value={m} onChange={(e) => set(h, Number(e.target.value))}>
+        {[...Array(60).keys()].map((x) => <option key={x} value={x}>{pad2(x)}</option>)}
+      </select>
+      {!h24 && (
+        <select aria-label={`${label} am or pm`} disabled={disabled} className="!w-auto" value={pm ? 'pm' : 'am'}
+          onChange={(e) => set((h % 12) + (e.target.value === 'pm' ? 12 : 0), m)}>
+          <option value="am">am</option><option value="pm">pm</option>
+        </select>
+      )}
+    </span>
+  );
+}

@@ -3,8 +3,12 @@
 #
 #   sudo ./deploy/install.sh                 full install (builds rtl-sdr-blog, welle.io, shairport-sync + nqptp)
 #   sudo ./deploy/install.sh --update        after `git pull`: reinstall python/web/configs, skip finished builds
-#   sudo ./deploy/install.sh --audio hifiberry   I2S amp (Pimoroni Audio Amp SHIM / HiFiBerry): hifiberry-dac overlay,
-#                                                onboard audio off, mono EQ chain, output pinned (default: auto)
+#   sudo ./deploy/install.sh --audio shim|usb|headphones|hdmi|auto   speaker output (default: shim):
+#       shim (or hifiberry)  Pimoroni Audio Amp SHIM / HiFiBerry I2S amp: hifiberry-dac overlay, onboard audio off,
+#                            mono EQ chain, output pinned to the amp
+#       usb | headphones (or jack) | hdmi   onboard audio on, stereo EQ chain, output pinned to that kind
+#       auto                 onboard audio on, no pin: audio.sink_priority picks at boot
+#     The choice is remembered (/etc/dawn/audio-output), so a later run without --audio keeps it.
 #   sudo ./deploy/install.sh --display hyperpixel4|waveshare_dsi|hdmi   force the panel overlay (default: auto)
 #   sudo ./deploy/install.sh --data-device /dev/mmcblk0p3   mount /var/lib/dawn from an ext4 partition (data=journal)
 #   sudo ./deploy/install.sh --data-image-mb 1024          ...or from a loop-mounted ext4 image (data=journal)
@@ -21,7 +25,7 @@ DAWN_USER=dawn
 LOG=/var/log/dawn-install.log
 SRC_DIR=/usr/local/src
 UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0
-DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO=auto PANEL=auto
+DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO="" PANEL=auto
 RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
 SPS_REPO=https://github.com/mikebrady/shairport-sync.git
@@ -38,7 +42,7 @@ while [ $# -gt 0 ]; do
     --display) PANEL="$2"; shift;;
     --data-device) DATA_DEVICE="$2"; shift;;
     --data-image-mb) DATA_IMAGE_MB="$2"; shift;;
-    -h|--help) sed -n '2,20p' "$0"; exit 0;;
+    -h|--help) sed -n '2,24p' "$0"; exit 0;;
     *) echo "unknown option $1"; exit 2;;
   esac
   shift
@@ -72,12 +76,18 @@ detect_panel() {
   case "$MODEL" in *"Zero 2"*) echo hdmi;; *) echo waveshare_dsi;; esac   # Zero 2 W has no DSI connector
 }
 PANEL_DETECTED="$(detect_panel)"
-# --update runs without --audio: keep an I2S amp set up by an earlier install (or already loaded)
+# Speaker output: --audio, else what an earlier install chose, else the Audio Amp SHIM (reference build).
+AUDIO_FILE=/etc/dawn/audio-output
 detect_audio() {
-  [ "$AUDIO" != auto ] && { echo "$AUDIO"; return; }
-  awk '/^# >>> dawn >>>/{d=1} /^# <<< dawn <<</{d=0} d && /^dtoverlay=hifiberry-dac/{f=1} END{exit !f}' "$BOOTCFG" 2>/dev/null && { echo hifiberry; return; }
-  grep -qsi 'hifiberry' /proc/asound/cards && { echo hifiberry; return; }
-  echo auto
+  local a="$AUDIO"
+  [ -n "$a" ] || a="$(cat "$AUDIO_FILE" 2>/dev/null || true)"
+  [ -n "$a" ] || a=hifiberry
+  case "$a" in
+    shim|amp-shim|hifiberry) echo hifiberry;;
+    jack|headphones) echo headphones;;
+    usb|hdmi|auto) echo "$a";;
+    *) echo "unknown --audio $a (shim, usb, headphones, hdmi or auto)" >&2; exit 2;;
+  esac
 }
 AUDIO="$(detect_audio)"
 echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTED audio=$AUDIO"
@@ -94,7 +104,7 @@ PKGS=(
   python3 python3-venv python3-dev python3-pip python3-systemd python3-libgpiod
   libusb-1.0-0-dev libfaad-dev libmpg123-dev libmp3lame-dev libfftw3-dev libasound2-dev
   libpopt-dev libconfig-dev libavahi-client-dev libssl-dev libsoxr-dev libplist-dev libsodium-dev
-  libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev
+  libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev libglib2.0-dev libplist-utils libswresample-dev systemd-dev
   mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth alsa-utils
   bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
@@ -209,8 +219,8 @@ build_shairport() {
   [ -d shairport-sync ] || git clone --depth 1 "$SPS_REPO" shairport-sync
   cd shairport-sync && git pull --ff-only || true
   autoreconf -fi >/dev/null
-  ./configure --sysconfdir=/etc --with-alsa --with-pw --with-avahi --with-ssl=openssl --with-soxr --with-metadata --with-dbus-interface --with-airplay-2 --with-systemd >/dev/null
-  make -j"$(nproc)" >/dev/null && make install >/dev/null
+  ./configure --sysconfdir=/etc --with-alsa --with-pipewire --with-avahi --with-ssl=openssl --with-soxr --with-metadata --with-dbus-interface --with-airplay-2 --with-systemd-startup >/dev/null || return 1
+  make -j"$(nproc)" >/dev/null && make install >/dev/null || return 1
   echo "shairport-sync installed: $(shairport-sync -V | head -1)"
 }
 if [ "$NO_BUILD" -eq 0 ]; then
@@ -282,11 +292,15 @@ if [ "$AUDIO" = hifiberry ]; then EQ_CONF=dawn-eq-mono.conf; else EQ_CONF=dawn-e
 install -D -m 0644 "$D/pipewire/$EQ_CONF" /etc/pipewire/pipewire.conf.d/dawn-eq.conf
 install -D -m 0644 "$D/wireplumber/51-dawn-bluetooth.conf" /etc/wireplumber/wireplumber.conf.d/51-dawn-bluetooth.conf
 install -D -m 0644 "$D/wireplumber/52-dawn-alsa.conf" /etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf
-# The I2S amp is the only speaker: pin it so a USB audio device plugged in later (usb ranks first
-# in audio.sink_priority) cannot take over. Only replaces an unset pin; a user's choice stays.
-[ "$AUDIO" = hifiberry ] && sed -i -E 's/^(\s*pinned_sink:\s*)null\s*$/\1hifiberry/' /etc/dawn/config.yaml || true
+# Pin the chosen output so a USB audio device plugged in later (usb ranks first in audio.sink_priority)
+# cannot take over the speaker; auto unpins. Only an unset pin or a sink kind is replaced: a specific
+# PipeWire node picked in the web UI stays.
+[ "$AUDIO" = auto ] && PIN=null || PIN="$AUDIO"
+sed -i -E 's/^(\s*pinned_sink:\s*)(null|usb|hifiberry|headphones|hdmi)?\s*$/\1'"$PIN"'/' /etc/dawn/config.yaml || true
+echo "$AUDIO" >"$AUDIO_FILE"
 [ -f /etc/shairport-sync.conf ] && [ ! -f /etc/shairport-sync.conf.dawn-orig ] && cp /etc/shairport-sync.conf /etc/shairport-sync.conf.dawn-orig || true
 install -m 0644 "$D/shairport-sync/shairport-sync.conf" /etc/shairport-sync.conf
+install -D -m 0644 "$D/dbus/dawn-shairport-sync.conf" /etc/dbus-1/system.d/dawn-shairport-sync.conf
 install -m 0644 "$D/logrotate/dawn" /etc/logrotate.d/dawn
 install -D -m 0644 "$D/polkit/50-dawn.rules" /etc/polkit-1/rules.d/50-dawn.rules
 install -D -m 0644 "$D/avahi/dawn.service" /etc/avahi/services/dawn.service
@@ -302,6 +316,9 @@ udevadm control --reload-rules && udevadm trigger || true
 # chrony SHM units: gpsd creates 0 and 1; make sure unit 2 (dawn-timed) can be created unprivileged
 echo 'kernel.shmmax = 268435456' >/etc/sysctl.d/90-dawn.conf; sysctl -q --system || true
 
+# dtparam=i2c_arm=on only enables the bus; the light sensor is read through /dev/i2c-1, which needs i2c-dev
+echo i2c-dev >/etc/modules-load.d/dawn-i2c.conf; modprobe i2c-dev || true
+
 # ---------------------------------------------------------------------------
 # systemd units (uid substituted)
 # ---------------------------------------------------------------------------
@@ -315,9 +332,13 @@ systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.serv
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true
 systemctl enable NetworkManager avahi-daemon bluetooth chrony gpsd >/dev/null 2>&1 || true
+# Raspberry Pi OS ships with Bluetooth rfkill soft-blocked; systemd-rfkill keeps the unblock across reboots
+rfkill unblock bluetooth 2>/dev/null || true
 command -v nqptp >/dev/null 2>&1 && systemctl enable nqptp >/dev/null 2>&1 || true
 command -v shairport-sync >/dev/null 2>&1 && systemctl enable shairport-sync >/dev/null 2>&1 || true
-systemctl enable dawn-core dawn-dab dawn-timed dawn-face >/dev/null
+systemctl enable dawn-core dawn-dab dawn-timed >/dev/null
+# reenable: moves an older install's graphical.target symlink to multi-user.target
+systemctl reenable dawn-face >/dev/null 2>&1
 systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
 systemctl restart dawn-core dawn-dab dawn-timed || true
 systemctl restart dawn-face >/dev/null 2>&1 || true
@@ -338,7 +359,7 @@ if [ "$READONLY" -eq 1 ]; then
 fi
 
 echo
-echo "=== Dawn installed. Face: http://$(hostname).local/face  Control UI: http://$(hostname).local/ ==="
+echo "=== Dawn installed. Face: http://$(hostname).local:8080/face  Control UI: http://$(hostname).local:8080/ ==="
 echo "Logs: journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f"
 [ "$UPDATE" -eq 0 ] && [ "$IS_PI" -eq 1 ] && echo "A reboot is recommended after the first install (overlays, groups, watchdog)."
 exit 0

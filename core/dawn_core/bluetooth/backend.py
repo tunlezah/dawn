@@ -198,12 +198,14 @@ class BluezBackend(BluetoothBackend):
         try:
             from dbus_fast.service import ServiceInterface, method  # type: ignore
 
+            # no "-> None" on the @method()s: under postponed annotations dbus-fast 5 reads it as a
+            # signature and refuses the whole class; leaving it out means "returns nothing"
             class Agent(ServiceInterface):
                 def __init__(self) -> None:
                     super().__init__("org.bluez.Agent1")
 
                 @method()
-                def Release(self) -> None:
+                def Release(self):
                     pass
 
                 @method()
@@ -215,27 +217,27 @@ class BluezBackend(BluetoothBackend):
                     return 0
 
                 @method()
-                def DisplayPasskey(self, device: o, passkey: u, entered: q) -> None:  # noqa: F821
+                def DisplayPasskey(self, device: o, passkey: u, entered: q):  # noqa: F821
                     pass
 
                 @method()
-                def DisplayPinCode(self, device: o, pincode: s) -> None:  # noqa: F821
+                def DisplayPinCode(self, device: o, pincode: s):  # noqa: F821
                     pass
 
                 @method()
-                def RequestConfirmation(self, device: o, passkey: u) -> None:  # noqa: F821
+                def RequestConfirmation(self, device: o, passkey: u):  # noqa: F821
                     log.info("bluetooth pairing confirmation auto-accepted for %s", device)
 
                 @method()
-                def RequestAuthorization(self, device: o) -> None:  # noqa: F821
+                def RequestAuthorization(self, device: o):  # noqa: F821
                     pass
 
                 @method()
-                def AuthorizeService(self, device: o, uuid: s) -> None:  # noqa: F821
+                def AuthorizeService(self, device: o, uuid: s):  # noqa: F821
                     pass
 
                 @method()
-                def Cancel(self) -> None:
+                def Cancel(self):
                     pass
 
             self.bus.export(self._agent_path, Agent())

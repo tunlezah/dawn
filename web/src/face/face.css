@@ -25,6 +25,11 @@
 .face-time, .f-clock, .f-ambient-clock { font-variant-numeric: tabular-nums; letter-spacing: -0.035em; line-height: 0.9; }
 .f-clock { font-size: 11vmin; font-weight: 700; }
 .f-ambient-clock { font-size: 34vmin; font-weight: 800; letter-spacing: -0.045em; }
+/* Suffixes after the digits. The clocks' negative letter-spacing is inherited as an absolute length (sized for
+   the big digits), so these reset it in their own em; sized relative to the clock they follow. */
+.f-ampm { display: inline-block; margin-left: 0.4em; font-size: 0.3em; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-muted); line-height: 1; }
+.f-clock-sec { display: inline-block; margin-left: 0.25em; font-size: 0.26em; font-weight: 500; letter-spacing: 0; color: var(--fg-muted); line-height: 1; }
+.f-clock .f-ampm { font-size: 0.36em; margin-left: 0.35em; }
 .f-title { font-size: 10vmin; font-weight: 700; letter-spacing: -0.025em; line-height: 1.02; }
 .f-title.xl { font-size: 13.5vmin; letter-spacing: -0.035em; line-height: 0.95; }
 .f-sub { font-size: 5.4vmin; font-weight: 500; color: var(--fg-muted); line-height: 1.2; }
@@ -95,6 +100,7 @@
 .f-scene { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 0; }
 .f-ambient.scenic .f-ambient-clock, .f-ambient.scenic .f-date, .f-ambient.scenic .f-where, .f-ambient.scenic .f-next { text-shadow: 0 0.4vmin 2.4vmin rgba(0, 0, 0, 0.55), 0 0 1vmin rgba(0, 0, 0, 0.35); }
 .f-ambient.scenic .f-ambient-clock, .f-ambient.scenic .f-date, .f-ambient.scenic .f-next { color: #f4f6fa; }
+.f-ambient.scenic .f-ampm, .f-ambient.scenic .f-clock-sec { color: #d6dce6; }
 .f-ambient.scenic .f-where, .f-ambient.scenic .f-where .f-tiny, .f-ambient.scenic .f-next .f-meta { color: #d6dce6; }
 .f-ambient.scenic .f-where .f-tiny { opacity: 0.8; }
 .f-ambient.scenic .f-hr { background: rgba(255, 255, 255, 0.22); }
@@ -127,7 +133,7 @@
   color: color-mix(in srgb, var(--fg) var(--lvl, 72%), #000); transition: opacity 750ms ease; white-space: nowrap; }
 .f-sleep-clock.out { opacity: 0; }
 .f-sleep-clock .t { font-size: 15vmin; font-weight: 600; letter-spacing: -0.03em; line-height: 0.9; font-variant-numeric: tabular-nums; }
-.f-sleep-clock .t .ampm { font-size: 5vmin; font-weight: 500; margin-left: 1.4vmin; }
+.f-sleep-clock .t .f-ampm { color: inherit; opacity: 0.8; }
 .f-sleep-clock .a { display: flex; align-items: center; gap: 1.4vmin; font-size: 4vmin; font-weight: 500; }
 .f-sleep-clock .a .f-icon { width: 4.2vmin; height: 4.2vmin; }
 .f-sleep-clock .a .f-icon.w { width: 5.6vmin; height: 5.6vmin; margin-left: 2vmin; }
