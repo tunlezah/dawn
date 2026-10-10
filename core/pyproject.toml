@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dawn-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Dawn alarm clock radio - core service (state, alarms, audio arbiter, inputs, sensors, API)"
 requires-python = ">=3.11"
 license = { text = "MIT" }

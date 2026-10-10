@@ -6,6 +6,17 @@ on:
   pull_request:
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 scripts/version.py check
+      - name: PRs raise the version (scripts/version.py bump X.Y.Z, plus a CHANGELOG section)
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --quiet --depth 1 origin "${{ github.base_ref }}"
+          python3 scripts/version.py check --newer-than FETCH_HEAD
+
   python:
     runs-on: ubuntu-latest
     steps:

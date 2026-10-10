@@ -3,17 +3,28 @@
 # Progress is written to /var/log/dawn-update.log which the UI tails.
 set -uo pipefail
 DAWN_DIR="${DAWN_DIR:-/opt/dawn}"
-LOG=/var/log/dawn-update.log
+LOG="${DAWN_UPDATE_LOG:-/var/log/dawn-update.log}"
 BRANCH="${1:-main}"
+DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"
 {
   echo "=== dawn-update $(date -Is) branch=$BRANCH ==="
   cd "$DAWN_DIR" || { echo "no $DAWN_DIR"; exit 1; }
   git config --system --add safe.directory "$DAWN_DIR" 2>/dev/null || true
-  sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed"; exit 1; }
+  [ -d .git ] || { echo "$DAWN_DIR is not a git checkout; reinstall from a clone of $DAWN_REPO"; exit 1; }
+  if ! git remote get-url origin >/dev/null 2>&1; then
+    sudo -u dawn git remote add origin "$DAWN_REPO" && echo "added git remote origin -> $DAWN_REPO"
+  fi
+  sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed (network, or no access to $(git remote get-url origin))"; exit 1; }
   BEFORE="$(git rev-parse --short HEAD)"
-  sudo -u dawn git merge --ff-only "origin/$BRANCH" || { echo "fast-forward failed (local changes?)"; exit 1; }
+  if [ -z "$(git merge-base HEAD "origin/$BRANCH" 2>/dev/null)" ]; then
+    echo "$DAWN_DIR has its own history, unrelated to origin/$BRANCH, so it cannot be fast-forwarded."
+    echo "If it has no local work worth keeping, point it at $BRANCH once (as root), then update again:"
+    echo "  sudo -u dawn git -C $DAWN_DIR reset --hard origin/$BRANCH"
+    exit 1
+  fi
+  sudo -u dawn git merge --ff-only "origin/$BRANCH" || { echo "fast-forward failed: local commits or changed files in $DAWN_DIR (git -C $DAWN_DIR status)"; exit 1; }
   AFTER="$(git rev-parse --short HEAD)"
-  echo "updated $BEFORE -> $AFTER"
+  echo "updated $BEFORE -> $AFTER (version $(sed -n 's/^__version__ = "\(.*\)"/\1/p' core/dawn_core/__init__.py))"
   "$DAWN_DIR/deploy/install.sh" --update --no-build || { echo "install.sh failed"; exit 1; }
   echo "restarting services"
   systemctl restart dawn-timed dawn-dab || true

@@ -5,7 +5,20 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-10
+
+From this release every PR raises the version (`python scripts/version.py bump X.Y.Z`) and adds a section
+here; CI fails a PR whose version is not higher than `main`'s or whose version files disagree.
+
 ### Changed
+- DAB: a station on another ensemble tunes in the background (never under the audio arbiter's lock). Now
+  playing shows "Tuning to 9C…" until welle syncs, then it plays, or fails with "No DAB signal on 9C after
+  45 s". `dab.sync_timeout_s` defaults to 45 s (was 12 s; weak ensembles took 5–32 s to lock). A station
+  pressed again while it tunes no longer retunes welle, which restarted its sync search.
+- Software update: `install.sh` and `dawn-update` give `/opt/dawn` the GitHub remote when it has none
+  (`DAWN_REPO`, default `https://github.com/tunlezah/dawn.git`); npm and pip caches move to
+  `/var/cache/dawn`, since dawn's home is read-only under dawn-core (`ProtectHome=read-only`) where updates run.
+- `dawn-update` logs the version it updated to; `DAWN_UPDATE_LOG` overrides its log file (tests).
 - The standby scene follows the forecast for the hour coming up instead of the last reading,
   and changes on the hour by itself. Core asks Open-Meteo for two days of hourly weather, cloud,
   rain, wind and visibility and publishes the next 24 hours as `weather.hours`. New looks:
@@ -168,6 +181,17 @@ All notable changes to Dawn are recorded here. The format follows
   progress/transport and the ambient idle switch.
 
 ### Fixed
+- Software update never worked on an install made from a copied folder: no `origin` (`git fetch failed`),
+  and a locally committed history could never fast-forward. *Check for updates* now adds the remote and
+  reports an unrelated history; `dawn-update` explains it and prints the one-time repair. Installing from a
+  folder without `.git` no longer deletes `/opt/dawn/.git` (rsync `--delete`).
+- DAB channel frequencies shown in Diagnostics and the UI were wrong from 8A up (8D showed 202.064 MHz,
+  is 201.072); the table now matches ETSI EN 300 401 and welle-cli. Tuning was unaffected.
+- A DAB scan that was stopped early (cancelled, or a station picked mid-scan) replaced the whole station
+  list with the channels it had reached; it now replaces only the ensembles it found.
+- Pi 4 install fixes (see `UPSTREAM-FIXES.md`): face starts at boot, shairport-sync build/config/D-Bus,
+  Bluetooth agent and rfkill, `i2c-dev`, installer URLs, face cursor, DAB scan on weak ensembles, Amp SHIM
+  audio default, 12-hour clock pickers, AM/PM letter spacing.
 - Alarms (found in an audit of the alarm path; covered by tests in `test_alarm_robustness.py`,
   `test_alarm_support.py` and `test_buzzer.py`, except the systemd unit and the `rtl_test`/`vcgencmd`
   changes, which need the device):
