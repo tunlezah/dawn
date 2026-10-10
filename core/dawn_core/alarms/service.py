@@ -115,8 +115,9 @@ class AlarmService(Service):
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
         self.started = time.monotonic()
-        # the engine first: nothing below may keep it from running
-        self._task = asyncio.create_task(self._loop(), name="alarm-engine")
+        # the engine first: nothing below may keep it from running (and once only, should start() be tried again)
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._loop(), name="alarm-engine")
         try:
             self.ctx.svc(AudioService).register_factory("buzzer", self._make_buzzer)
         except KeyError:
@@ -492,6 +493,7 @@ class AlarmService(Service):
         key = (row.id or 0, at.isoformat())
         if key != self._prep_key:
             self._prep_key, self._prep, self._prep_due = key, None, 0.0
+            self._dab_fail = {k: v for k, v in self._dab_fail.items() if k == key}  # the old occurrences are over
             log.info("preparing %s for %s", row.label, at.strftime("%H:%M"))
         if (self._prep_task and not self._prep_task.done()) or time.monotonic() < self._prep_due:
             return
@@ -758,4 +760,8 @@ class AlarmService(Service):
             light_wake_at=(nxt[0] - timedelta(minutes=nxt[1].light_wake_minutes)).isoformat(timespec="seconds") if nxt[1].light_wake else None,
         ) if nxt else None
         st.on_leave_until = self._leave.isoformat() if self._leave else None
+        # nothing could be read from the database: the alarms are unknown here, and the face rings from what it
+        # last heard (alarms/degraded on the face)
+        st.degraded = self.ctx.db.degraded or (self._rows_error is not None and not self._rows_cache)
+        st.degraded_reason = self.ctx.db.open_error if self.ctx.db.degraded else self._rows_error
         self.ctx.store.touch()

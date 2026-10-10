@@ -3,6 +3,7 @@ import { useSyncExternalStore } from 'react';
 import { EMPTY_STATE, type UIState } from './types';
 
 type Listener = () => void;
+export const HEARTBEAT_MS = 15_000;
 
 class DawnStore {
   state: UIState = EMPTY_STATE;
@@ -11,6 +12,7 @@ class DawnStore {
   private ws: WebSocket | null = null;
   private retry = 500;
   private timer: number | null = null;
+  private heartbeat: number | null = null;
   private started = false;
   /** Sent to core on connect ("face" for the kiosk) so Diagnostics can tell the face is up. */
   private role: string | null = null;
@@ -38,6 +40,12 @@ class DawnStore {
     this.ws.onopen = () => {
       this.connected = true; this.retry = 500; this.emit();
       if (this.role) this.ws?.send(JSON.stringify({ type: 'hello', role: this.role }));
+      // a ping from the page itself every 15 s: the browser answers protocol pings even for a frozen page, so
+      // this is what tells core the kiosk is alive (it restarts the kiosk when the face goes quiet)
+      this.stopHeartbeat();
+      this.heartbeat = window.setInterval(() => {
+        if (this.ws?.readyState === WebSocket.OPEN) { try { this.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* closing */ } }
+      }, HEARTBEAT_MS);
     };
     this.ws.onmessage = (ev) => {
       try {
@@ -45,8 +53,13 @@ class DawnStore {
         if (msg.type === 'state') { this.state = msg.data as UIState; this.emit(); }
       } catch { /* ignore */ }
     };
-    this.ws.onclose = () => { this.connected = false; this.emit(); this.scheduleReconnect(); };
+    this.ws.onclose = () => { this.stopHeartbeat(); this.connected = false; this.emit(); this.scheduleReconnect(); };
     this.ws.onerror = () => { try { this.ws?.close(); } catch { /* ignore */ } };
+  }
+
+  private stopHeartbeat() {
+    if (this.heartbeat !== null) clearInterval(this.heartbeat);
+    this.heartbeat = null;
   }
 
   private scheduleReconnect() {

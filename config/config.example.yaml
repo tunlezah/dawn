@@ -402,6 +402,21 @@ system:
   heartbeat_interval_s: 5
   # Send systemd watchdog keepalives.
   watchdog: true
+  supervisor:
+    # Restart supporting programs that have failed or stopped answering (the DAB decoder, the face kiosk, PipeWire, dawn-timed, AirPlay, gpsd, chrony, Bluetooth), and start again the parts of dawn-core that could not start at boot.
+    enabled: true
+    # How often everything is checked.
+    check_interval_s: 15
+    # Restart the face kiosk when no face has been connected, or its page has stopped talking, for this long.
+    face_absent_s: 150
+    # Restart the DAB decoder when it has not answered for this long with the stick plugged in (an alarm ringing on the radio does this itself).
+    welle_dead_s: 45
+    # Restart dawn-timed when its status file is older than this.
+    timed_stale_s: 300
+    # Shortest wait between two restarts of the same thing; it doubles while the problem keeps coming back.
+    min_backoff_s: 60
+    # Longest wait between two restarts of the same thing.
+    max_backoff_s: 1800
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
   # Reads under-voltage / throttling flags on a Pi.
   vcgencmd_binary: vcgencmd

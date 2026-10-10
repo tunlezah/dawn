@@ -42,7 +42,7 @@ readings, a week of history and one-tap fixes.
 
 - [Hardware](#hardware) · [Wiring](#wiring)
 - [First boot](#first-boot) · [Updating](#updating)
-- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring)
+- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring) · [Keeping itself running](#keeping-itself-running)
 - [Laptop simulator](#laptop-simulator)
 - [Architecture](#architecture) · [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -230,9 +230,36 @@ ringing:
 - **Storage failures don't stop it**: an SD card gone read-only or a full disk cannot keep an alarm from ringing
   (or make it ring twice), and one damaged alarm in the database cannot stop the others; *Diagnostics → System*
   reports failed writes.
-- **The face rings by itself** if core does not answer at alarm time (no state and no `/api/health` for 20 s):
-  45 s after the alarm it beeps from what it last heard, a tap snoozes, a 2 s hold stops, all on the face. Its
-  volume is the speaker's as core last set it, and with *Screen off* sleep the screen stays dark.
+- **The face rings by itself** if core does not answer at alarm time (no state and no `/api/health` for 20 s),
+  or answers but cannot read its alarms (the database on the SD card is unreadable): 45 s after the alarm it beeps
+  from what it last heard, a tap snoozes, a 2 s hold stops, all on the face. Its volume is the speaker's as core
+  last set it, and with *Screen off* sleep the screen stays dark.
+- **A broken card or config file does not stop it starting**: a database that cannot be written is read
+  (alarms ring as saved, nothing new can be kept), one that cannot be read at all is replaced by an empty one so
+  core still runs and the face rings from its own memory; a config file with a bad value keeps its good sections
+  and the defaults for the rest. *Diagnostics → System* says which.
+
+### Keeping itself running
+
+systemd restarts whatever exits (`Restart=always`, and never gives up: `StartLimitIntervalSec=0`), the hardware
+watchdog reboots a Pi whose kernel hangs, and dawn-core's watchdog is fed only while its alarm engine ticks. On
+top of that dawn-core **checks the programs it depends on every 15 s and restarts what systemd cannot see is
+broken** (`system.supervisor`):
+
+| What | When it is restarted |
+|---|---|
+| The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, or the page has stopped sending its 15 s heartbeat, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium |
+| The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in, unless an alarm on the radio is ringing or snoozed (its own ladder handles that) |
+| The PipeWire session (`pipewire`, `wireplumber`, `pipewire-pulse`, user units) | `failed`, or wireplumber `inactive`; then the sink, volume and filter chain are set up again |
+| `dawn-timed` | its status file is older than `timed_stale_s` (5 min) while the unit says active |
+| Any unit left `failed` (`shairport-sync`, `nqptp`, `gpsd`, `chrony`, `bluetooth`, `avahi-daemon`, `NetworkManager`, Dawn's own) and Dawn's own units seen `inactive` for 30 s | only units that are enabled on this box; a failed unit means systemd gave up on it |
+| A part of dawn-core that could not start at boot (PipeWire tools not answering yet, bluetoothd late, a busy GPIO chip) | its `start()` is tried again after 1, 2, 4… minutes (15 at most) until it works |
+
+Every restart waits until the problem has been seen for a while, is held back by a backoff that doubles while the
+same thing keeps breaking (`min_backoff_s` 60 s to `max_backoff_s` 30 min; it starts over after ten good
+minutes), is logged as a `supervisor_repair` event in the journal, and is listed under *Diagnostics → System →
+Self-repair* with what, when and why. The privileged restarts are exactly the lines in `deploy/sudoers/dawn`.
+`system.supervisor.enabled: false` turns it all off; *Status → Hardware → Services* still shows every unit's state.
 
 ### Sleep mode and burn-in
 
@@ -343,6 +370,8 @@ set the tuner gain, poll the time sources, play a test tone):
 | Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync), or at once when the preparation minutes before found the station would not play; *Diagnostics → Audio → Alarms* says why, *Diagnostics → DAB radio → Last 24 hours* and the history graphs show the signal at that time |
 | Alarm beeps (backup tone) | neither the source nor the chime reached the speaker: mpv, the output or PipeWire; *Diagnostics → Audio*, play a test tone, `journalctl -u dawn-core \| grep -i "backup tone"` says which player worked |
 | Face shows "backup alarm · Dawn is not responding" | dawn-core was down at alarm time and the face rang by itself; `journalctl -b -u dawn-core` for why, `systemctl status dawn-core` |
+| Face shows "backup alarm · Dawn cannot read its alarms" | dawn-core is running on an empty in-memory database because `/var/lib/dawn/dawn.db` could not be opened or read (*Diagnostics → System → Database*); check the card (`dmesg`, `fsck`), reboot, restore a backup |
+| Something keeps restarting (*Diagnostics → System → Self-repair* lists restarts) | the supervisor found the kiosk, the decoder, PipeWire or a unit broken and restarted it; `journalctl -u dawn-core \| grep supervisor` and the unit's own log around that time say why; `system.supervisor.enabled: false` stops it |
 | No sound | *Audio* page: sink list and active sink; `wpctl status` as user dawn (`sudo -u dawn XDG_RUNTIME_DIR=/run/user/$(id -u dawn) wpctl status`); with the SHIM, `aplay -l` should list `snd_rpi_hifiberry_dac` and `config.txt` must have `gpio=25=op,dh` |
 | Pop when audio starts or stops | `/etc/wireplumber/wireplumber.conf.d/52-dawn-alsa.conf` present; `wpctl inspect` on the hardware sink shows `session.suspend-timeout-seconds = 0` |
 | Only one side of a stereo track | the mono filter chain is not loaded: re-run `install.sh --audio shim` and check `/etc/pipewire/pipewire.conf.d/dawn-eq.conf` says "mono" |
@@ -355,6 +384,7 @@ set the tuner gain, poll the time sources, play a test tone):
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
 | Wi-Fi lost | the setup hotspot appears after 45 s; *Settings → Wi-Fi* |
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
+| A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 
 Logs: `journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f`, also
 *Diagnostics → System → Logs* in the UI. Installer log: `/var/log/dawn-install.log`.

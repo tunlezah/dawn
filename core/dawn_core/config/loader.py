@@ -44,6 +44,44 @@ def load_config(path: Path | None = None) -> DawnConfig:
     return DawnConfig.model_validate(data)
 
 
+def load_config_lenient(path: Path | None = None) -> tuple[DawnConfig, str | None]:
+    """The config, or as much of it as validates, and what was wrong with it.
+
+    A file with one bad value (a hand edit, a key an older version does not know) must not keep dawn-core, and
+    with it every alarm, from starting: each top-level section is validated on its own, the ones that fail (and
+    unknown keys) are replaced by their defaults, and the error is kept for Diagnostics. A file that cannot be
+    read at all gives the defaults."""
+    p = path or config_path()
+    try:
+        return load_config(p), None
+    except (ValidationError, ValueError, yaml.YAMLError) as e:
+        error = str(e).strip().splitlines()[0] if str(e).strip() else type(e).__name__
+    try:
+        data = _read_yaml(p)
+    except (ValueError, yaml.YAMLError, OSError):
+        log.error("%s cannot be read (%s); running with the default configuration", p, error)
+        return DawnConfig(), f"{error}; the whole file is replaced by the defaults"
+    good: dict[str, Any] = {}
+    dropped: list[str] = []
+    for key, value in data.items():
+        if key not in DawnConfig.model_fields:
+            dropped.append(key)
+            continue
+        try:
+            DawnConfig.model_validate({key: value})
+            good[key] = value
+        except ValidationError:
+            dropped.append(key)
+    try:
+        cfg = DawnConfig.model_validate(good)
+    except ValidationError:  # a rule across sections (GPIO pins unique...): the defaults, then
+        cfg = DawnConfig()
+        dropped = sorted(set(dropped) | set(good))
+    what = ", ".join(dropped) or "nothing"
+    log.error("%s is invalid (%s); running with the defaults for: %s", p, error, what)
+    return cfg, f"{error}; the defaults are used for: {what}"
+
+
 def dump_config(cfg: DawnConfig) -> str:
     return yaml.safe_dump(cfg.model_dump(mode="json"), sort_keys=False, allow_unicode=True)
 
@@ -72,10 +110,12 @@ class ConfigManager:
     def __init__(self, path: Path | None = None, poll_s: float = 2.0):
         self.path = path or config_path()
         self.poll_s = poll_s
-        self.config: DawnConfig = load_config(self.path)
-        self.last_error: str | None = None
+        # a file that fails validation does not stop dawn-core: the sections that validate are used, the others
+        # fall back to their defaults, and `last_error` says so until the file is fixed
+        self.config, self.last_error = load_config_lenient(self.path)
         self._mtime = self._stat()
         self._listeners: list[Listener] = []
+        self._error_listeners: list[Callable[[str | None], None]] = []
         self._task: asyncio.Task[None] | None = None
 
     def _stat(self) -> float:
@@ -86,6 +126,17 @@ class ConfigManager:
 
     def on_change(self, fn: Listener) -> None:
         self._listeners.append(fn)
+
+    def on_error(self, fn: Callable[[str | None], None]) -> None:
+        """Called with the error when a reload is rejected, and with None when the file validates again."""
+        self._error_listeners.append(fn)
+
+    def _report(self, error: str | None) -> None:
+        for fn in list(self._error_listeners):
+            try:
+                fn(error)
+            except Exception:  # noqa: BLE001
+                log.exception("config error listener failed")
 
     async def start(self) -> None:
         if self._task is None:
@@ -114,10 +165,12 @@ class ConfigManager:
         except (ValidationError, ValueError, yaml.YAMLError) as e:
             self.last_error = str(e)
             log.error("config reload failed, keeping previous config: %s", e)
+            self._report(self.last_error)
             return False
         self.last_error = None
         old, self.config = self.config, new
         log.info("config reloaded from %s", self.path)
+        self._report(None)
         await self._notify(old, new)
         return True
 
@@ -137,6 +190,8 @@ class ConfigManager:
         write_config(new, self.path)
         self._mtime = self._stat()
         old, self.config = self.config, new
+        self.last_error = None  # written from the validated config: whatever was wrong in the file is gone
+        self._report(None)
         await self._notify(old, new)
         return new
 
@@ -145,6 +200,8 @@ class ConfigManager:
         write_config(new, self.path)
         self._mtime = self._stat()
         old, self.config = self.config, new
+        self.last_error = None
+        self._report(None)
         await self._notify(old, new)
         return new
 

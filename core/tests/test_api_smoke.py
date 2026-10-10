@@ -54,3 +54,26 @@ async def test_menu_activity_holds_the_sheet_open(client: AsyncClient) -> None:
     assert face._menu_opened_at is not None and face._menu_opened_at >= armed
     s = (await client.get("/api/state")).json()
     assert s["face"]["menu_open"] is True and s["face"]["wake_until"] is not None
+
+
+def test_the_face_is_known_by_what_its_page_sends(tmp_config) -> None:
+    """The supervisor tells a live kiosk from a frozen one by the page's own pings, not by the socket being open."""
+    from fastapi.testclient import TestClient
+
+    app = create_app(ConfigManager(tmp_config, poll_s=10))
+    with TestClient(app) as c:
+        hub = app.state.ws_hub
+        with c.websocket_connect("/ws") as ws:
+            assert ws.receive_json()["type"] == "state"
+            assert not hub.face_seen()  # connected, but it has not said it is the face
+            ws.send_json({"type": "hello", "role": "face"})
+            ws.send_json({"type": "ping"})
+            assert ws.receive_json()["type"] == "pong"
+            assert hub.face_seen()
+            info = next(iter(hub.info.values()))
+            info["last_seen"] -= 120  # the page went quiet two minutes ago
+            assert not hub.face_seen() and hub.face_seen(max_age_s=300)
+            ws.send_json({"type": "ping"})
+            ws.receive_json()
+            assert hub.face_seen()
+        assert not hub.face_seen()

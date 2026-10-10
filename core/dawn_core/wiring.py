@@ -27,6 +27,8 @@ def build_services(ctx: DawnContext) -> None:
     _optional(ctx, "dawn_core.bluetooth.service", "BluetoothService")
     _optional(ctx, "dawn_core.diagnostics.service", "DiagnosticsService")
     _optional(ctx, "dawn_core.face.service", "FaceService")
+    # last: it looks after everything above (and the programs outside dawn-core)
+    _optional(ctx, "dawn_core.system.supervisor", "SupervisorService")
 
 
 def _optional(ctx: DawnContext, module: str, cls_name: str) -> None:

@@ -146,3 +146,18 @@ async def test_sim_hub_streams_flow_per_client() -> None:
             assert not await flowing(c, "dawn-backup-tone")
     finally:
         STATE.sdr_present, STATE.audio_flowing = old
+
+
+async def test_alarms_say_so_when_the_database_could_not_be_read(ctx) -> None:
+    """The face rings by itself from what it last heard when core answers but knows no alarms."""
+    from dawn_core.alarms.service import AlarmService
+
+    a: AlarmService = ctx.svc(AlarmService)
+    a.publish(force=True)
+    assert ctx.store.state.alarms.degraded is False
+    ctx.db.mode, ctx.db.open_error = "memory", "OperationalError: unable to open database file"
+    a.publish(force=True)
+    assert ctx.store.state.alarms.degraded is True and "unable to open" in ctx.store.state.alarms.degraded_reason
+    ctx.db.mode, ctx.db.open_error = "rw", None
+    a.publish(force=True)
+    assert ctx.store.state.alarms.degraded is False

@@ -31,7 +31,8 @@ class TimerService(Service):
         self._tick_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
-        self._tick_task = asyncio.create_task(self._tick(), name="timers-tick")
+        if self._tick_task is None or self._tick_task.done():
+            self._tick_task = asyncio.create_task(self._tick(), name="timers-tick")
         self._restore_nap()
         self.publish()
 

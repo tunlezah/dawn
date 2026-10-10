@@ -432,9 +432,32 @@ class WebConfig(StrictModel):
     auth: AuthConfig = AuthConfig()
 
 
+class SupervisorConfig(StrictModel):
+    """Self-repair: dawn-core checks the programs it depends on and restarts what has failed, stopped answering or
+    hit systemd's start limit, with a backoff. Diagnostics -> System shows what it did."""
+
+    enabled: bool = Field(
+        True,
+        description="Restart supporting programs that have failed or stopped answering (the DAB decoder, the face kiosk, PipeWire, dawn-timed, AirPlay, gpsd, chrony, Bluetooth), and start again the parts of dawn-core that could not start at boot.",
+    )
+    check_interval_s: int = Field(15, ge=5, le=300, description="How often everything is checked.")
+    face_absent_s: int = Field(150, ge=30, le=3600, description="Restart the face kiosk when no face has been connected, or its page has stopped talking, for this long.")
+    welle_dead_s: int = Field(45, ge=10, le=600, description="Restart the DAB decoder when it has not answered for this long with the stick plugged in (an alarm ringing on the radio does this itself).")
+    timed_stale_s: int = Field(300, ge=30, le=3600, description="Restart dawn-timed when its status file is older than this.")
+    min_backoff_s: int = Field(60, ge=10, le=3600, description="Shortest wait between two restarts of the same thing; it doubles while the problem keeps coming back.")
+    max_backoff_s: int = Field(1800, ge=60, le=86400, description="Longest wait between two restarts of the same thing.")
+
+    @model_validator(mode="after")
+    def _backoff(self) -> SupervisorConfig:
+        if self.max_backoff_s < self.min_backoff_s:
+            raise ValueError("max_backoff_s must be at least min_backoff_s")
+        return self
+
+
 class SystemConfig(StrictModel):
     heartbeat_interval_s: int = Field(5, ge=1, le=60)
     watchdog: bool = Field(True, description="Send systemd watchdog keepalives.")
+    supervisor: SupervisorConfig = SupervisorConfig()
     cpu_temp_path: str = "/sys/class/thermal/thermal_zone0/temp"
     vcgencmd_binary: str = Field("vcgencmd", description="Reads under-voltage / throttling flags on a Pi.")
     update_repo_dir: str = Field("/opt/dawn", description="Git checkout used by the software updater.")

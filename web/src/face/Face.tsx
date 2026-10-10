@@ -58,7 +58,7 @@ export function Face() {
   };
 
   let screen;
-  if (backup.local) screen = <Ringing local={{ label: backup.local.label, snoozedUntil: backup.local.snoozedUntil, onSnooze: backup.snooze, onStop: backup.stop }} />;
+  if (backup.local) screen = <Ringing local={{ label: backup.local.label, snoozedUntil: backup.local.snoozedUntil, why: backup.local.why, onSnooze: backup.snooze, onStop: backup.stop }} />;
   else switch (s.face.mode) {
     case 'ringing': screen = <Ringing />; break;
     case 'playing': screen = ambient ? <Ambient compact /> : <Playing />; break;

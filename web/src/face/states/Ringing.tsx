@@ -10,7 +10,7 @@ export const STOP_HOLD_MS = 2000;
 const run = (p: Promise<unknown>) => p.catch(() => {});
 
 /** A ring the face runs by itself while core is not answering (see backup.ts): snoozed and stopped right here. */
-export interface LocalRingProps { label: string; snoozedUntil: number | null; onSnooze: () => void; onStop: () => void }
+export interface LocalRingProps { label: string; snoozedUntil: number | null; why: string; onSnooze: () => void; onStop: () => void }
 
 export function Ringing({ local }: { local?: LocalRingProps }) {
   const s = useState();
@@ -47,7 +47,7 @@ export function Ringing({ local }: { local?: LocalRingProps }) {
 
   // which sound is on: the alarm's own source needs no note; anything below it is said, so a chime or the backup tone
   // in the morning is not a mystery
-  const note = local ? 'backup alarm · Dawn is not responding' : r?.tier === 'buzzer' ? 'backup tone' : r?.fallback ? 'chime fallback' : null;
+  const note = local ? `backup alarm · ${local.why}` : r?.tier === 'buzzer' ? 'backup tone' : r?.fallback ? 'chime fallback' : null;
   const hint = holding ? 'Keep holding to stop' : snoozed ? `Snoozed until ${fmtTime(new Date(snoozedAt!), s.tz, s.settings.clock_24h).hm} · hold to stop` : 'Tap anywhere to snooze · hold to stop';
   return (
     <div className={`f-ring face-screen fade-in ${local ? 'local' : ''}`} onPointerDown={onDown} onPointerUp={onUp} onPointerCancel={onUp}>

@@ -50,6 +50,8 @@ export interface AlarmPrep {
 export interface AlarmsState {
   items: AlarmSummary[]; next: NextAlarm | null; ringing: RingingInfo | null; on_leave_until: string | null; light_wake_active: boolean;
   prepare: AlarmPrep | null;
+  /** core could not read its alarms (the database is unreadable): `items` and `next` say nothing */
+  degraded: boolean; degraded_reason: string | null;
 }
 export interface TimerInfo { kind: 'sleep' | 'nap'; ends_at: string; total_s: number; remaining_s: number; fading: boolean }
 export interface TimersState { sleep: TimerInfo | null; nap: TimerInfo | null; sleep_choices: number[]; nap_choices: number[] }
@@ -112,7 +114,7 @@ export const EMPTY_STATE: UIState = {
     orbit: true, strip_autohide_s: 120, scene_daily: true },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
-  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null },
+  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null, degraded: false, degraded_reason: null },
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
   dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown' },
   presets: [],

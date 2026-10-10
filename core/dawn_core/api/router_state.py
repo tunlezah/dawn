@@ -28,5 +28,6 @@ def health(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
         "version": ctx.store.state.system.version,
         "sim": ctx.sim,
         "failed_services": ctx.registry.failed,
+        "database": ctx.db.mode,
         "now": ctx.store.iso(),
     }

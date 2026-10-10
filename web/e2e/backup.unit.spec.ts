@@ -1,6 +1,7 @@
 // The face's backup alarm logic, without a browser (src/face/backup.ts).
 import { test, expect } from '@playwright/test';
-import { LOCAL_AFTER_MS, LOCAL_MAX_MS, owedRing, type Heard } from '../src/face/backup';
+import { LOCAL_AFTER_MS, LOCAL_MAX_MS, hear, owedRing, type Heard } from '../src/face/backup';
+import { EMPTY_STATE } from '../src/shared/types';
 
 const T = Date.parse('2026-10-07T06:30:00+11:00');
 const next = { id: 1, label: 'Work', at: '2026-10-07T06:30:00+11:00' };
@@ -30,4 +31,15 @@ test('a snoozed ring is owed 45 s after its snooze would have ended', () => {
   const heard: Heard = { next: null, ring: { label: 'Work', started: next.at, snoozedUntil: until }, at: T + 60_000 };
   expect(owedRing(heard, Date.parse(until) + LOCAL_AFTER_MS - 1, [])).toBeNull();
   expect(owedRing(heard, Date.parse(until) + LOCAL_AFTER_MS, [])).not.toBeNull();
+});
+
+test('a core that cannot read its alarms does not overwrite what the face heard before', () => {
+  const prev: Heard = { next, ring: null, at: T - 3_600_000 };
+  const fine = { ...EMPTY_STATE, alarms: { ...EMPTY_STATE.alarms, next: { ...next, in_seconds: 60, light_wake_at: null } } };
+  expect(hear(fine, T, null).next?.id).toBe(1);
+  const lost = { ...EMPTY_STATE, alarms: { ...EMPTY_STATE.alarms, next: null, degraded: true, degraded_reason: 'unable to open database file' } };
+  expect(hear(lost, T, prev).next).toEqual(next); // kept: core knows nothing, the face still does
+  expect(hear(lost, T, null).next).toBeNull();
+  const empty = { ...EMPTY_STATE, alarms: { ...EMPTY_STATE.alarms, next: null } };
+  expect(hear(empty, T, prev).next).toBeNull(); // core is fine and really has no alarm
 });

@@ -42,9 +42,16 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     conns = ctx.ws_hub.connections() if ctx.ws_hub else []
     last_input = inputs.last_event if inputs else None
     alarms = _svc(ctx, "dawn_core.alarms.service", "AlarmService")
+    supervisor = _svc(ctx, "dawn_core.system.supervisor", "SupervisorService")
     events = await asyncio.to_thread(ctx.db.events_since, ctx.store.now() - timedelta(hours=24), ["ring_fallback", "alarm_missed", "ring_restored"])
     return {
         "units": units,
+        "supervisor": {
+            "enabled": cfg.system.supervisor.enabled, "checked_at": supervisor.checked_at if supervisor else None,
+            "repairs_24h": supervisor.recent(24) if supervisor else [], "user_units": supervisor.user_states if supervisor else None,
+            "face_seen": ctx.ws_hub.face_seen() if ctx.ws_hub else False, "face_absent_s": cfg.system.supervisor.face_absent_s,
+            "recovered": dict(ctx.registry.recovered),
+        },
         "audio": {
             "backend": st.audio.backend, "sink": st.audio.sink.model_dump() if st.audio.sink else None, "sinks": [s.model_dump() for s in st.audio.sinks],
             "pinned": cfg.audio.pinned_sink, "volume": st.audio.volume, "muted": st.audio.muted, "active_source": st.audio.active_source,
@@ -84,6 +91,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "disk_root": {"total": root[0], "free": root[1]} if root else None,
             "errors": recent[-8:], "error_count": len(recent), "update_running": st.system.update_running,
             "db_write_errors": ctx.db.write_errors, "db_last_write_error": ctx.db.last_write_error,
+            "db_mode": ctx.db.mode, "db_open_error": ctx.db.open_error, "db_path": str(ctx.db.path),
         },
     }
 
@@ -186,8 +194,11 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if d["face_clients"]:
         add("display", "face", "Face", "ok", f"The face is connected (since {d['face_clients'][0]['connected_at'][11:16]}), showing {d['face_mode']}.")
     elif not f["system"]["sim"]:
+        sup = f.get("supervisor") or {}
         add("display", "face", "Face", "fail" if u.get("dawn-face") not in ("active", "unknown") else "warn",
-            f"dawn-face is {u.get('dawn-face')} and the face is not connected.", "Restart the kiosk.", ["display.restart_face"])
+            f"dawn-face is {u.get('dawn-face')} and the face is not connected.",
+            "Restart the kiosk." + (f" Dawn restarts it by itself after {sup['face_absent_s']} s without a face." if sup.get("enabled") else ""),
+            ["display.restart_face"])
     if d["backlight"] in ("none",):
         add("display", "backlight", "Backlight", "warn", "No backlight control: brightness cannot follow the room.",
             "DSI panels expose /sys/class/backlight; HDMI panels use the software dimmer (display.backlight.driver: overlay).")
@@ -223,9 +234,33 @@ def checks(f: dict[str, Any]) -> list[Check]:
     s = f["system"]
     if s["config_error"]:
         add("system", "config", "Configuration", "fail", f"config.yaml was rejected: {s['config_error']}", "Fix the value under Settings → All options; the last good config is in use.")
+    if s.get("db_mode") == "memory":
+        add("system", "database", "Database", "fail", f"{s.get('db_path')} could not be opened or read at start ({s.get('db_open_error')}); dawn-core runs on an empty in-memory database: "
+            "no alarms, presets or stations are known.",
+            "The face rings by itself at the time of the last alarm it heard of. Check the SD card (dmesg, fsck); restore a backup once the storage is sound; a reboot may be enough after a card remount.")
+    elif s.get("db_mode") == "ro":
+        add("system", "database", "Database", "fail", f"{s.get('db_path')} could only be opened read-only at start ({s.get('db_open_error')}): the alarms and settings are read from it, nothing can be saved.",
+            "The storage has probably gone read-only (a failing SD card, or ext4 errors at boot). Alarms ring as saved; changes made now are lost at the next restart. Check dmesg and reboot once the card is sound.")
     if s.get("db_write_errors"):
         add("system", "db_writes", "Saving to storage", "fail", f"{s['db_write_errors']} write(s) to the database failed since start; last: {s['db_last_write_error']}.",
             "The storage may have gone read-only (a failing SD card) or be full; see Data storage. Alarms keep working from memory, but changes made now are lost at the next restart.")
+    sup = f.get("supervisor")
+    if sup is not None:
+        if not sup.get("enabled"):
+            add("system", "supervisor", "Self-repair", "info", "Off (system.supervisor.enabled): nothing that fails is restarted by dawn-core; systemd alone restarts what exits.")
+        else:
+            reps = sup.get("repairs_24h") or []
+            rec = sup.get("recovered") or {}
+            if reps:
+                failed = [r for r in reps if not r.get("ok")]
+                what = sorted({r["what"] for r in reps})
+                last = reps[-1]
+                add("system", "supervisor", "Self-repair", "fail" if failed else "warn",
+                    f"{len(reps)} restart{'s' if len(reps) > 1 else ''} in the last 24 hours ({', '.join(what)}); last at {last['at'][11:16]}: {last['what']}, {last['reason']}: {last['message']}."
+                    + (f" {len(failed)} could not be done." if failed else ""),
+                    "Something keeps breaking; the journal around those times says why (System → Logs). Repairs of the same thing wait longer each time it comes back.")
+            else:
+                add("system", "supervisor", "Self-repair", "ok", "Nothing needed restarting in the last 24 hours." + (f" Started late: {', '.join(sorted(rec))}." if rec else ""))
     for name, err in s["failed_services"].items():
         add("system", f"svc.{name}", f"Service {name}", "fail", f"Failed to start: {err}", "See System → Logs.")
     th = s["throttled"]
