@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "dawn-sim"
-version = "0.2.0"
+version = "0.2.1"
 description = "Dawn: laptop simulators (GPS NMEA, fake welle-cli, lux, inputs, backlight) and the sim launcher"
 requires-python = ">=3.11"
 license = { text = "MIT" }

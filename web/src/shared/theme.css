@@ -84,28 +84,36 @@ body {
 }
 body.face { overflow: hidden; user-select: none; cursor: none; touch-action: none; }
 .tnum { font-variant-numeric: tabular-nums; }
-.card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); }
-.btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-medium transition active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none select-none; background: var(--bg-elev-2); color: var(--fg); border: 1px solid var(--border); }
-.btn-primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
-.btn-danger { background: var(--err); color: #fff; border-color: transparent; }
-.btn-ghost { background: transparent; border-color: transparent; color: var(--fg-muted); }
-.btn-sm { @apply px-3 py-1.5 text-sm rounded-lg; }
-.chip { @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm; background: var(--bg-elev-2); color: var(--fg-muted); border: 1px solid var(--border); }
-.dot { @apply inline-block w-2.5 h-2.5 rounded-full; }
-.dot-ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-.dot-off { background: var(--fg-faint); }
-.dot-warn { background: var(--warn); }
-.dot-err { background: var(--err); }
-input[type='range'] { accent-color: var(--accent); width: 100%; }
-input[type='text'], input[type='number'], input[type='time'], input[type='date'], input[type='password'], input[type='url'], select, textarea {
-  @apply rounded-xl px-3 py-2 w-full outline-none;
-  background: var(--bg-elev-2); color: var(--fg); border: 1px solid var(--border);
+/* Component and form-control styles sit in Tailwind's layers so utility classes on the element win, e.g.
+   `chip text-accent border-accent` for a selected chip or `w-20` on a number input. Unlayered CSS always beats
+   layered CSS, which silently swallowed those overrides. */
+@layer base {
+  input[type='range'] { accent-color: var(--accent); width: 100%; }
+  input[type='text'], input[type='number'], input[type='time'], input[type='date'], input[type='password'], input[type='url'], select, textarea {
+    @apply rounded-xl px-3 py-2 w-full outline-none;
+    background: var(--bg-elev-2); color: var(--fg); border: 1px solid var(--border);
+  }
+  input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--ring); }
 }
-input:focus, select:focus, textarea:focus { box-shadow: 0 0 0 3px var(--ring); }
-.switch { @apply relative inline-flex h-7 w-12 items-center rounded-full transition; background: var(--fg-faint); }
-.switch[data-on='true'] { background: var(--accent); }
-.switch > span { @apply inline-block h-5 w-5 rounded-full bg-white transition; transform: translateX(4px); }
-.switch[data-on='true'] > span { transform: translateX(26px); }
+@layer components {
+  .card { background: var(--bg-elev); border: 1px solid var(--border); border-radius: var(--radius); }
+  .btn { @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-medium transition active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none select-none; background: var(--bg-elev-2); color: var(--fg); border: 1px solid var(--border); }
+  .btn-primary { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+  .btn-danger { background: var(--err); color: #fff; border-color: transparent; }
+  .btn-ghost { background: transparent; border-color: transparent; color: var(--fg-muted); }
+  .btn-sm { @apply px-3 py-1.5 text-sm rounded-lg; }
+  .chip { @apply inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-sm; background: var(--bg-elev-2); color: var(--fg-muted); border: 1px solid var(--border); }
+  .chip-on { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, var(--bg-elev-2)); }
+  .dot { @apply inline-block w-2.5 h-2.5 rounded-full; }
+  .dot-ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot-off { background: var(--fg-faint); }
+  .dot-warn { background: var(--warn); }
+  .dot-err { background: var(--err); }
+  .switch { @apply relative inline-flex h-7 w-12 items-center rounded-full transition; background: var(--fg-faint); }
+  .switch[data-on='true'] { background: var(--accent); }
+  .switch > span { @apply inline-block h-5 w-5 rounded-full bg-white transition; transform: translateX(4px); }
+  .switch[data-on='true'] > span { transform: translateX(26px); }
+}
 
 @keyframes pulse-accent { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
 .pulse { animation: pulse-accent 1.6s ease-in-out infinite; }
