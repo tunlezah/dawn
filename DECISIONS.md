@@ -22,6 +22,13 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **Hot reload by polling mtime every 2 s** rather than inotify: no extra
   dependency, works on every filesystem (including overlayfs), and 2 s latency
   is fine for a config file.
+- **A config file that fails validation does not stop dawn-core.** It used to: a hand edit with one
+  bad value, or a key from a newer version, crash-looped core at boot and left only the face's own
+  backup alarm. `load_config_lenient` validates each top-level section on its own, keeps the ones that
+  pass, takes the defaults for the rest (and for unknown keys) and reports what it dropped; the error
+  shows under *Diagnostics → System → Configuration* and `dawn-core --check` exits 1 on it. A hot reload
+  of a bad file still keeps the previous config, and now also reports the error there (it was only
+  logged before).
 - **Writing the file back from the UI drops comments.** We dump a clean YAML
   document; the example file in `config/` keeps the commented reference.
 
@@ -237,6 +244,15 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **The watchdog is fed only while the alarm engine ticks** (within 30 s): the tick is quick now, so a stuck one
   is a reason for systemd to restart dawn-core, after which the saved ring carries on. `dawn-core.service` has
   `StartLimitIntervalSec=0`: systemd's default gave up after five fast restarts, leaving no alarms at all.
+- **Opening the database never fails** (`db/engine.py`). The runtime path already survived a card gone
+  read-only, but a card that was read-only *at boot* (ext4 remounted after errors, the usual way an SD
+  card dies) could not create SQLite's WAL files, so `create_all` raised and core crash-looped with no
+  alarms at all; a corrupt file did the same. Now the file is opened for writing, then read-only with
+  `immutable=1` (no locks, no -shm/-wal: the alarms and settings are read, every write fails and is
+  counted as before), then an empty in-memory database stands in. In that last case the alarms are
+  unknown, so `alarms.degraded` is published and the face treats core as absent for alarm purposes: it
+  keeps the last next-alarm it heard instead of overwriting it with nothing, and rings by itself 45 s
+  after it (`backup alarm · Dawn cannot read its alarms`). `/api/health` reports the database mode.
 - **Each alarm is prepared minutes ahead** (`alarm_defaults.prepare_minutes`, 5; every 20 s, every 5 s while
   something is not ready). Its players are started; for DAB a running scan is stopped, an unreachable decoder
   restarted, the tuner moved to the station's channel and checked for sync and the station on air. Someone
@@ -451,6 +467,29 @@ each section. Every entry says what was decided and why, so it can be revisited.
   (`RuntimeWatchdogSec=15s`), and `dawn-core.service` has `WatchdogSec=60` fed by
   `sd_notify(WATCHDOG=1)` from the heartbeat loop that also writes
   `/run/dawn/heartbeat`.
+- **dawn-core supervises the programs it depends on** (`system/supervisor.py`, `system.supervisor`).
+  systemd only restarts what exits; what broke in practice stayed up: a Chromium on an error page or
+  frozen after a GPU hiccup (the unit is `active`, nobody looks at the screen until morning), a welle-cli
+  that stopped answering HTTP, wireplumber failed so no sink was ever linked, a dawn-timed hung on a
+  socket, a unit that hit the start limit. Diagnostics could see all of it but only offered buttons.
+  The supervisor runs the same checks every 15 s and does the restart itself, with three guards so it
+  cannot make things worse: a problem has to be seen for a while first (150 s without a face, 45 s
+  without a decoder answer, 30 s of a stopped unit), the same thing is not restarted again before a
+  backoff that doubles up to 30 min (and heals after ten good minutes), and alarms are never touched (a
+  ring restarts what it needs itself, and welle is left alone while an alarm rings on the radio). The
+  face is judged by its page's own 15 s ping over the WebSocket, not by the socket being open: the
+  browser answers protocol pings for a frozen page. Restarting a unit only when it is *enabled* keeps a
+  box without AirPlay or Bluetooth from restarting what was never meant to run; `is-enabled` is read
+  without sudo and cached an hour. The PipeWire session is restarted with `systemctl --user` (same
+  user, no sudo), after which the sink, volume and filter chain are applied again. Every repair is a
+  `supervisor_repair` event and a *Diagnostics → System → Self-repair* line, so a clock that keeps
+  healing itself is still seen to be unwell.
+- **A service inside dawn-core that fails to start is started again** (`ServiceRegistry.retry_failed`,
+  asked by the supervisor): PipeWire's tools not answering within the 30 s start timeout left the audio
+  service without its loop (no sink refresh, no PipeWire retry) until the next restart of dawn-core;
+  bluetoothd or a GPIO chip late at boot did the same to their services. Attempts are 1, 2, 4… minutes
+  apart (15 at most), and `start()` is written to be safe to call again (the loops are only created
+  when they are not running).
 - **Data on ext4 with `data=journal`** is offered two ways: a dedicated partition
   (`--data-device`) or a loop-mounted image (`--data-image-mb`), because
   repartitioning a running SD card in an installer is not something to do

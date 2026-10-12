@@ -72,7 +72,8 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "playing": {"sid": np.station_sid, "label": np.station, "flowing": st.audio.audio_flowing} if np.source == "dab" else None,
         "stations": len(known), "ensembles": ensembles, "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
         "presets_unknown": presets_unknown, "alarms_unknown": alarms_unknown,
-        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") != "manual"],
+        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") not in ("manual", "supervisor")],
+        "supervisor_restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") == "supervisor"],
         # a DAB alarm that left the radio for the chime (not the chime's own climb to the backup tone)
         "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback" and str(e.get("source", "")).startswith("dab:") and e.get("from_tier", "source") == "source"],
         "messages": [{"at": at, "text": line.replace("\n.", ".").strip()} for at, line in list(dab.messages)[-60:]],
@@ -174,7 +175,7 @@ def checks(f: dict[str, Any]) -> list[Check]:
             "These alarms will fall back to the chime. Rescan, or pick another station for them.", ["dab.scan"])
     if f["presets_unknown"]:
         add("presets", "Presets", "warn", "Not in the last scan: " + ", ".join(f["presets_unknown"]) + ".", "Rescan or remove them on the Radio page.")
-    if f["fallbacks_24h"] or f["restarts_24h"]:
+    if f["fallbacks_24h"] or f["restarts_24h"] or f.get("supervisor_restarts_24h"):
         parts = []
         if f["fallbacks_24h"]:
             n = len(f["fallbacks_24h"])
@@ -182,6 +183,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
         if f["restarts_24h"]:
             n = len(f["restarts_24h"])
             parts.append(f"an alarm found DAB not working and restarted the decoder{'' if n == 1 else f' ({n} times)'}")
+        if f.get("supervisor_restarts_24h"):
+            n = len(f["supervisor_restarts_24h"])
+            parts.append(f"the decoder stopped answering and was restarted{'' if n == 1 else f' {n} times'}")
         add("history", "Last 24 hours", "warn", parts[0][0].upper() + "; ".join(parts)[1:] + ".",
             "The DAB history graphs show the signal around those times (marked with thin vertical lines).")
     return c

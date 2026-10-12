@@ -78,6 +78,41 @@ class Host:
         states = out.split()
         return dict(zip(names, states, strict=True)) if len(states) == len(names) else {n: "unknown" for n in names}
 
+    async def unit_enabled(self, name: str) -> bool | None:
+        """Whether a system unit is meant to run here (enabled, static or wanted by something), None when systemd
+        cannot say. The answer is reused for an hour: units are not enabled or disabled behind dawn-core's back."""
+        hit, value = self._cached(("enabled", name), 3600)
+        if hit:
+            return value  # type: ignore[no-any-return]
+        rc, out = await self.run("systemctl", "is-enabled", name)
+        word = (out.strip().splitlines() or [""])[0].strip()
+        if rc == 127 or rc == 124 or not word:
+            return None
+        value = word in ("enabled", "enabled-runtime", "static", "indirect", "alias", "linked", "linked-runtime", "generated", "transient")
+        self._cache[("enabled", name)] = (time.monotonic(), value)
+        return value
+
+    async def unit_active_for(self, name: str) -> float | None:
+        """Seconds since the unit last became active, None when systemd cannot say."""
+        rc, out = await self.run("systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", name)
+        word = out.strip().splitlines()[0].strip() if out.strip() else ""
+        if rc != 0 or not word.isdigit() or int(word) == 0:
+            return None
+        return max(0.0, time.monotonic() - int(word) / 1e6)  # both are CLOCK_MONOTONIC on Linux
+
+    async def user_units(self, names: list[str]) -> dict[str, str] | None:
+        """ActiveState of the dawn user's own services (PipeWire and its session manager), None when the user
+        manager cannot be reached (no user session: not a Pi install)."""
+        rc, out = await self.run("systemctl", "--user", "is-active", *names)
+        states = out.split()
+        if rc == 127 or len(states) != len(names) or any(s.startswith("Failed") for s in states):
+            return None
+        return dict(zip(names, states, strict=True))
+
+    async def user_restart(self, name: str) -> tuple[int, str]:
+        """Restart one of the dawn user's own services (no sudo: it is the same user)."""
+        return await self.run("systemctl", "--user", "restart", name, timeout=30)
+
     async def chronyc(self, *args: str, privileged: bool = False, max_age_s: float = 0) -> tuple[str | None, str | None]:
         """(csv output, error). -n: no reverse DNS (it hangs exactly when DNS is what is broken). selectdata and
         ntpdata need chronyd's Unix socket, i.e. root, on chrony 4.6; deploy/sudoers/dawn allows these exact lines.
@@ -162,6 +197,18 @@ class SimHost(Host):
     async def units(self, names: list[str]) -> dict[str, str]:
         r = await self._get("/systemctl", units=",".join(names))
         return r.json() if r is not None and r.status_code == 200 else {n: "unknown" for n in names}
+
+    async def unit_enabled(self, name: str) -> bool | None:
+        return True  # the hub's units are all "installed"
+
+    async def unit_active_for(self, name: str) -> float | None:
+        return 3600.0
+
+    async def user_units(self, names: list[str]) -> dict[str, str] | None:
+        return None  # the laptop's own PipeWire is not Dawn's to restart
+
+    async def user_restart(self, name: str) -> tuple[int, str]:
+        return 1, "not in the simulator"
 
     async def chronyc(self, *args: str, privileged: bool = False, max_age_s: float = 0) -> tuple[str | None, str | None]:
         r = await self._get(f"/chrony/{args[-1]}")

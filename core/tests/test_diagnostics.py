@@ -301,3 +301,41 @@ async def test_diag_api_degrades_without_hardware(client: AsyncClient) -> None:
     r = await client.post("/api/diag/action/dab.retune", json={"value": "not-a-channel"})
     assert r.status_code == 200 and r.json()["ok"] is False
     assert any(a["id"] == "time.burst" for a in (await client.get("/api/diag/actions")).json())
+
+
+# ---- self-repair and the database -----------------------------------------------
+def test_system_checks_report_self_repair_and_the_database() -> None:
+    base = {
+        "units": {}, "audio": {"backend": "pipewire", "sink": None, "sinks": [], "pinned": None, "volume": 40, "muted": False, "active_source": "none",
+                               "flowing": False, "eq_present": True, "ceiling": 100, "max_volume": 100},
+        "alarms": {}, "airplay": {"enabled": False}, "bluetooth": {"enabled": False},
+        "display": {"face_clients": [], "face_mode": "standby", "backlight": "sysfs", "sysfs": "x", "sysfs_writable": True, "brightness": 15, "mode": "auto",
+                    "sensor_found": False, "sensor": None, "lux": None, "night": False},
+        "inputs": {"encoder": False, "button": False, "backend": None, "last": None}, "weather": {"enabled": False},
+        "system": {"config_error": None, "failed_services": {}, "throttled": None, "throttle_flags": [], "cpu_temp_c": None, "mem_used_percent": None,
+                   "disk_data": None, "disk_root": None, "heartbeat_age_s": 1, "error_count": 0, "errors": [], "version": "0.1.0", "git_rev": None,
+                   "model": "Raspberry Pi 4", "uptime_s": 60, "sim": False, "db_write_errors": 0, "db_last_write_error": None, "db_mode": "rw",
+                   "db_open_error": None, "db_path": "/var/lib/dawn/dawn.db"},
+        "supervisor": {"enabled": True, "repairs_24h": [], "recovered": {}, "face_absent_s": 150},
+    }
+    c = {x.id: x for x in system.checks(base)}
+    assert c["system.supervisor"].status == "ok" and "system.database" not in c
+    assert "150 s" in (c["display.face"].hint or "")  # the face is not connected: Dawn restarts the kiosk itself
+    rep = {"at": "2026-10-10T06:12:00+11:00", "what": "dawn-face", "reason": "no face connected for 150 s", "ok": True, "message": "restarted dawn-face", "next_try_s": 60}
+    f = {**base, "supervisor": {**base["supervisor"], "repairs_24h": [rep], "recovered": {"bluetooth": 1.0}}}
+    c = {x.id: x for x in system.checks(f)}
+    assert c["system.supervisor"].status == "warn" and "dawn-face" in c["system.supervisor"].detail and "06:12" in c["system.supervisor"].detail
+    f["supervisor"]["repairs_24h"] = [rep, {**rep, "ok": False, "message": "could not restart dawn-face: sudo: no"}]
+    assert {x.id: x for x in system.checks(f)}["system.supervisor"].status == "fail"
+    f = {**base, "supervisor": {**base["supervisor"], "enabled": False}}
+    assert {x.id: x for x in system.checks(f)}["system.supervisor"].status == "info"
+    f = {**base, "system": {**base["system"], "db_mode": "memory", "db_open_error": "OperationalError: unable to open database file"}}
+    c = {x.id: x for x in system.checks(f)}
+    assert c["system.database"].status == "fail" and "no alarms" in c["system.database"].detail and "rings by itself" in (c["system.database"].hint or "")
+    f = {**base, "system": {**base["system"], "db_mode": "ro", "db_open_error": "x"}}
+    assert "read-only" in {x.id: x for x in system.checks(f)}["system.database"].detail
+
+
+def test_dab_history_tells_an_alarms_restart_from_the_supervisors() -> None:
+    c = by_id(dab.checks(dab_facts(supervisor_restarts_24h=["x", "y"])))
+    assert c["dab.history"].detail == "The decoder stopped answering and was restarted 2 times."

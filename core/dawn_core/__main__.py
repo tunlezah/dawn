@@ -27,6 +27,9 @@ def main(argv: list[str] | None = None) -> int:
     mgr = ConfigManager(config_path())
     setup_logging(mgr.config.general.log_level)
     if args.check:
+        if mgr.last_error:
+            print(f"INVALID: {mgr.path}: {mgr.last_error}")
+            return 1
         print(f"OK: {mgr.path}")
         return 0
     from .app import create_app

@@ -5,6 +5,35 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-10-10
+
+### Added
+- **Self-repair** (`system.supervisor`, on by default): dawn-core checks the programs it depends on every 15 s
+  and restarts what systemd cannot see is broken: the face kiosk when no face has connected or its page has
+  stopped sending its heartbeat for 150 s (a blank, "can't reach" or frozen Chromium), the DAB decoder when it
+  runs but has not answered for 45 s with the stick in (never while an alarm rings on the radio), the PipeWire
+  session services when failed (then the sink, volume and filter chain are set again), dawn-timed when its
+  status file is 5 minutes stale, any enabled unit left `failed` and Dawn's own units seen stopped for 30 s.
+  Parts of dawn-core that could not start at boot (PipeWire tools not answering in time, bluetoothd or a GPIO
+  chip late) are started again after 1, 2, 4… minutes. Restarts wait for the problem to be seen for a while,
+  back off (60 s doubling to 30 min) while the same thing keeps breaking, are logged as `supervisor_repair`
+  events and listed under *Diagnostics → System → Self-repair*; *Status → Hardware → Services* shows every
+  unit's state. The sudoers allow-list gains `systemctl restart` for bluetooth, nqptp, avahi-daemon and
+  NetworkManager; `dawn-timed.service` gets `StartLimitIntervalSec=0`.
+- The face sends a ping over its WebSocket every 15 s, so core can tell a live kiosk from a frozen one.
+
+### Fixed
+- A database that could not be opened at boot (an SD card gone read-only before the restart, or a corrupt
+  file) crash-looped dawn-core and left only the face's own backup alarm. It now opens the file read-only
+  (alarms ring as saved; nothing can be kept) and, failing that, runs on an empty in-memory database and says
+  so (`alarms.degraded`, *Diagnostics → System → Database*); the face then keeps the last alarm it heard of
+  and rings by itself at its time ("backup alarm · Dawn cannot read its alarms").
+- A `config.yaml` that fails validation (a hand edit, a key from another version) crash-looped dawn-core at
+  boot. The sections that validate are used, the rest fall back to their defaults, and the error shows under
+  *Diagnostics → System → Configuration* (a rejected hot reload shows there too; it was only logged before).
+  `dawn-core --check` exits 1 on an invalid file.
+- Diagnostics no longer counts the supervisor's decoder restarts as "an alarm found DAB not working".
+
 ## [0.2.1] - 2026-10-10
 
 ### Fixed

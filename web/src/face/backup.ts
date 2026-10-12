@@ -1,9 +1,10 @@
 // The face's own safety net for alarms. It needs nothing from core's audio, only Chromium's:
 //  - core asks for it (`ringing.face_beep`: the alarm is on its backup tone, so core's own sound may not be getting
 //    out), and the face beeps along;
-//  - core does not answer when an alarm is due (crashed, hung, or restarting for too long): the face rings by
-//    itself, from the last next-alarm time and ring it heard. That is kept in localStorage, so a reload of the page
-//    still knows it.
+//  - core does not answer when an alarm is due (crashed, hung, or restarting for too long), or answers but cannot
+//    read its alarms (`alarms.degraded`: the database on the SD card is unreadable): the face rings by itself, from
+//    the last next-alarm time and ring it heard. That is kept in localStorage, so a reload of the page still knows
+//    it, and a core that has lost its alarms does not overwrite it with nothing.
 // The kiosk runs Chromium with --autoplay-policy=no-user-gesture-required, so it can sound without a touch. The
 // loudness is the speaker's volume as core last set it; while core is down nothing can change it.
 
@@ -15,6 +16,8 @@ export const LOCAL_AFTER_MS = 45_000; // how long the face waits for core past a
 export const LOCAL_MAX_MS = 30 * 60_000; // how long it rings by itself at most
 export const LOCAL_SNOOZE_MS = 9 * 60_000;
 const KEY = 'dawn.face.backup';
+export const DOWN_WHY = 'Dawn is not responding';
+export const DEGRADED_WHY = 'Dawn cannot read its alarms';
 
 /** What the face last heard from core about alarms. */
 export interface Heard {
@@ -24,8 +27,8 @@ export interface Heard {
   at: number; // when (ms)
 }
 
-/** A ring the face is running by itself. */
-export interface LocalRing { key: string; label: string; since: number; snoozedUntil: number | null }
+/** A ring the face is running by itself; `why` says what is wrong with core. */
+export interface LocalRing { key: string; label: string; since: number; snoozedUntil: number | null; why: string }
 
 /** The ring the face owes while core is down, or null. Pure: `heard` is the last thing core said, `silenced` the
  *  rings stopped on the face already. */
@@ -46,11 +49,12 @@ export function owedRing(heard: Heard | null, now: number, silenced: readonly st
   return cands.find((c) => now >= c.due && now <= c.due + LOCAL_MAX_MS && !silenced.includes(c.key)) ?? null;
 }
 
-/** What core's state says to remember. */
-export function hear(s: UIState, now: number): Heard {
+/** What core's state says to remember. A core that cannot read its alarms (`degraded`) knows nothing about them:
+ *  what was heard before stays. */
+export function hear(s: UIState, now: number, prev: Heard | null = null): Heard {
   const r = s.alarms.ringing;
   return {
-    next: s.alarms.next ? { id: s.alarms.next.id, label: s.alarms.next.label, at: s.alarms.next.at } : null,
+    next: s.alarms.degraded ? prev?.next ?? null : s.alarms.next ? { id: s.alarms.next.id, label: s.alarms.next.label, at: s.alarms.next.at } : null,
     ring: r ? { label: r.label, started: r.started_at, snoozedUntil: r.snoozed_until, beep: r.face_beep && !r.snoozed_until } : null,
     at: now,
   };
@@ -177,7 +181,7 @@ export function useBackup(s: UIState, connected: boolean): Backup {
   const persisted = useRef('');
   useEffect(() => {
     if (!connected || s.version === 0) return;
-    const heard = hear(s, Date.now());
+    const heard = hear(s, Date.now(), saved.current.heard);
     saved.current = { ...saved.current, heard };
     const what = JSON.stringify([heard.next, heard.ring]);
     if (what !== persisted.current) {
@@ -191,10 +195,12 @@ export function useBackup(s: UIState, connected: boolean): Backup {
     return () => clearInterval(id);
   }, []);
 
-  // start a ring of its own when core is down and one is owed; hand it back when core rings again (on state that
-  // came after the face's ring began: the state from before the outage says nothing); give up at the max
+  // start a ring of its own when core is down (or up but without its alarms) and one is owed; hand it back when
+  // core rings again (on state that came after the face's ring began: the state from before the outage says
+  // nothing); give up at the max
   const stateAt = useRef(0);
   useEffect(() => { if (connected && s.version > 0) stateAt.current = Date.now(); }, [connected, s.version]);
+  const degraded = coreUp && connected && s.alarms.degraded;
   useEffect(() => {
     const now = Date.now();
     if (local) {
@@ -202,10 +208,10 @@ export function useBackup(s: UIState, connected: boolean): Backup {
       else if (now - local.since > LOCAL_MAX_MS) setLocal(null);
       return;
     }
-    if (coreUp) return;
+    if (coreUp && !degraded) return;
     const owed = owedRing(saved.current.heard, now, saved.current.silenced);
-    if (owed) setLocal({ key: owed.key, label: owed.label, since: now, snoozedUntil: null });
-  }, [tick, coreUp, connected, s.alarms.ringing, local]);
+    if (owed) setLocal({ key: owed.key, label: owed.label, since: now, snoozedUntil: null, why: degraded ? DEGRADED_WHY : DOWN_WHY });
+  }, [tick, coreUp, degraded, connected, s.alarms.ringing, local]);
 
   const r = s.alarms.ringing;
   const coreBeep = coreUp && !!r && r.face_beep && !r.snoozed_until;

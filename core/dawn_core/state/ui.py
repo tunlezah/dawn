@@ -197,6 +197,10 @@ class AlarmsState(BaseModel):
     on_leave_until: str | None = None
     light_wake_active: bool = False
     prepare: AlarmPrep | None = None
+    # the alarms could not be read (the database is unreadable): `items` and `next` say nothing, and the face
+    # rings by itself from the last next-alarm it heard
+    degraded: bool = False
+    degraded_reason: str | None = None
 
 
 class TimerInfo(BaseModel):

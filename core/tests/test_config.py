@@ -86,3 +86,46 @@ async def test_manager_hot_reload(tmp_path: Path) -> None:
         assert mgr.config.general.name == "Reloaded"
     finally:
         await mgr.stop()
+
+
+def test_a_file_with_one_bad_section_still_loads_the_rest(tmp_path: Path) -> None:
+    """A hand edit must not keep dawn-core, and its alarms, from starting: the good sections are kept, the bad one
+    falls back to its defaults, and the error is reported."""
+    from dawn_core.config import load_config_lenient
+
+    p = tmp_path / "c.yaml"
+    p.write_text("general:\n  name: Bedside\n  timezone: Australia/Hobart\ndisplay:\n  rotation: 45\nnonsense: 1\naudio:\n  default_volume: 20\n")
+    cfg, err = load_config_lenient(p)
+    assert cfg.general.name == "Bedside" and cfg.general.timezone == "Australia/Hobart" and cfg.audio.default_volume == 20
+    assert cfg.display.rotation == 0  # the defaults for the section that failed
+    assert err and "display" in err and "nonsense" in err
+    mgr = ConfigManager(p)  # does not raise
+    assert mgr.config.general.name == "Bedside" and mgr.last_error == err
+    p.write_text("{{{{ not yaml")
+    cfg, err = load_config_lenient(p)
+    assert cfg == DawnConfig() and err and "whole file" in err
+
+
+async def test_a_rejected_reload_is_reported_until_the_file_is_right_again(tmp_path: Path) -> None:
+    p = tmp_path / "c.yaml"
+    write_config(DawnConfig(), p)
+    mgr = ConfigManager(p, poll_s=0.05)
+    seen: list[str | None] = []
+    mgr.on_error(seen.append)
+    p.write_text("general:\n  timezone: Nope/Nope\n")
+    assert await mgr.reload() is False
+    assert seen and seen[-1] and "Nope" in seen[-1]
+    write_config(DawnConfig(), p)
+    assert await mgr.reload() is True
+    assert seen[-1] is None
+
+
+def test_check_reports_an_invalid_file(tmp_path: Path, capsys) -> None:
+    from dawn_core.__main__ import main
+
+    p = tmp_path / "c.yaml"
+    p.write_text("general:\n  timezone: Nope/Nope\n")
+    assert main(["--config", str(p), "--check"]) == 1
+    assert "INVALID" in capsys.readouterr().out
+    write_config(DawnConfig(), p)
+    assert main(["--config", str(p), "--check"]) == 0

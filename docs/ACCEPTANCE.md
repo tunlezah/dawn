@@ -53,6 +53,29 @@ http://localhost:8099/.
   - device: `sudo systemctl stop dawn-core` a minute before an alarm; ~45 s after the alarm the face shows
     "backup alarm · Dawn is not responding" and beeps; tap snoozes, hold stops. Start dawn-core again.
 
+- [x] **Supporting programs that fail are restarted by dawn-core itself; what it did is visible.**
+  - tests: `core/tests/test_supervisor.py` (a failed unit restarted once, then only after the backoff, never when
+    not enabled; Dawn's own unit stopped for 30 s; the kiosk with no face for 150 s, not while Chromium is still
+    starting, a frozen page by its missing pings; welle-cli not answering, left alone while an alarm rings;
+    wireplumber failed and the audio set up again; a stale dawn-timed status; the backoff healing; a service
+    inside dawn-core started again). `test_api_smoke.py` (the face's pings), `test_diagnostics.py` (the
+    Self-repair and Database checks).
+  - sim: on the hub, list `gpsd` under *Failed services*: within 15 s *Diagnostics → System → Self-repair* shows
+    "gpsd, failed: restarted gpsd" and the unit is active again; list it again at once and nothing happens until
+    the minute's backoff has passed.
+  - device: `sudo pkill -STOP chromium` (the kiosk freezes; the unit stays active): about 2.5 minutes later
+    `journalctl -u dawn-core | grep supervisor` shows "dawn-face: no face connected for 150 s; restarted dawn-face"
+    and the face is back. `sudo pkill -STOP welle-cli`: the decoder is restarted after 45 s. `systemctl --user -M
+    dawn@ kill -s KILL wireplumber` three times quickly (start limit): it is started again within 15 s and
+    audio plays. `sudo systemctl kill -s STOP dawn-timed`: restarted once its status file is 5 minutes old.
+- [x] **A database or config file that cannot be read at boot does not stop dawn-core or its alarms.**
+  - tests: `core/tests/test_db_engine.py` (read-only, unreadable and corrupt files), `test_config.py` (one bad
+    section, unreadable YAML, `--check`), `test_alarm_support.py` (`alarms.degraded`), `web/e2e/backup.unit.spec.ts`
+    (the face keeps the alarm it heard when core has lost its own).
+  - device: `sudo mount -o remount,ro /var/lib/dawn` (own partition) or `sudo chattr +i /var/lib/dawn/dawn.db`, then
+    `sudo systemctl restart dawn-core`: it comes up, *Diagnostics → System → Database* says read-only, the alarms
+    are listed and ring. Put `rotation: 45` under `display:` in `/etc/dawn/config.yaml` and restart: it comes up
+    with the default rotation and *Configuration* names the section.
 - [x] **A read-only or full SD card, or a damaged alarm row, does not stop alarms.**
   - tests: `test_alarm_rings_once_with_a_read_only_database`, `test_event_log_failure_does_not_stop_an_alarm`,
     `test_one_malformed_alarm_does_not_stop_the_others`, `test_a_failing_publish_does_not_lose_the_alarm`.
@@ -188,6 +211,7 @@ these need the hardware.
 | Config schema, hot reload, API | `test_config.py`, `test_api_smoke.py` |
 | Scheduling: DST gap/overlap, leap day, skip-next, holidays, leave, grace | `test_scheduler.py`, `test_holidays.py`, `test_alarm_engine.py` |
 | Alarm robustness: the ladder to the backup tone, own players, snooze/stop during a start, storage failures, bad rows, restarts, preparation, tuner holds, inputs and backlight while ringing | `test_alarm_robustness.py`, `test_alarm_support.py`, `test_buzzer.py`, `web/e2e/backup.unit.spec.ts` |
+| Self-repair: units, the kiosk, welle-cli, PipeWire, dawn-timed, services inside core, the backoff; the database and config fallbacks at boot | `test_supervisor.py`, `test_db_engine.py`, `test_config.py` |
 | Arbiter priority, duck/pause/resume | `test_arbiter.py` |
 | Input semantics (button/encoder/touch, hold countdown; nothing powers off while ringing) | `test_input_controller.py`, `test_alarm_robustness.py` |
 | Reference hardware: volume ceiling, EQ limits, sink pinning, throttle flags, encoder on mock GPIO | `test_hardware_profile.py` |

@@ -2,6 +2,9 @@
 Description=Dawn DAB+ time to chrony SHM 2
 After=dawn-dab.service chrony.service
 Wants=chrony.service
+# never give up restarting (systemd's default stops after 5 starts in 10 s); dawn-core restarts it as well when
+# it stops writing its status file
+StartLimitIntervalSec=0
 
 [Service]
 User=dawn

@@ -35,7 +35,9 @@ class DawnContext:
         self.registry = ServiceRegistry()
         self.ws_hub: Any = None  # api.ws.WsHub, set by the app (Diagnostics lists the connected clients)
         self.store.state.system.sim = self.sim
+        self.store.state.system.config_error = cfg_mgr.last_error  # a file that only partly validated at start
         self.cfg_mgr.on_change(self._on_config)
+        self.cfg_mgr.on_error(self._on_config_error)
 
     @property
     def config(self) -> DawnConfig:
@@ -68,6 +70,11 @@ class DawnContext:
         self.store.state.system.config_error = None
         self.refresh_settings_summary()
         await self.registry.notify_config(old, new)
+
+    def _on_config_error(self, error: str | None) -> None:
+        """A rejected reload shows under Diagnostics -> System until the file validates again."""
+        self.store.state.system.config_error = error
+        self.store.touch()
 
     def refresh_settings_summary(self) -> None:
         c = self.config

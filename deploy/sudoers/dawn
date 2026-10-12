@@ -1,9 +1,13 @@
 # Dawn: the dawn service user may run exactly these privileged actions.
+# The restarts are what Diagnostics' fix buttons and dawn-core's own supervisor (system.supervisor) run when a
+# supporting program has failed, stopped answering or hit systemd's start limit.
 Cmnd_Alias DAWN_SERVICES = /usr/bin/systemctl restart dawn-dab, /usr/bin/systemctl restart dawn-dab.service, \
     /usr/bin/systemctl restart dawn-face, /usr/bin/systemctl restart dawn-face.service, \
     /usr/bin/systemctl restart dawn-timed, /usr/bin/systemctl restart shairport-sync, \
     /usr/bin/systemctl try-restart shairport-sync.service, /usr/bin/systemctl is-active *, \
-    /usr/bin/systemctl restart gpsd, /usr/bin/systemctl restart chrony
+    /usr/bin/systemctl restart gpsd, /usr/bin/systemctl restart chrony, \
+    /usr/bin/systemctl restart nqptp, /usr/bin/systemctl restart bluetooth, \
+    /usr/bin/systemctl restart avahi-daemon, /usr/bin/systemctl restart NetworkManager
 # Diagnostics: chrony 4.6 only answers selectdata/ntpdata (why a time source is or is not used) on its root-only
 # socket; burst makes it poll every source now. Exact argument lists, nothing else.
 Cmnd_Alias DAWN_TIME = /usr/bin/chronyc -n -c selectdata, /usr/bin/chronyc -n -c ntpdata, /usr/bin/chronyc burst 4/4

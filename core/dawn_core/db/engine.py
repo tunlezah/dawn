@@ -1,5 +1,12 @@
 """SQLite engine wrapper (sync SQLModel, called from the event loop via to_thread
-only where it matters; the DB is tiny and local)."""
+only where it matters; the DB is tiny and local).
+
+Opening never fails: an SD card that has gone read-only, or a database file that
+cannot be opened, must not keep dawn-core (and with it every alarm) from
+starting. The file is opened for writing; if that fails it is opened read-only
+(the alarms are read, nothing can be saved); if even that fails an empty
+in-memory database stands in, and `mode` says so for Diagnostics and the face.
+"""
 
 from __future__ import annotations
 
@@ -12,7 +19,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import event
+from sqlalchemy import event, text
+from sqlalchemy.engine import Engine
 from sqlmodel import Session, SQLModel, create_engine, select
 
 from .models import KV, EventRow
@@ -23,25 +31,62 @@ log = logging.getLogger("dawn.db")
 class Database:
     def __init__(self, path: str | Path):
         self.path = Path(path)
-        if str(self.path) != ":memory:":
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            url = f"sqlite:///{self.path}"
-        else:
-            url = "sqlite://"
-        self.engine = create_engine(url, connect_args={"check_same_thread": False})
         self.write_errors = 0  # writes that failed (storage read-only or full); Diagnostics shows them
         self.last_write_error: str | None = None
         self._write_error_logged = 0.0
+        self.mode = "rw"  # rw | ro (the file is read, nothing can be saved) | memory (nothing could be read)
+        self.open_error: str | None = None  # why it is not rw
+        if str(self.path) == ":memory:":
+            self.engine = self._open("sqlite://", create=True)
+            self.mode = "memory"
+            return
+        try:
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            log.error("cannot create %s: %s", self.path.parent, e)
+        try:
+            self.engine = self._open(f"sqlite:///{self.path}", create=True)
+            return
+        except Exception as e:  # noqa: BLE001
+            self.open_error = f"{type(e).__name__}: {e}"
+            log.error("cannot open %s for writing (%s); trying read-only", self.path, self.open_error)
+        try:
+            # immutable: no locks and no -shm/-wal files, which a read-only filesystem cannot create
+            self.engine = self._open(f"sqlite:///file:{self.path}?mode=ro&immutable=1&uri=true", create=False)
+            self.mode = "ro"
+            log.error("%s is read-only: alarms and settings are read from it, but nothing can be saved", self.path)
+            return
+        except Exception as e:  # noqa: BLE001
+            self.open_error = f"{self.open_error}; read-only: {type(e).__name__}: {e}"
+            log.critical("cannot read %s at all (%s); running with an empty in-memory database: no alarms are known",
+                         self.path, self.open_error)
+        self.engine = self._open("sqlite://", create=True)
+        self.mode = "memory"
 
-        @event.listens_for(self.engine, "connect")
+    def _open(self, url: str, *, create: bool) -> Engine:
+        engine = create_engine(url, connect_args={"check_same_thread": False})
+
+        @event.listens_for(engine, "connect")
         def _pragmas(dbapi_conn, _record):  # type: ignore[no-untyped-def]
             cur = dbapi_conn.cursor()
-            cur.execute("PRAGMA journal_mode=WAL")
-            cur.execute("PRAGMA synchronous=NORMAL")
-            cur.execute("PRAGMA foreign_keys=ON")
+            for pragma in ("PRAGMA journal_mode=WAL", "PRAGMA synchronous=NORMAL", "PRAGMA foreign_keys=ON"):
+                try:
+                    cur.execute(pragma)
+                except Exception as e:  # noqa: BLE001  (a read-only file cannot switch journal modes)
+                    log.debug("%s: %s", pragma, e)
             cur.close()
 
-        SQLModel.metadata.create_all(self.engine)
+        if create:
+            SQLModel.metadata.create_all(engine)
+        else:
+            with engine.connect() as conn:  # prove it can be read before relying on it
+                conn.execute(text("SELECT name FROM sqlite_master LIMIT 1")).fetchall()
+        return engine
+
+    @property
+    def degraded(self) -> bool:
+        """Nothing could be read from the real database: the alarms are unknown."""
+        return self.mode == "memory" and str(self.path) != ":memory:"
 
     @contextmanager
     def session(self) -> Iterator[Session]:
