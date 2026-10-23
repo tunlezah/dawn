@@ -391,12 +391,11 @@ web:
   port: 8080
   # Built web assets (null = bundled web/dist).
   static_dir: null
-  cors_origins:
-  - '*'
+  cors_origins: []
   auth:
     # Optional PIN for the control UI (null = open on the LAN).
     pin: null
-    session_hours: 720
+    session_hours: 72
 
 system:
   heartbeat_interval_s: 5

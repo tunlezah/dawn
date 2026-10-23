@@ -21,9 +21,17 @@ def _errors(e: ValidationError) -> list[dict[str, Any]]:
     return out
 
 
+def _redact_secrets(data: dict[str, Any]) -> dict[str, Any]:
+    if "web" in data and "auth" in data["web"]:
+        auth = data["web"]["auth"]
+        if auth.get("pin"):
+            auth["pin"] = "***"
+    return data
+
+
 @router.get("")
 def get_config(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
-    return ctx.config.model_dump(mode="json")
+    return _redact_secrets(ctx.config.model_dump(mode="json"))
 
 
 @router.get("/schema")
@@ -33,7 +41,8 @@ def get_schema() -> dict[str, Any]:
 
 @router.get("/yaml")
 def get_yaml(ctx: DawnContext = Depends(get_ctx)) -> dict[str, str]:
-    return {"path": str(ctx.cfg_mgr.path), "yaml": dump_config(ctx.config)}
+    redacted = DawnConfig.model_validate(_redact_secrets(ctx.config.model_dump(mode="json")))
+    return {"path": str(ctx.cfg_mgr.path), "yaml": dump_config(redacted)}
 
 
 @router.get("/defaults")
@@ -48,7 +57,7 @@ async def patch_config(patch: dict[str, Any], ctx: DawnContext = Depends(get_ctx
         new = await ctx.cfg_mgr.update(patch)
     except ValidationError as e:
         raise HTTPException(422, detail=_errors(e)) from e
-    return new.model_dump(mode="json")
+    return _redact_secrets(new.model_dump(mode="json"))
 
 
 @router.put("")
@@ -57,7 +66,7 @@ async def put_config(doc: dict[str, Any], ctx: DawnContext = Depends(get_ctx)) -
         new = await ctx.cfg_mgr.replace(doc)
     except ValidationError as e:
         raise HTTPException(422, detail=_errors(e)) from e
-    return new.model_dump(mode="json")
+    return _redact_secrets(new.model_dump(mode="json"))
 
 
 @router.post("/reload")

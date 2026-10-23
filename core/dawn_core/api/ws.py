@@ -8,6 +8,8 @@ import logging
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
+from .auth import COOKIE, _is_localhost, check_token
+
 log = logging.getLogger("dawn.ws")
 router = APIRouter()
 
@@ -39,6 +41,13 @@ class WsHub:
 async def ws_endpoint(ws: WebSocket) -> None:
     ctx = ws.app.state.ctx
     hub: WsHub = ws.app.state.ws_hub
+    pin = ctx.config.web.auth.pin
+    host = ws.client.host if ws.client else ""
+    if pin and not _is_localhost(host):
+        token = ws.cookies.get(COOKIE)
+        if not check_token(ctx, token):
+            await ws.close(code=1008)
+            return
     await ws.accept()
     hub.clients.add(ws)
     hub.info[ws] = {"remote": ws.client.host if ws.client else None, "connected_at": ctx.store.iso(), "role": None,

@@ -61,13 +61,24 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
     app = FastAPI(title="Dawn", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.ctx = ctx
     app.state.ws_hub = hub
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cfg_mgr.config.web.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+
+    origins = cfg_mgr.config.web.cors_origins
+    if origins:
+        allow_creds = "*" not in origins
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=origins,
+            allow_credentials=allow_creds,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        return response
 
     from .api.auth import install_auth
 
@@ -82,6 +93,7 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
 
     dist = find_web_dist(cfg_mgr.config.web.static_dir)
     if dist:
+        dist = dist.resolve()
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
         if (dist / "static").exists():
             app.mount("/static", StaticFiles(directory=dist / "static"), name="static")
@@ -108,8 +120,8 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
         async def control_spa(path: str, request: Request):
             if path.startswith("api/") or path == "ws":
                 return JSONResponse({"detail": "Not Found"}, status_code=404)
-            candidate = dist / path
-            if path and candidate.is_file():
+            candidate = (dist / path).resolve()
+            if path and candidate.is_relative_to(dist) and candidate.is_file():
                 return FileResponse(candidate)
             return FileResponse(index)
 
