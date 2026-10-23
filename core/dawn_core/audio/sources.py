@@ -8,6 +8,7 @@ import logging
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from ..state.ui import NowPlaying, SourceKind, SourceStatus
 from .player import Player
@@ -124,10 +125,23 @@ def resolve_chime(name: str, chime_dir: str | None) -> Path:
     return BUNDLED_CHIMES / f"{name}.ogg"
 
 
+_ALLOWED_URL_SCHEMES = {"http", "https", "rtsp", "rtp", "mms", "mmsh"}
+
+
+def validate_audio_url(url: str) -> str:
+    parsed = urlparse(url)
+    if parsed.scheme.lower() not in _ALLOWED_URL_SCHEMES:
+        raise ValueError(f"URL scheme {parsed.scheme!r} not allowed; use one of {', '.join(sorted(_ALLOWED_URL_SCHEMES))}")
+    if not parsed.hostname:
+        raise ValueError("URL must include a hostname")
+    return url
+
+
 class UrlSource(PlayerSource):
     kind = "url"
 
     def __init__(self, player: Player, url: str, label: str | None = None):
+        validate_audio_url(url)
         super().__init__(player, url)
         self.label = label or _label_from_url(url)
         self.ref = f"url:{url}"

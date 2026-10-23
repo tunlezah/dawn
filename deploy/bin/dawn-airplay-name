@@ -3,7 +3,8 @@
 # Called by dawn-core via sudo (see deploy/sudoers/dawn).
 set -euo pipefail
 name="${1:-Dawn}"
-name="${name//\"/}"
+name=$(printf '%s' "$name" | tr -cd 'A-Za-z0-9 _-')
+[ -z "$name" ] && name="Dawn"
 conf=/etc/shairport-sync.conf
 [ -f "$conf" ] || exit 0
 sed -i -E "s|^(\s*name\s*=\s*)\"[^\"]*\"|\1\"${name}\"|" "$conf"

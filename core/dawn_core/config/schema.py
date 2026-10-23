@@ -421,14 +421,14 @@ class NetworkConfig(StrictModel):
 
 class AuthConfig(StrictModel):
     pin: str | None = Field(None, description="Optional PIN for the control UI (null = open on the LAN).")
-    session_hours: int = Field(24 * 30, ge=1)
+    session_hours: int = Field(72, ge=1)
 
 
 class WebConfig(StrictModel):
     host: str = "0.0.0.0"
     port: int = Field(8080, ge=1, le=65535)
     static_dir: str | None = Field(None, description="Built web assets (null = bundled web/dist).")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = Field(default_factory=list, description="Allowed CORS origins (empty = same-origin only).")
     auth: AuthConfig = AuthConfig()
 
 
