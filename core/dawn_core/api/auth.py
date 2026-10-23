@@ -53,7 +53,7 @@ def check_token(ctx: DawnContext, token: str | None) -> bool:
 
 
 def _is_localhost(host: str) -> bool:
-    return host in ("127.0.0.1", "::1")
+    return host in ("127.0.0.1", "::1", "::ffff:127.0.0.1")
 
 
 def _check_rate_limit(ip: str) -> bool:
