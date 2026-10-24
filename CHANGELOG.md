@@ -30,6 +30,8 @@ ringing on a clock that runs for months).
   treats such a core as down and rings by itself ("backup alarm · Dawn is not keeping time").
 - The event log (`alarm_fire`, `alarm_missed`, self-repairs, scans...) grew for ever. It is pruned to
   `diagnostics.events_days` (90) at start and once an hour, with the Diagnostics history.
+- A station or preset picked while an alarm rang (queued behind it) came back silent once the alarm stopped:
+  its player was un-paused with nothing loaded. A source that was never started is started when its turn comes.
 
 ### Added
 - Self-repair restarts the dawn user's `pipewire` when `wpctl status` has timed out on three checks in a row

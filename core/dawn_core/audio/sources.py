@@ -84,7 +84,11 @@ class PlayerSource(AudioSource):
         await self.player.pause(True)
 
     async def resume(self) -> None:
-        if self._started and (self.player.loaded_url != self.url or self.player.idle):
+        if not self._started:
+            # queued paused behind something higher (a preset picked while an alarm rang) and never started:
+            # un-pausing would leave the player with nothing loaded
+            await self.start()
+        elif self.player.loaded_url != self.url or self.player.idle:
             # the player was used for something else meanwhile, or the stream ended while paused: load it again
             await self.player.load(self.url, loop=self.loop)
         else:

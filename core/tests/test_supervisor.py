@@ -50,6 +50,9 @@ class FakeHost(Host):
         self.user[name] = "active"
         return 0, ""
 
+    async def run(self, *args, timeout=5.0):
+        return 127, f"{args[0]}: not on the fake host"  # wpctl and the like are never really run by these tests
+
     async def sudo(self, *args, timeout=15.0):
         self.sudo_calls.append(args)
         if self.sudo_rc == 0 and args[:2] == ("systemctl", "restart"):

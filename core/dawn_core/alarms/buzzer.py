@@ -290,8 +290,8 @@ class Buzzer:
             if not out.done():
                 out.cancel()
             self._proc = None
-        self.sounding = False
         if hung:
+            self.sounding = False
             self._hung[" ".join(cmd)] = time.monotonic() + AVOID_HUNG_S
             if self._good == cmd:
                 self._good = None
@@ -300,7 +300,8 @@ class Buzzer:
             return False
         if proc.returncode == 0 and time.monotonic() - t0 >= 1.0:
             self.problem = None
-            return True
+            return True  # `sounding` stays set: the next file follows at once
+        self.sounding = False
         msg = (err or b"").decode(errors="ignore").strip().splitlines()
         self.problem = f"{cmd[0]} failed: {msg[0] if msg else f'exit {proc.returncode}'}"
         return False

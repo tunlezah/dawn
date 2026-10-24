@@ -63,6 +63,8 @@ class DiagnosticsService(Service):
         """Keep only `history_days` of metrics and `events_days` of events (at start and once an hour: a clock that
         never restarts must not grow its database for ever)."""
         d = self.ctx.config.diagnostics
+        if self.ctx.db.mode != "rw":
+            return  # read-only: nothing can be deleted; in-memory: a thread would see another, empty database
         try:
             n = await asyncio.to_thread(self.history.prune, d.history_days)
             if n:

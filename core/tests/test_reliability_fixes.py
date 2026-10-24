@@ -161,7 +161,7 @@ async def test_a_hung_tone_player_is_given_up_on_and_the_next_one_plays(app, mon
     await b.start()
     try:
         deadline = time.monotonic() + 6
-        while time.monotonic() < deadline and not (b.sounding and b.player and b.player.startswith("sh -c sleep 1.2")):
+        while time.monotonic() < deadline and not (b.sounding and b.player and b.player.startswith("sh -c sleep 1.2")):  # noqa: ASYNC110
             await asyncio.sleep(0.05)
         assert b.sounding and b.player.startswith("sh -c sleep 1.2"), b.problem
         assert " ".join([*hang, str(b.wav_path())]) in b._hung  # it goes last for a while
@@ -341,3 +341,79 @@ async def test_a_missing_wpctl_is_not_a_hung_pipewire(tmp_config, monkeypatch) -
         for i in range(5):
             await s.check(1000.0 + 15 * i)
         assert host.user_restarts == []
+
+
+# ---- review round 1 -------------------------------------------------------------------------------------------
+async def test_the_backup_tone_stays_sounding_between_files(app, monkeypatch) -> None:
+    ctx = app.state.ctx
+    ctx.sim = False
+    plays = ["sh", "-c", "sleep 1.2", "x"]
+    monkeypatch.setattr(bz, "player_commands", lambda wav, which=None, cards=None: [[*plays, wav]])
+    b = bz.Buzzer(ctx)
+    await b.start()
+    try:
+        deadline = time.monotonic() + 4
+        while not b.sounding and time.monotonic() < deadline:  # noqa: ASYNC110
+            await asyncio.sleep(0.02)
+        assert b.sounding
+        t0 = time.monotonic()
+        while time.monotonic() - t0 < 3.0:  # across two file ends
+            assert b.sounding, "a healthy tone must not read as silent between files"
+            await asyncio.sleep(0.03)
+    finally:
+        await b.stop()
+
+
+async def test_nothing_is_pruned_on_a_database_that_cannot_be_written(app, monkeypatch) -> None:
+    from dawn_core.diagnostics.service import DiagnosticsService
+
+    ctx = app.state.ctx
+    d: DiagnosticsService = ctx.svc(DiagnosticsService)
+    calls = []
+    monkeypatch.setattr(ctx.db, "prune_events", lambda days: calls.append(days) or 0)
+    monkeypatch.setattr(d.history, "prune", lambda days: calls.append(days) or 0)
+    for mode in ("memory", "ro"):
+        monkeypatch.setattr(ctx.db, "mode", mode)
+        await d._prune()
+    assert calls == [] and ctx.db.write_errors == 0
+    monkeypatch.setattr(ctx.db, "mode", "rw")
+    await d._prune()
+    assert len(calls) == 2
+
+
+async def test_a_dab_source_started_again_keeps_its_player_listener(app) -> None:
+    from dawn_core.audio.player import SimPlayer
+    from dawn_core.dab.service import DabService, DabSource
+    from dawn_core.dab.welle import ServiceInfo
+
+    dab = app.state.ctx.svc(DabService)
+    p = SimPlayer("dawn-dab")
+    src = DabSource(p, "http://127.0.0.1:9/x", ServiceInfo(sid="1002", label="X"), dab)
+    assert len(p._listeners) == 1
+    await src.stop()
+    assert p._listeners == []
+    dab.live["1002"] = ServiceInfo(sid="1002", label="X")  # known on the live ensemble: start() does not raise
+    await src.start()
+    assert len(p._listeners) == 1
+    await src.stop()
+
+
+async def test_a_preset_picked_while_an_alarm_rings_plays_once_it_stops(app) -> None:
+    audio: AudioService = app.state.ctx.svc(AudioService)
+    await audio.play("chime:gentle_bell", level="alarm", remember=False)
+    slot = await audio.play("chime:birds", level="user")
+    assert slot.state == "paused" and slot.source.player.loaded_url is None  # queued, never started
+    await audio.stop_level("alarm")
+    user = audio.arbiter.slot("user")
+    assert user is slot and user.state == "playing"
+    assert user.source.player.loaded_url == user.source.url and user.source.flowing
+    await audio.stop_level("user")
+
+
+async def test_the_supervisor_fake_host_runs_no_commands(tmp_config) -> None:
+    from tests.test_supervisor import FakeHost
+
+    app = create_app(ConfigManager(tmp_config, poll_s=10))
+    async with app.router.lifespan_context(app):
+        rc, out = await FakeHost(app.state.ctx).run("wpctl", "status")
+        assert rc == 127 and "fake host" in out
