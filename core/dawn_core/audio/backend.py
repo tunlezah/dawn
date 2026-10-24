@@ -13,6 +13,7 @@ import json
 import logging
 import re
 import shutil
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import Any
 
@@ -33,14 +34,21 @@ class Sink:
 
 
 async def run(*cmd: str, timeout: float = 5.0) -> tuple[int, str]:
+    """(exit code, output). 124 = timed out (and killed: pw-dump runs every second during a ring, so a wedged
+    PipeWire must not leave a hung process a second), 127 = could not run."""
     try:
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-        return proc.returncode or 0, out.decode(errors="ignore")
     except FileNotFoundError:
         return 127, f"{cmd[0]}: not found"
+    except OSError as e:
+        return 127, f"{cmd[0]}: {e}"
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
+        with suppress(ProcessLookupError):
+            proc.kill()
         return 124, "timeout"
+    return proc.returncode or 0, out.decode(errors="ignore")
 
 
 def classify_sink(name: str, description: str, props: dict[str, Any] | None = None) -> SinkKind:

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 
 import httpx
 
@@ -110,10 +111,15 @@ class TimeSourceService(Service):
                 return None
         try:
             proc = await asyncio.create_subprocess_exec(self.ctx.config.time_sources.chronyc_binary, "-c", *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(proc.communicate(), 5)
-            return out.decode(errors="ignore") if proc.returncode == 0 else None
-        except (TimeoutError, OSError):
+        except OSError:
             return None
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 5)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()  # a chronyc that hangs (its socket gone) is not left behind every poll
+            return None
+        return out.decode(errors="ignore") if proc.returncode == 0 else None
 
     async def poll(self) -> None:
         cfg = self.ctx.config.time_sources

@@ -18,6 +18,7 @@ export const LOCAL_SNOOZE_MS = 9 * 60_000;
 const KEY = 'dawn.face.backup';
 export const DOWN_WHY = 'Dawn is not responding';
 export const DEGRADED_WHY = 'Dawn cannot read its alarms';
+export const STUCK_WHY = 'Dawn is not keeping time';
 
 /** What the face last heard from core about alarms. */
 export interface Heard {
@@ -129,25 +130,32 @@ export class Beeper {
   }
 }
 
-/** Is core answering? The WebSocket says so while state keeps coming; otherwise /api/health decides, so a face whose
- *  own socket is stuck does not ring over a core that is fine. */
-function useCoreUp(connected: boolean, version: number): boolean {
+/** Is core answering, and is its alarm engine ticking? The WebSocket says so while state keeps coming (with
+ *  `alarms.engine_alive`); otherwise /api/health decides (with `alarms_alive`), so a face whose own socket is stuck
+ *  does not ring over a core that is fine. A core that answers but whose engine has stopped evaluating alarms counts
+ *  as down: nothing else would ring then. */
+function useCoreUp(connected: boolean, version: number, engineAlive: boolean): boolean {
   const lastState = useRef(Date.now());
   const lastHealth = useRef(Date.now());
+  const engine = useRef(engineAlive);
+  engine.current = engineAlive;
   const [up, setUp] = useState(true);
   useEffect(() => { lastState.current = Date.now(); }, [version]);
   useEffect(() => {
     let stopped = false;
     const check = async () => {
       const now = Date.now();
-      const fresh = connected && now - lastState.current < STALE_MS;
+      const fresh = connected && now - lastState.current < STALE_MS && engine.current;
       if (fresh) lastHealth.current = now; // so core counts as down only STALE_MS after it was last heard, not at once
       else {
         const ctl = new AbortController();
         const t = window.setTimeout(() => ctl.abort(), 3000);
         try {
           const r = await fetch('/api/health', { cache: 'no-store', signal: ctl.signal });
-          if (r.ok) lastHealth.current = Date.now();
+          if (r.ok) {
+            const j = await r.json().catch(() => ({})) as { alarms_alive?: boolean };
+            if (j.alarms_alive !== false) lastHealth.current = Date.now();
+          }
         } catch { /* no answer */ }
         clearTimeout(t);
       }
@@ -170,7 +178,7 @@ export interface Backup {
 }
 
 export function useBackup(s: UIState, connected: boolean): Backup {
-  const coreUp = useCoreUp(connected, s.version);
+  const coreUp = useCoreUp(connected, s.version, s.alarms.engine_alive !== false);
   const saved = useRef<Saved>(load());
   const [local, setLocal] = useState<LocalRing | null>(null);
   const [tick, setTick] = useState(0);
@@ -201,6 +209,7 @@ export function useBackup(s: UIState, connected: boolean): Backup {
   const stateAt = useRef(0);
   useEffect(() => { if (connected && s.version > 0) stateAt.current = Date.now(); }, [connected, s.version]);
   const degraded = coreUp && connected && s.alarms.degraded;
+  const stuck = connected && s.version > 0 && s.alarms.engine_alive === false;
   useEffect(() => {
     const now = Date.now();
     if (local) {
@@ -210,8 +219,8 @@ export function useBackup(s: UIState, connected: boolean): Backup {
     }
     if (coreUp && !degraded) return;
     const owed = owedRing(saved.current.heard, now, saved.current.silenced);
-    if (owed) setLocal({ key: owed.key, label: owed.label, since: now, snoozedUntil: null, why: degraded ? DEGRADED_WHY : DOWN_WHY });
-  }, [tick, coreUp, degraded, connected, s.alarms.ringing, local]);
+    if (owed) setLocal({ key: owed.key, label: owed.label, since: now, snoozedUntil: null, why: degraded ? DEGRADED_WHY : stuck ? STUCK_WHY : DOWN_WHY });
+  }, [tick, coreUp, degraded, stuck, connected, s.alarms.ringing, local]);
 
   const r = s.alarms.ringing;
   const coreBeep = coreUp && !!r && r.face_beep && !r.snoozed_until;

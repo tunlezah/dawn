@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import suppress
 from dataclasses import dataclass
 
 
@@ -65,9 +66,12 @@ def parse_active(text: str) -> tuple[str | None, str | None]:
 async def run(*args: str, timeout: float = 15.0) -> tuple[int, str]:
     try:
         proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-        return proc.returncode or 0, out.decode(errors="ignore")
     except FileNotFoundError:
         return 127, "nmcli not found"
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:
+        with suppress(ProcessLookupError):
+            proc.kill()  # not left behind: this runs every 30 s
         return 124, "timeout"
+    return proc.returncode or 0, out.decode(errors="ignore")

@@ -333,10 +333,15 @@ class DabService(Service):
     async def _unit_state(self) -> str:
         try:
             proc = await asyncio.create_subprocess_exec("systemctl", "is-active", self.ctx.config.dab.service_name, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(proc.communicate(), 3)
-            return out.decode().strip() or "unknown"
-        except (TimeoutError, OSError):
+        except OSError:
             return "unknown"
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 3)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            return "unknown"
+        return out.decode().strip() or "unknown"
 
     # ---- tuning / source -------------------------------------------------
     def service_row(self, sid: str) -> DabServiceRow | None:

@@ -244,6 +244,8 @@ class AudioService(Service):
         if slot.state not in ("playing", "ducked") or not slot.source.flowing:
             return False
         player = getattr(slot.source, "player", None)
+        if player is not None and getattr(player, "alive", True) is False:
+            return False  # a dead mpv: the backend may not be able to tell (ALSA, none), so it is not asked
         running = await self.backend.stream_running(player.client_name) if player is not None else None
         return running is not False
 

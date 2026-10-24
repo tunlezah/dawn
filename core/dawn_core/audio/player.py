@@ -13,6 +13,7 @@ import os
 import shutil
 import time
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 from typing import Any
 
@@ -52,9 +53,14 @@ class Player:
     def metadata(self) -> dict[str, Any]:
         return {}
     def on_change(self, fn: Callable[[], None]) -> None: ...
+    def off_change(self, fn: Callable[[], None]) -> None:
+        """Forget a listener added with on_change (a source that has stopped must not keep reacting)."""
 
 
 class MpvPlayer(Player):
+    # what mpv reports when nothing is loaded; also what is assumed once its IPC is gone
+    IDLE_PROPS: dict[str, Any] = {"pause": False, "core-idle": True, "paused-for-cache": False, "idle-active": True, "media-title": None, "metadata": {}, "eof-reached": False}
+
     def __init__(self, client_name: str, runtime_dir: Path, binary: str = "mpv", extra_args: list[str] | None = None):
         self.client_name = client_name
         self.sock = runtime_dir / f"mpv-{client_name}.sock"
@@ -66,19 +72,27 @@ class MpvPlayer(Player):
         self._rx_task: asyncio.Task[None] | None = None
         self._req_id = 0
         self._pending: dict[int, asyncio.Future[Any]] = {}
-        self.props: dict[str, Any] = {"pause": False, "core-idle": True, "paused-for-cache": False, "idle-active": True, "media-title": None, "metadata": {}, "eof-reached": False}
+        self.props: dict[str, Any] = dict(self.IDLE_PROPS)
         self._listeners: list[Callable[[], None]] = []
         self._loaded_url: str | None = None
         self._last_change = time.monotonic()
+        self._ipc_lost = False  # the IPC socket closed or its reader failed: nothing mpv says is known any more
 
     def on_change(self, fn: Callable[[], None]) -> None:
-        self._listeners.append(fn)
+        if fn not in self._listeners:
+            self._listeners.append(fn)
+
+    def off_change(self, fn: Callable[[], None]) -> None:
+        with suppress(ValueError):
+            self._listeners.remove(fn)
 
     async def start(self) -> None:
         if not shutil.which(self.binary):
             raise RuntimeError(f"{self.binary} not found")
         if self.sock.exists():
             self.sock.unlink()
+        self._ipc_lost = False
+        self.props = dict(self.IDLE_PROPS)
         args = [
             self.binary, "--idle=yes", "--no-video", "--no-terminal", "--really-quiet", "--keep-open=no",
             f"--input-ipc-server={self.sock}", f"--audio-client-name={self.client_name}",
@@ -121,7 +135,8 @@ class MpvPlayer(Player):
 
     @property
     def alive(self) -> bool:
-        return self.proc is not None and self.proc.returncode is None
+        """The process runs and its IPC is still read: only then do `playing` and `flowing` mean anything."""
+        return self.proc is not None and self.proc.returncode is None and not self._ipc_lost
 
     @property
     def loaded_url(self) -> str | None:
@@ -133,25 +148,42 @@ class MpvPlayer(Player):
 
     async def _rx(self) -> None:
         assert self._reader
-        while True:
-            line = await self._reader.readline()
-            if not line:
-                log.warning("mpv %s IPC closed", self.client_name)
-                return
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if "request_id" in msg and msg["request_id"] in self._pending:
-                fut = self._pending.pop(msg["request_id"])
-                if not fut.done():
-                    fut.set_result(msg)
-            elif msg.get("event") == "property-change":
-                self.props[msg.get("name")] = msg.get("data")
-                self._last_change = time.monotonic()
-                self._notify()
-            elif msg.get("event") in ("end-file", "start-file", "file-loaded"):
-                self._notify()
+        try:
+            while True:
+                line = await self._reader.readline()
+                if not line:
+                    log.warning("mpv %s IPC closed", self.client_name)
+                    break
+                try:
+                    msg = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if "request_id" in msg and msg["request_id"] in self._pending:
+                    fut = self._pending.pop(msg["request_id"])
+                    if not fut.done():
+                        fut.set_result(msg)
+                elif msg.get("event") == "property-change":
+                    self.props[msg.get("name")] = msg.get("data")
+                    self._last_change = time.monotonic()
+                    self._notify()
+                elif msg.get("event") in ("end-file", "start-file", "file-loaded"):
+                    self._notify()
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001  (an over-long line, a broken socket)
+            log.exception("mpv %s IPC reader failed", self.client_name)
+        self._ipc_closed()
+
+    def _ipc_closed(self) -> None:
+        """mpv died or its socket broke: whatever it last reported no longer holds, so nothing counts as playing
+        (a ring's watchdog must see silence and climb), waiting commands fail, and the owner is told."""
+        self._ipc_lost = True
+        self.props = dict(self.IDLE_PROPS)
+        for fut in self._pending.values():
+            if not fut.done():
+                fut.set_exception(RuntimeError(f"mpv {self.client_name} IPC closed"))
+        self._pending.clear()
+        self._notify()
 
     def _notify(self) -> None:
         for fn in self._listeners:
@@ -161,7 +193,7 @@ class MpvPlayer(Player):
                 log.exception("player listener failed")
 
     async def _cmd(self, *args: Any) -> Any:
-        if not self._writer:
+        if not self._writer or self._ipc_lost:
             raise RuntimeError("mpv not running")
         self._req_id += 1
         rid = self._req_id
@@ -195,7 +227,7 @@ class MpvPlayer(Player):
 
     @property
     def playing(self) -> bool:
-        return self._loaded_url is not None and not self.props.get("pause") and not self.props.get("idle-active", True)
+        return self.alive and self._loaded_url is not None and not self.props.get("pause") and not self.props.get("idle-active", True)
 
     @property
     def flowing(self) -> bool:
@@ -225,7 +257,12 @@ class SimPlayer(Player):
         self.gain = 100.0
 
     def on_change(self, fn: Callable[[], None]) -> None:
-        self._listeners.append(fn)
+        if fn not in self._listeners:
+            self._listeners.append(fn)
+
+    def off_change(self, fn: Callable[[], None]) -> None:
+        with suppress(ValueError):
+            self._listeners.remove(fn)
 
     async def load(self, url: str, loop: bool = False) -> None:
         self._drop()

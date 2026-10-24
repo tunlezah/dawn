@@ -104,9 +104,13 @@ async def logs(lines: int = 200, ctx: DawnContext = Depends(get_ctx)) -> dict[st
             import asyncio
 
             proc = await asyncio.create_subprocess_exec("journalctl", "-u", "dawn-core", "-u", "dawn-dab", "-u", "dawn-timed", "-n", str(lines), "--no-pager", "-o", "short-iso", stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(proc.communicate(), 5)
+            try:
+                out, _ = await asyncio.wait_for(proc.communicate(), 5)
+            except TimeoutError:
+                proc.kill()
+                raise
             if proc.returncode == 0 and out.strip():
                 return {"source": "journald", "lines": out.decode(errors="ignore").splitlines()[-lines:]}
-        except (TimeoutError, OSError):
+        except (TimeoutError, OSError, ProcessLookupError):
             pass
     return {"source": "memory", "lines": [f"{r['ts']} {r['level']:<7} {r['logger']}: {r['msg']}" for r in RING.records[-lines:]]}

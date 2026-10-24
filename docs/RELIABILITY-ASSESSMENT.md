@@ -149,3 +149,10 @@ loop) and the whole state is serialised and broadcast several times a second. No
 6. `AlarmService._loop`: set `last_tick` only after a tick that completed, or stop feeding after N consecutive
    failures; `/api/health` returns `alarms_alive`; the face's `useCoreUp` treats `ok && !alarms_alive` as down.
 7. Prune `event` rows older than ~90 days in the hourly prune that already runs for metrics.
+
+## Status (0.2.3)
+
+Findings 1, 2, 3, 4, 6, 7 and 8 are fixed in 0.2.3 (see the CHANGELOG), each with a regression test in
+`core/tests/test_reliability_fixes.py`; the supervisor also restarts a PipeWire that answers nothing. The
+design items (an RTC, `missed_grace_minutes`, a UPS, persistent journald, a scheduled kiosk reload) are left
+as recommendations: they are hardware and policy choices.

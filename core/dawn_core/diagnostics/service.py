@@ -47,12 +47,7 @@ class DiagnosticsService(Service):
         self._series_cache: dict[tuple[tuple[str, ...], float, int], tuple[float, dict[str, Any]]] = {}
 
     async def start(self) -> None:
-        try:
-            n = await asyncio.to_thread(self.history.prune, self.ctx.config.diagnostics.history_days)
-            if n:
-                log.info("history: pruned %d rows older than %d days", n, self.ctx.config.diagnostics.history_days)
-        except Exception:  # noqa: BLE001
-            log.exception("history prune failed")
+        await self._prune()
         self._tasks = [asyncio.create_task(self._sample_loop(), name="diag-sample"), asyncio.create_task(self._check_loop(), name="diag-checks")]
 
     async def stop(self) -> None:
@@ -61,8 +56,22 @@ class DiagnosticsService(Service):
         await self.host.close()
 
     async def on_config(self, old: DawnConfig, new: DawnConfig) -> None:
-        if old.diagnostics.history_days > new.diagnostics.history_days:
-            await asyncio.to_thread(self.history.prune, new.diagnostics.history_days)
+        if old.diagnostics.history_days > new.diagnostics.history_days or old.diagnostics.events_days > new.diagnostics.events_days:
+            await self._prune()
+
+    async def _prune(self) -> None:
+        """Keep only `history_days` of metrics and `events_days` of events (at start and once an hour: a clock that
+        never restarts must not grow its database for ever)."""
+        d = self.ctx.config.diagnostics
+        try:
+            n = await asyncio.to_thread(self.history.prune, d.history_days)
+            if n:
+                log.info("history: pruned %d rows older than %d days", n, d.history_days)
+        except Exception:  # noqa: BLE001
+            log.exception("history prune failed")
+        n = await asyncio.to_thread(self.ctx.db.prune_events, d.events_days)
+        if n:
+            log.info("events: pruned %d rows older than %d days", n, d.events_days)
 
     # ---- checks ------------------------------------------------------------
     async def _check_loop(self) -> None:
@@ -166,9 +175,9 @@ class DiagnosticsService(Service):
             try:
                 sample = await self.sample()
                 await asyncio.to_thread(self.history.add, sample)
-                if time.monotonic() - self._pruned_at > 3600:  # keep only history_days, also on a clock that never restarts
+                if time.monotonic() - self._pruned_at > 3600:
                     self._pruned_at = time.monotonic()
-                    await asyncio.to_thread(self.history.prune, self.ctx.config.diagnostics.history_days)
+                    await self._prune()
             except Exception:  # noqa: BLE001
                 log.exception("history sample failed")
             await asyncio.sleep(SAMPLE_S)

@@ -5,6 +5,36 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-24
+
+Fixes from the reliability assessment in `docs/RELIABILITY-ASSESSMENT.md` (what could keep an alarm from
+ringing on a clock that runs for months).
+
+### Fixed
+- An mpv that died mid-ring was still reported as "audio flowing" when PipeWire was not the audio backend (the
+  ALSA fallback, used exactly when PipeWire is what broke), so the alarm's ladder never climbed and the alarm
+  stayed silent. A player whose process is gone or whose IPC socket closed now counts as not playing, what it
+  last reported is forgotten, and the arbiter is told; the ring's watchdog then hears silence and moves on to the
+  chime or the backup tone.
+- Every play, preset change and ring added a listener to its mpv player that was never removed, so each mpv
+  event re-published the whole state once per past play; on a clock that runs for months this grew into
+  thousands of publishes on the event loop. A source that stops lets go of its player.
+- A backup-tone player that hung (a PipeWire that is running but answers no client) was counted as sounding for
+  ever, and the chain never reached `aplay` on the raw sound card. A player still running 10 s past the end of
+  its 5 s file is killed, goes last for two minutes, and the next player is tried.
+- Helper commands that timed out (`pw-dump` once a second during a ring, `wpctl`, `chronyc`, `nmcli`,
+  `systemctl`, `journalctl`, `git`) were left running. They are killed.
+- An alarm engine whose tick raised every time still fed the systemd watchdog and `/api/health` still said ok,
+  so neither systemd nor the face's backup alarm stepped in. A tick that fails is no longer a tick: the watchdog
+  is held back, `alarms.engine_alive` in the state and `alarms_alive` in `/api/health` go false, and the face
+  treats such a core as down and rings by itself ("backup alarm · Dawn is not keeping time").
+- The event log (`alarm_fire`, `alarm_missed`, self-repairs, scans...) grew for ever. It is pruned to
+  `diagnostics.events_days` (90) at start and once an hour, with the Diagnostics history.
+
+### Added
+- Self-repair restarts the dawn user's `pipewire` when `wpctl status` has timed out on three checks in a row
+  (45 s): a PipeWire that systemd sees as healthy but that answers nothing, so no sound and no way to tell.
+
 ## [0.2.2] - 2026-10-10
 
 ### Added

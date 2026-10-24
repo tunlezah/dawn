@@ -23,11 +23,14 @@ def get_events(limit: int = 100, ctx: DawnContext = Depends(get_ctx)) -> list[di
 
 @router.get("/health")
 def health(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
+    from ..system.sysinfo import alarms_alive
+
     return {
         "ok": True,
         "version": ctx.store.state.system.version,
         "sim": ctx.sim,
         "failed_services": ctx.registry.failed,
         "database": ctx.db.mode,
+        "alarms_alive": alarms_alive(ctx),  # the face rings by itself when core answers but this is false
         "now": ctx.store.iso(),
     }

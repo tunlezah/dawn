@@ -201,6 +201,9 @@ class AlarmsState(BaseModel):
     # rings by itself from the last next-alarm it heard
     degraded: bool = False
     degraded_reason: str | None = None
+    # the engine ticks (sysinfo sets it every heartbeat); false means no alarm is being evaluated, so the face
+    # treats core as down for its own backup ring even though core answers
+    engine_alive: bool = True
 
 
 class TimerInfo(BaseModel):

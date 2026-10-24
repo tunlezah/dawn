@@ -70,10 +70,14 @@ class PlayerSource(AudioSource):
     async def start(self) -> None:
         self._started = True
         self.error = None
+        self.player.on_change(self._changed)  # again after a stop (on_change adds a listener once)
         await self.player.load(self.url, loop=self.loop)
 
     async def stop(self) -> None:
         self._started = False
+        # the player outlives its sources (one mpv per family for the life of dawn-core): a source that is done
+        # must not stay on its listener list, or every mpv event would re-publish the state once per past play
+        self.player.off_change(self._changed)
         await self.player.unload()
 
     async def pause(self) -> None:

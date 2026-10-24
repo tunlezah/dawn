@@ -430,6 +430,8 @@ system:
 diagnostics:
   # Days of signal and timing history kept for the Diagnostics graphs (one row a minute).
   history_days: 7
+  # Days the event log (alarms fired, missed, snoozed; self-repairs; scans) is kept.
+  events_days: 90
   # How often the checks behind the Diagnostics page run in the background.
   check_interval_s: 60
   # Status file written by dawn-timed (DAB time to chrony).

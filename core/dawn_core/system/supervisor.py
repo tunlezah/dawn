@@ -42,6 +42,8 @@ SYSTEM_UNITS = ("shairport-sync", "nqptp", "gpsd", "chrony", "bluetooth", "avahi
 USER_UNITS = ("pipewire", "wireplumber", "pipewire-pulse")  # the dawn user's session: no sudo needed
 INACTIVE_FOR_S = 30.0  # one of Dawn's own units seen stopped this long is started again (an update restarts them briefly)
 USER_FAILED_FOR_S = 10.0
+PIPEWIRE_HUNG_FOR_S = 45.0  # wpctl timing out this long (three checks): pipewire runs but answers no client
+WPCTL_TIMEOUT_S = 10.0
 FACE_STALE_S = 60.0  # a connected face whose page has not spoken for this long counts as gone
 HEAL_S = 600.0  # fine for this long: the backoff starts over
 REPAIRS_KEPT = 50
@@ -192,6 +194,16 @@ class SupervisorService(Service):
                 if await self._repair(f"user:{unit}", f"{unit} (PipeWire session)", state, lambda u=unit: self._restart_user_unit(u), now):
                     fixed = True
                     self.user_states[unit] = "activating"
+        # a pipewire that is `active` but answers nothing: every client blocks (mpv, pw-play, pw-dump), so nothing is
+        # heard and nothing can tell; systemd sees a healthy unit. wpctl timing out, check after check, is the sign.
+        if not fixed and self.user_states.get("pipewire") == "active":
+            rc, _ = await self.host.run("wpctl", "status", timeout=WPCTL_TIMEOUT_S)
+            if self._bad_for("user:pipewire-hung", rc == 124, now) >= PIPEWIRE_HUNG_FOR_S:
+                if await self._repair("user:pipewire-hung", "pipewire (PipeWire session)", f"wpctl not answering for {PIPEWIRE_HUNG_FOR_S:.0f} s",
+                                      lambda: self._restart_user_unit("pipewire"), now):
+                    fixed = True
+        else:
+            self._bad_for("user:pipewire-hung", False, now)
         if fixed:
             await self._reselect_audio()
 
