@@ -50,6 +50,7 @@ dawn_core = ["assets/**/*", "py.typed"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]  # tests import helpers as `tests.<module>`; plain `pytest` (CI) does not add the cwd as `python -m pytest` does
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.ruff]

@@ -27,6 +27,8 @@ are in `docs/reliability/`.
   present beside the file, dawn-core now says that changes since the last checkpoint are missing (*Diagnostics →
   System → Database*) and treats its alarms as unreliable, so the face rings from what it last heard.
 - `dawn-airplay-name` and `dawn-set-hostname` are given 60 s instead of being waited on for ever.
+- CI: three supervisor tests added in 0.2.3 imported a helper as `tests.test_supervisor`, which only resolves under
+  `python -m pytest`; the tests directory is on pytest's path now, so the plain `pytest` that CI runs passes too.
 
 ## [0.2.3] - 2026-10-24
 
