@@ -92,13 +92,17 @@ class TimerService(Service):
             start = audio.volume
             t0 = time.monotonic()
             while fade_s > 0:
+                if self.ctx.store.state.alarms.ringing is not None:
+                    log.info("sleep timer: an alarm rings; the fade ends now")
+                    break  # the alarm's ramp owns the volume from here
                 frac = min(1.0, (time.monotonic() - t0) / fade_s)
                 await audio.set_volume(round(start * (1 - frac)), persist=False, overlay=False)
                 if frac >= 1.0:
                     break
                 await asyncio.sleep(1.0)
             await audio.stop_level("sleep")
-            await audio.set_volume(self._sleep_prev_volume, persist=False, overlay=False)
+            if not self._hand_volume_to_ring(self._sleep_prev_volume):
+                await audio.set_volume(self._sleep_prev_volume, persist=False, overlay=False)
             self.ctx.db.log_event("sleep_end")
         except asyncio.CancelledError:
             raise
@@ -107,6 +111,22 @@ class TimerService(Service):
             self._sleep_fading = False
             self._sleep_prev_volume = None
             self.publish()
+
+    def _hand_volume_to_ring(self, volume: int | None) -> bool:
+        """A ring that started during the fade took the fade's half-way volume as the one to put back when it stops;
+        give it the volume from before the fade instead, and leave the volume itself to the ring's ramp."""
+        if volume is None:
+            return False
+        from .service import AlarmService
+
+        try:
+            ring = self.ctx.svc(AlarmService).ring
+        except KeyError:
+            return False
+        if ring is None or not ring.active:
+            return False
+        ring.prev_volume = volume
+        return True
 
     async def cancel_sleep(self, resume: bool = True) -> None:
         audio = self._audio()

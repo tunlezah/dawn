@@ -326,7 +326,7 @@ alarm_defaults:
   # Get each alarm's sound ready this many minutes ahead: the players are started, the DAB radio is tuned and in sync, and scans wait until it has rung (0 = off).
   prepare_minutes: 5
   max_ring_minutes: 30
-  # Fire late if within this window after boot.
+  # An alarm found this many whole minutes late (after a boot or a clock step) still rings; later than that it is logged as missed. 0 = only within the alarm's own minute.
   missed_grace_minutes: 10
   light_wake_minutes: 10
   chime: gentle_bell

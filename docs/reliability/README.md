@@ -1,11 +1,11 @@
 # Reliability checks
 
-The tests and tools behind [`../RELIABILITY-ASSESSMENT.md`](../RELIABILITY-ASSESSMENT.md). None of them run in CI:
-the reproductions pass while a defect is present, and the soaks take a quarter of an hour each.
+The tools behind [`../RELIABILITY-ASSESSMENT.md`](../RELIABILITY-ASSESSMENT.md). Apart from the regression tests
+in `core/tests`, none of them run in CI: the soaks take a quarter of an hour each.
 
 | File | What it does | How to run |
 |---|---|---|
-| `test_repro.py` | Reproduces findings 1 to 5 of the assessment (a stamp without a zone, a sleep fade stopping the ramp, a hung preparation, `missed_grace_minutes: 0`, the immutable read-only open ignoring the WAL), plus a DST confidence check. A passing test means the defect is present. | `cd core && ../.venv/bin/python -m pytest -q -c pyproject.toml ../docs/reliability/test_repro.py` |
+| `core/tests/test_reliability_round2.py` | The regression tests for findings 1 to 5 of the assessment (a stamp without a zone, a sleep fade stopping the ramp, a hung preparation, `missed_grace_minutes: 0`, the immutable read-only open ignoring the WAL), fixed in 0.2.4. They run with the suite. | `make test` |
 | `test_walk.py` | Walks the real engine through three days across the April DST change with seven alarm kinds, and through a matrix of clock steps. Passing means the engine fired exactly what it should. About two minutes. | as above, with `test_walk.py` |
 | `ro_writer.py`, `ro_reader.py` | Dawn's own database open path against a card that has gone read-only: write with `Database`, stop cleanly or crash, remount the directory read-only (`unshare -m` and a bind mount), open again and read the alarms. | `python ro_writer.py <dir>/dawn.db crash` then `unshare -m sh -c "mount --bind <dir> <dir> && mount -o remount,bind,ro <dir> && python ro_reader.py <dir>"` |
 | `soak_driver.py` | A plain `dawn-core` process driven hard through its API and WebSocket for `SOAK_MINUTES` (15), with RSS, threads and descriptors sampled from `/proc` every 30 s into `out/plain-samples.csv`. | `python -m dawn_sim --no-core --no-timed --no-keyboard` in one terminal, then `SOAK_PORT=8081 .venv/bin/python docs/reliability/soak_driver.py` |

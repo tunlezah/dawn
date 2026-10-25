@@ -212,7 +212,7 @@ async def test_ramp_carries_across_rungs_and_yields_to_the_knob(svc, fast) -> No
     await asyncio.sleep(1.2)
     v = audio.volume
     assert 10 < v < 80  # ramping (10 s: room for a slow machine)
-    await audio.set_volume(25, overlay=False)  # turned down by hand
+    await audio.set_volume(25)  # turned down by hand (the knob, the face and the web all show the overlay)
     await asyncio.sleep(1.5)
     assert audio.volume == 25  # the ramp let go
     await a.stop_ringing()
@@ -331,7 +331,8 @@ async def test_one_malformed_alarm_does_not_stop_the_others(svc) -> None:
     good = a.create(AlarmIn(label="Good", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0), now=BEFORE)  # creating still works
     await a.tick(now=AT)
     assert a.ring is not None and a.ring.req.alarm_id == good.id
-    assert [i.label for i in ctx.store.state.alarms.items] == ["Good"]
+    # the broken row is listed, but as broken (never as scheduled): it will not ring until it is edited
+    assert {i.label: i.problem is not None for i in ctx.store.state.alarms.items} == {"Good": False, "Broken": True}
     await a.stop_ringing()
     assert parse_days("x,1, 3 ,9,") == [1, 3]
 

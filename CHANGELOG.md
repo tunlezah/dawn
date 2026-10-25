@@ -5,6 +5,29 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.4] - 2026-10-25
+
+Fixes from the second reliability assessment in `docs/RELIABILITY-ASSESSMENT.md`; the tests and soak tools behind it
+are in `docs/reliability/`.
+
+### Fixed
+- An alarm whose `last_fired_occurrence` had no time-zone offset (a hand edit of the database, an edited backup)
+  was listed as armed with a next time on the face and in the UI but skipped by the engine on every tick, with one
+  log line as the only sign. A stamp without a zone now counts as the clock's local time, and a row the engine cannot
+  evaluate at all is shown as broken (`problem` on the alarm, a red note under Alarms, a failing Diagnostics row)
+  instead of as scheduled, and is never the next alarm.
+- A sleep timer whose fade overlapped an alarm's ring made the ramp stop at the bedtime listening volume: the fade's
+  own steps looked like the knob. Only a change by hand (the knob, the face, the web) ends the ramp now; a fade ends
+  as soon as an alarm rings and hands the ring the volume from before the fade to put back afterwards.
+- A preparation that hung (a `systemctl restart dawn-dab` that never returned) blocked every later preparation for
+  the life of the process. A check is given up on after 150 s, and the decoder restart itself after 90 s.
+- `missed_grace_minutes: 0` made every alarm a miss, since the tick always lands a second or more past the minute.
+  The window counts whole minutes now: 0 means within the alarm's own minute, 10 up to ten minutes and 59 seconds.
+- The last-resort read-only open of the database (`immutable`) does not read SQLite's write-ahead log; with one
+  present beside the file, dawn-core now says that changes since the last checkpoint are missing (*Diagnostics →
+  System → Database*) and treats its alarms as unreliable, so the face rings from what it last heard.
+- `dawn-airplay-name` and `dawn-set-hostname` are given 60 s instead of being waited on for ever.
+
 ## [0.2.3] - 2026-10-24
 
 Fixes from the reliability assessment in `docs/RELIABILITY-ASSESSMENT.md` (what could keep an alarm from

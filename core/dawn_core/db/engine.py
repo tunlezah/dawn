@@ -36,6 +36,9 @@ class Database:
         self._write_error_logged = 0.0
         self.mode = "rw"  # rw | ro (the file is read, nothing can be saved) | memory (nothing could be read)
         self.open_error: str | None = None  # why it is not rw
+        # read-only, with a write-ahead log beside the file that this open cannot read: what was read is as of the last
+        # checkpoint, so alarms changed since then are missing and the face's own memory of them is the better one
+        self.stale = False
         if str(self.path) == ":memory:":
             self.engine = self._open("sqlite://", create=True)
             self.mode = "memory"
@@ -55,6 +58,14 @@ class Database:
             self.engine = self._open(f"sqlite:///file:{self.path}?mode=ro&immutable=1&uri=true", create=False)
             self.mode = "ro"
             log.error("%s is read-only: alarms and settings are read from it, but nothing can be saved", self.path)
+            wal = self.path.with_name(self.path.name + "-wal")
+            try:
+                self.stale = wal.stat().st_size > 0
+            except OSError:
+                self.stale = False
+            if self.stale:
+                self.open_error = f"{self.open_error}; {wal.name} is present and an immutable open does not read it: changes since the last checkpoint are missing"
+                log.critical("%s has a write-ahead log this read-only open cannot read: alarms changed since the last checkpoint are missing", self.path)
             return
         except Exception as e:  # noqa: BLE001
             self.open_error = f"{self.open_error}; read-only: {type(e).__name__}: {e}"

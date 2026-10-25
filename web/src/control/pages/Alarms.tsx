@@ -85,6 +85,7 @@ export function Alarms() {
                 {a.skip_public_holidays && ' · skips holidays'}{a.light_wake && ' · light'}
                 {a.enabled && a.next_at && <span className="text-faint"> · next {fmtDayTime(a.next_at, s.tz, s.settings.clock_24h)}</span>}
                 {a.skip_next && <span className="text-warn"> · next skipped</span>}
+                {a.problem && <span className="text-err"> · will not ring: {a.problem} (edit it)</span>}
               </div>
             </button>
             <button className={`btn btn-sm ${a.skip_next ? 'btn-primary' : 'btn-ghost'}`} title="Skip next" onClick={() => api.post(`/api/alarms/${a.id}/skip-next`)} disabled={!a.enabled}>skip</button>

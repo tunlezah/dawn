@@ -46,6 +46,7 @@ class AlarmOut(AlarmIn):
     id: int
     next_at: str | None = None
     last_fired_occurrence: str | None = None
+    problem: str | None = None  # why the engine cannot evaluate this row (it will not ring until edited)
 
 
 class TestRingIn(BaseModel):

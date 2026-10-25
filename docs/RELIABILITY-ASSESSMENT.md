@@ -39,9 +39,8 @@ What this round did find is smaller than the first round's, and none of it bites
 | 5 | Low | `db/engine.py:55` | The last-resort read-only open (`immutable=1`) ignores SQLite's write-ahead log. It is only reached when the `-shm` file is missing while a `-wal` exists; then alarms edited since the last checkpoint are invisible. The realistic sequences (a crash, then a read-only card at the next boot; a clean stop, then read-only) read everything. |
 | 6 | Design, unchanged | no RTC, `alarm_defaults.missed_grace_minutes` 10 | After a power cut the clock boots behind by the outage plus up to an hour and the alarm is marked missed if the time sync lands more than 10 minutes past it. No power at alarm time is the one case nothing covers. |
 
-Findings 1 to 5 are reproduced by tests that pass while the defect is present (`scratchpad/repro/test_repro.py`,
-five of six; the sixth is a DST confidence check that also passes). Suggested fixes are at the end; the first four
-are a few lines each.
+Findings 1 to 5 were each reproduced by a test that passed while the defect was present; those tests, inverted,
+are now the regression tests in `core/tests/test_reliability_round2.py` (see *Status* at the end).
 
 ## The findings in detail
 
@@ -226,6 +225,16 @@ it is the thing to watch, and it does not affect whether the alarm rings.
 6. Hardware and policy: an RTC; `missed_grace_minutes: 30`; `Storage=persistent` with `SystemMaxUse=64M` for
    journald (the journal is in RAM on Raspberry Pi OS, so the night's logs die with the reboot that follows a
    failure); a UPS if storms count.
+
+## Status (0.2.4)
+
+Findings 1 to 5 are fixed in 0.2.4 (see the CHANGELOG), each with a regression test in
+`core/tests/test_reliability_round2.py`: a stamp without a zone counts as local time and a row the engine cannot
+evaluate is shown as broken everywhere instead of as scheduled; only a change by hand ends the ramp and a sleep fade
+ends when an alarm rings; a preparation is given up on after 150 s and a decoder restart after 90 s; the grace window
+counts whole minutes; a read-only open beside an unread write-ahead log marks the alarms unreliable so the face rings
+from its own memory. Finding 6 (an RTC, the grace window, a UPS, persistent journald) remains a hardware and policy
+choice.
 
 ## History
 

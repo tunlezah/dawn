@@ -362,7 +362,10 @@ class AlarmDefaults(StrictModel):
         description="Get each alarm's sound ready this many minutes ahead: the players are started, the DAB radio is tuned and in sync, and scans wait until it has rung (0 = off).",
     )
     max_ring_minutes: int = Field(30, ge=1, le=180)
-    missed_grace_minutes: int = Field(10, ge=0, le=60, description="Fire late if within this window after boot.")
+    missed_grace_minutes: int = Field(
+        10, ge=0, le=60,
+        description="An alarm found this many whole minutes late (after a boot or a clock step) still rings; later than that it is logged as missed. 0 = only within the alarm's own minute.",
+    )
     light_wake_minutes: int = Field(10, ge=1, le=60)
     chime: Literal["gentle_bell", "rising_synth", "birds"] = "gentle_bell"
     buzzer: BuzzerConfig = BuzzerConfig()

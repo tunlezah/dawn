@@ -36,6 +36,8 @@ export interface NowPlaying {
 export interface AlarmSummary {
   id: number; label: string; enabled: boolean; time: string; repeat: string; days: number[]; source: string; volume: number;
   skip_next: boolean; skip_public_holidays: boolean; next_at: string | null; light_wake: boolean;
+  /** the engine cannot evaluate this row (a damaged row): it will not ring until it is edited */
+  problem: string | null;
 }
 export interface NextAlarm { id: number; label: string; at: string; in_seconds: number; light_wake_at: string | null }
 export interface RingingInfo {
@@ -50,7 +52,8 @@ export interface AlarmPrep {
 export interface AlarmsState {
   items: AlarmSummary[]; next: NextAlarm | null; ringing: RingingInfo | null; on_leave_until: string | null; light_wake_active: boolean;
   prepare: AlarmPrep | null;
-  /** core could not read its alarms (the database is unreadable): `items` and `next` say nothing */
+  /** core could not read its alarms, or what it read may miss recent changes (the database is unreadable, or
+   *  read-only with a write-ahead log it cannot read): `items` and `next` are not to be trusted */
   degraded: boolean; degraded_reason: string | null;
   /** the alarm engine ticks; false: core answers but evaluates no alarm, and the face rings by itself */
   engine_alive: boolean;

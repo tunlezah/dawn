@@ -121,10 +121,14 @@ def due_occurrence(
         occ = next_occurrence(spec, occ, tz, is_holiday, leave_until, horizon_days=3)
     if latest is None:
         return None
-    if spec.last_fired_occurrence and _parse(spec.last_fired_occurrence) >= latest:
+    if spec.last_fired_occurrence and parse_stamp(spec.last_fired_occurrence, tz) >= latest:
         return None
     return latest
 
 
-def _parse(s: str) -> datetime:
-    return datetime.fromisoformat(s)
+def parse_stamp(s: str, tz: ZoneInfo) -> datetime:
+    """An ISO stamp as an aware datetime. One without an offset (a hand edit of the database, an edited backup) is
+    taken as the alarm's local time: comparing it with an aware time would raise, and a row that raises is skipped
+    on every tick while still listed as scheduled."""
+    d = datetime.fromisoformat(s)
+    return d.replace(tzinfo=tz) if d.tzinfo is None else d

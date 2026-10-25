@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from contextlib import suppress
 from datetime import datetime
 
 import httpx
@@ -98,7 +99,13 @@ class AirPlayService(Service):
             log.info("sim: AirPlay name -> %s", name)
             return
         proc = await asyncio.create_subprocess_exec(self.ctx.config.system.sudo_binary, "-n", "/usr/local/bin/dawn-airplay-name", name)
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), 60)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            log.warning("dawn-airplay-name did not return in 60 s")
+            return
         if proc.returncode:
             log.warning("could not apply AirPlay name (dawn-airplay-name rc=%s)", proc.returncode)
 
