@@ -60,6 +60,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         },
         "alarms": {
             "engine_alive": alarms.alive() if alarms else None, "prepare": st.alarms.prepare.model_dump() if st.alarms.prepare else None,
+            "broken": [{"id": i.id, "label": i.label, "problem": i.problem} for i in st.alarms.items if i.problem],
             "ringing": st.alarms.ringing.model_dump() if st.alarms.ringing else None,
             "backup_tone_24h": [e for e in events if e["kind"] == "ring_fallback" and e.get("tier") == "buzzer"],
             "missed_24h": [e for e in events if e["kind"] == "alarm_missed"],
@@ -91,7 +92,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "disk_root": {"total": root[0], "free": root[1]} if root else None,
             "errors": recent[-8:], "error_count": len(recent), "update_running": st.system.update_running,
             "db_write_errors": ctx.db.write_errors, "db_last_write_error": ctx.db.last_write_error,
-            "db_mode": ctx.db.mode, "db_open_error": ctx.db.open_error, "db_path": str(ctx.db.path),
+            "db_mode": ctx.db.mode, "db_open_error": ctx.db.open_error, "db_path": str(ctx.db.path), "db_stale": ctx.db.stale,
         },
     }
 
@@ -137,6 +138,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
     tier_name = {"source": "its own source", "chime": "the chime", "buzzer": "the backup tone"}
     if al.get("engine_alive") is False:
         alarm("engine", "Alarm engine", "fail", "The alarm engine has stopped ticking.", "systemd restarts dawn-core within about a minute; see System → Logs.")
+    if al.get("broken"):
+        alarm("broken", "Alarms that cannot ring", "fail", "; ".join(f"{b['label']}: {b['problem']}" for b in al["broken"]) + ".",
+              "The row is damaged (a hand edit of the database, an edited backup). Edit the alarm under Alarms, or delete it and set it again.")
     r = al.get("ringing")
     if r and r["tier"] != "source":
         alarm("ringing", "Ringing now", "warn" if r["tier"] == "chime" else "fail", f"{r['label']} is ringing on {tier_name[r['tier']]}: {r.get('fallback_reason') or 'its source gave no audio'}.")
@@ -239,7 +243,8 @@ def checks(f: dict[str, Any]) -> list[Check]:
             "no alarms, presets or stations are known.",
             "The face rings by itself at the time of the last alarm it heard of. Check the SD card (dmesg, fsck); restore a backup once the storage is sound; a reboot may be enough after a card remount.")
     elif s.get("db_mode") == "ro":
-        add("system", "database", "Database", "fail", f"{s.get('db_path')} could only be opened read-only at start ({s.get('db_open_error')}): the alarms and settings are read from it, nothing can be saved.",
+        stale = " Its write-ahead log could not be read, so alarms changed since the last checkpoint are missing here; the face rings from what it last heard." if s.get("db_stale") else ""
+        add("system", "database", "Database", "fail", f"{s.get('db_path')} could only be opened read-only at start ({s.get('db_open_error')}): the alarms and settings are read from it, nothing can be saved.{stale}",
             "The storage has probably gone read-only (a failing SD card, or ext4 errors at boot). Alarms ring as saved; changes made now are lost at the next restart. Check dmesg and reboot once the card is sound.")
     if s.get("db_write_errors"):
         add("system", "db_writes", "Saving to storage", "fail", f"{s['db_write_errors']} write(s) to the database failed since start; last: {s['db_last_write_error']}.",

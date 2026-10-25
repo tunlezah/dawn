@@ -149,6 +149,7 @@ class AlarmSummary(BaseModel):
     skip_public_holidays: bool = False
     next_at: str | None = None
     light_wake: bool = False
+    problem: str | None = None  # the row cannot be evaluated by the engine (a damaged row): it will not ring until edited
 
 
 class NextAlarm(BaseModel):

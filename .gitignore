@@ -18,6 +18,9 @@ web/.vite/
 web/test-results/
 web/playwright-report/
 
+# Reliability soak output (docs/reliability/README.md)
+docs/reliability/out/
+
 # Runtime
 *.db
 *.db-journal

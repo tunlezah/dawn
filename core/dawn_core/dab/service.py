@@ -25,6 +25,8 @@ from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid, welle_args
 
 log = logging.getLogger("dawn.dab")
 
+RESTART_TIMEOUT_S = 90.0  # systemd's own stop timeout; a `systemctl restart` still running after it is given up on
+
 
 def snr_to_signal(snr: float | None) -> int | None:
     if snr is None:
@@ -506,8 +508,16 @@ class DabService(Service):
         if self.ctx.sim:
             log.warning("sim: would restart %s", self.ctx.config.dab.service_name)
             return True
-        proc = await asyncio.create_subprocess_exec(self.ctx.config.system.sudo_binary, "-n", "systemctl", "restart", self.ctx.config.dab.service_name)
-        await proc.wait()
+        unit = self.ctx.config.dab.service_name
+        proc = await asyncio.create_subprocess_exec(self.ctx.config.system.sudo_binary, "-n", "systemctl", "restart", unit)
+        try:
+            # systemctl waits for the unit to stop and start again; a wedged systemd or D-Bus would hold the caller
+            # (an alarm's preparation) for ever
+            await asyncio.wait_for(proc.wait(), RESTART_TIMEOUT_S)
+        except TimeoutError:
+            log.error("systemctl restart %s did not return in %.0f s", unit, RESTART_TIMEOUT_S)
+            with suppress(ProcessLookupError):
+                proc.kill()
         return True
 
     async def healthy(self) -> bool:

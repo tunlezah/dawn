@@ -267,20 +267,22 @@ class RingSession:
 
     async def _ramp(self, epoch: int) -> None:
         """Raise the volume to the alarm's over ramp_seconds. A change by hand while it ramps ends it: the knob wins.
+        Only a hand counts (the knob, the face, the web: `AudioService.hand_changes`); a change by another part of
+        core (a sleep timer's fade ending as the alarm starts, a lowered maximum) is stepped over at the next step.
         A step the backend refuses is tried again at the next one, so the ramp never stalls at its quiet start."""
-        last = self.audio.volume
+        hand = self.audio.hand_changes
         while not self._stale(epoch):
-            if self.audio.volume != last:
+            if self.audio.hand_changes != hand:
                 log.info("%s: volume changed by hand to %s; the ramp stops", self.req.label, self.audio.volume)
                 return
             done = self.tier == "buzzer" or self.req.ramp_seconds <= 0 or time.monotonic() - self._ramp_origin >= self.req.ramp_seconds
             v = self._ramp_level(self.tier)
-            if v != last:
+            if v != self.audio.volume:
                 try:
-                    last = await self.audio.set_volume(v, persist=False, overlay=False)
+                    await self.audio.set_volume(v, persist=False, overlay=False)
                 except Exception as e:  # noqa: BLE001
                     self._trouble("setting the volume", e)
-                    last, done = self.audio.volume, False  # try the next step
+                    done = False  # try the next step
             if done:
                 return
             await asyncio.sleep(0.5)

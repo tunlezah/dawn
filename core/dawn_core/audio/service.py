@@ -36,6 +36,7 @@ class AudioService(Service):
         self.factories: dict[str, SourceFactory] = {}
         self.volume = 35
         self.muted = False
+        self.hand_changes = 0  # volume changes made by hand (the knob, the face, the web): the only ones that end an alarm's ramp
         self._volume_before_mute = 35
         self._sinks: list[Sink] = []
         self._sink: Sink | None = None
@@ -258,8 +259,12 @@ class AudioService(Service):
         return round(max(0, min(100, volume)) * self.ctx.config.audio.output_ceiling_percent / 100)
 
     async def set_volume(self, volume: int, *, persist: bool = True, overlay: bool = True) -> int:
+        """`overlay` is what a hand does (the knob, the face's slider, the web): it shows the overlay and counts as a
+        change by hand; core's own changes (ramps, fades, restores) pass overlay=False."""
         volume = max(0, min(self.ctx.config.audio.max_volume, int(volume)))
         self.volume = volume
+        if overlay:
+            self.hand_changes += 1
         if self.muted and volume > 0:
             self.muted = False
             await self.backend.set_mute(False)

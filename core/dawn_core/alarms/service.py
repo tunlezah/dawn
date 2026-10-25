@@ -23,6 +23,7 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
+from pydantic import ValidationError
 from sqlmodel import select
 
 from ..audio.service import AudioService
@@ -34,7 +35,7 @@ from ..state.ui import AlarmPrep, AlarmSummary, NextAlarm
 from .buzzer import Buzzer, BuzzerSource
 from .holidays import HolidayCalendar
 from .ringing import RingRequest, RingSession
-from .scheduler import AlarmSpec, due_occurrence, next_occurrence
+from .scheduler import AlarmSpec, due_occurrence, next_occurrence, parse_stamp
 from .schemas import AlarmIn, AlarmOut
 
 log = logging.getLogger("dawn.alarms")
@@ -42,6 +43,7 @@ log = logging.getLogger("dawn.alarms")
 PREP_EVERY_S = 20.0  # re-check a prepared alarm this often
 PREP_RETRY_S = 5.0  # and this often while something is not ready
 PREP_FRESH_S = 60.0  # a check older than this does not decide where a ring starts
+PREP_TIMEOUT_S = 150.0  # a check still running after this (a decoder restart that never returns) is given up on
 RESUME_MAX_AGE = timedelta(hours=4)  # a saved ring older than this is not carried on after a restart
 
 
@@ -59,16 +61,16 @@ def parse_days(days: str | None) -> list[int]:
     return sorted(set(out))
 
 
-def _later(a: str | None, b: str | None) -> str | None:
-    """The later of two ISO stamps (a malformed one loses)."""
+def _later(a: str | None, b: str | None, tz: Any) -> str | None:
+    """The later of two ISO stamps (a malformed one loses; one without a zone counts as local time)."""
     if not a or not b:
         return a or b
     try:
-        da = datetime.fromisoformat(a)
+        da = parse_stamp(a, tz)
     except ValueError:
         return b
     try:
-        return a if da >= datetime.fromisoformat(b) else b
+        return a if da >= parse_stamp(b, tz) else b
     except ValueError:
         return a
 
@@ -195,7 +197,7 @@ class AlarmService(Service):
             stored = row.last_fired_occurrence
             if stored is not None and self._pulled.get(rid) == stored:
                 stored = None  # a stamp from a fast clock that has been pulled back (see _tick_row)
-            row.last_fired_occurrence = _later(stored, self._handled.get(rid))
+            row.last_fired_occurrence = _later(stored, self._handled.get(rid), self.ctx.store.tz)
             if rid in self._disabled:
                 row.enabled = False
             if rid in self._skip_spent:
@@ -304,7 +306,7 @@ class AlarmService(Service):
         for k, v in fields.items():
             setattr(row, k, v)
         if "last_fired_occurrence" in fields:
-            self._handled[rid] = _later(fields["last_fired_occurrence"], self._handled.get(rid)) or fields["last_fired_occurrence"]
+            self._handled[rid] = _later(fields["last_fired_occurrence"], self._handled.get(rid), self.ctx.store.tz) or fields["last_fired_occurrence"]
         if fields.get("enabled") is False:
             self._disabled.add(rid)
         if fields.get("skip_next") is False:
@@ -355,15 +357,23 @@ class AlarmService(Service):
         except Exception as e:  # noqa: BLE001
             self._row_failed(row, e)
             nxt = None
-        return AlarmOut(
-            id=row.id or 0, label=row.label, enabled=row.enabled, time=row.time, repeat=row.repeat,  # type: ignore[arg-type]
+        problem = self._row_errors.get(row.id or 0)
+        fields: dict[str, Any] = dict(
+            id=row.id or 0, label=row.label, enabled=row.enabled, time=row.time, repeat=row.repeat,
             days=parse_days(row.days), skip_public_holidays=row.skip_public_holidays,
-            holiday_region=row.holiday_region, holiday_scope=row.holiday_scope, source=row.source, volume=row.volume,  # type: ignore[arg-type]
+            holiday_region=row.holiday_region, holiday_scope=row.holiday_scope, source=row.source, volume=row.volume,
             ramp_seconds=row.ramp_seconds, snooze_minutes=row.snooze_minutes, fallback_after_s=row.fallback_after_s,
             max_ring_minutes=row.max_ring_minutes, skip_next=row.skip_next, light_wake=row.light_wake,
-            light_wake_minutes=row.light_wake_minutes, next_at=nxt.isoformat(timespec="seconds") if nxt else None,
-            last_fired_occurrence=row.last_fired_occurrence,
+            light_wake_minutes=row.light_wake_minutes, next_at=nxt.isoformat(timespec="seconds") if nxt and not problem else None,
+            last_fired_occurrence=row.last_fired_occurrence, problem=problem,
         )
+        try:
+            return AlarmOut(**fields)
+        except ValidationError as e:
+            # a row whose values do not even validate (a time of 25:99): listed all the same, as broken, so it is not
+            # hidden from the one place it can be edited or deleted
+            fields["problem"] = problem or f"ValidationError: {e.errors()[0]['msg']}"
+            return AlarmOut.model_construct(**fields)
 
     def _resolve(self, ref: str) -> str:
         try:
@@ -389,7 +399,7 @@ class AlarmService(Service):
     async def tick(self, now: datetime | None = None) -> None:
         now = now or self.ctx.store.now()
         tz = self.ctx.store.tz
-        grace = timedelta(minutes=self.ctx.config.alarm_defaults.missed_grace_minutes)
+        grace = self.ctx.config.alarm_defaults.missed_grace_minutes
         leave = self.leave_until()
         light_candidate: tuple[int, datetime] | None = None
         prep_candidate: tuple[AlarmRow, datetime] | None = None
@@ -402,6 +412,8 @@ class AlarmService(Service):
             except Exception as e:  # noqa: BLE001
                 self._row_failed(row, e)
                 continue
+            if self._row_errors.pop(row.id or 0, None) is not None:
+                log.info("alarm %s (%r) can be evaluated again", row.id, row.label)
             if nxt is None:
                 continue
             if row.light_wake and self.ring is None and nxt - now <= timedelta(minutes=row.light_wake_minutes):
@@ -422,10 +434,12 @@ class AlarmService(Service):
         self._schedule_prepare(prep_candidate, now)
         self.publish_safe()
 
-    async def _tick_row(self, row: AlarmRow, now: datetime, tz, grace: timedelta, leave: date | None) -> datetime | None:
-        """Fire, miss or skip what is due for one alarm; returns its next occurrence after `now`."""
+    async def _tick_row(self, row: AlarmRow, now: datetime, tz, grace: int, leave: date | None) -> datetime | None:
+        """Fire, miss or skip what is due for one alarm; returns its next occurrence after `now`. `grace` is in whole
+        minutes: an occurrence `grace` minutes and 59 s late still rings, so 0 means within the alarm's own minute
+        (the tick always lands a second or more past it)."""
         stamp = row.last_fired_occurrence
-        if stamp and datetime.fromisoformat(stamp) > now + timedelta(minutes=10):
+        if stamp and parse_stamp(stamp, tz) > now + timedelta(minutes=10):
             # stamped while the clock was fast, and it has been stepped back since: only up to now is handled.
             # The stored stamp is ignored from here on, even if the database cannot take the new one.
             rid = row.id or 0
@@ -438,7 +452,7 @@ class AlarmService(Service):
         if row.skip_next:
             plain = AlarmSpec(**{**spec.__dict__, "skip_next": False})
             skipped = next_occurrence(plain, now - timedelta(hours=26), tz, hol, leave, horizon_days=3)
-            while skipped is not None and spec.last_fired_occurrence and datetime.fromisoformat(spec.last_fired_occurrence) >= skipped:
+            while skipped is not None and spec.last_fired_occurrence and parse_stamp(spec.last_fired_occurrence, tz) >= skipped:
                 skipped = next_occurrence(plain, skipped, tz, hol, leave, horizon_days=3)
             if skipped is not None and skipped <= now:
                 log.info("alarm %s: skipped occurrence %s", row.label, skipped)
@@ -448,7 +462,7 @@ class AlarmService(Service):
         due = due_occurrence(spec, now, tz, hol, leave)
         if due is not None:
             age = now - due
-            if age <= grace:
+            if int(age.total_seconds() // 60) <= grace:
                 await self.fire(row, due, late_s=int(age.total_seconds()))
             else:
                 log.warning("alarm %s missed (%s, %d min late)", row.label, due, age.total_seconds() // 60)
@@ -506,11 +520,38 @@ class AlarmService(Service):
         self._prep_task = asyncio.create_task(self._prepare(row, at, key), name="alarm-prepare")
 
     async def _prepare(self, row: AlarmRow, at: datetime, key: tuple[int, str]) -> None:
-        """Get one alarm's sound ready, and work out the rung it will start on if nothing changes."""
+        """Get one alarm's sound ready, and work out the rung it will start on if nothing changes. A check that hangs
+        (a decoder restart that never returns) is given up on after PREP_TIMEOUT_S: nothing else can prepare an alarm
+        while one check runs, so one that never ends would leave every later alarm unprepared."""
+        ref = self._resolve(row.source)
+        try:
+            problems, pending, start = await asyncio.wait_for(self._check(row, key, ref), PREP_TIMEOUT_S)
+        except TimeoutError:
+            log.error("preparing %s did not finish in %.0f s; giving up on this check", row.label, PREP_TIMEOUT_S)
+            problems, pending, start = [f"the check did not finish in {PREP_TIMEOUT_S:.0f} s"], False, "source"
+        if key != self._prep_key:
+            return  # the target moved on while this ran
+        prev = self._prep
+        self._prep = AlarmPrep(
+            alarm_id=key[0], label=row.label, at=at.isoformat(timespec="seconds"), source=ref, ready=not problems, pending=bool(problems) and pending,
+            problems=problems, start_tier=start, checked_at=self.ctx.store.iso(),  # type: ignore[arg-type]
+        )
+        self._prep_at = time.monotonic()
+        self._prep_due = self._prep_at + (PREP_EVERY_S if not problems else PREP_RETRY_S)
+        self.ctx.store.state.alarms.prepare = self._prep
+        self.ctx.store.touch()
+        if prev is None or prev.problems != problems:
+            if not problems:
+                log.info("%s at %s is ready", row.label, at.strftime("%H:%M"))
+            else:
+                (log.info if self._prep.pending else log.warning)("%s at %s: %s (starts on the %s)", row.label, at.strftime("%H:%M"), "; ".join(problems), start)
+            self.ctx.db.log_event("alarm_prepare", id=key[0], label=row.label, occurrence=key[1], ready=not problems, problems=problems, start_tier=start)
+
+    async def _check(self, row: AlarmRow, key: tuple[int, str], ref: str) -> tuple[list[str], bool, str]:
+        """(what is not ready, whether that is a step under way rather than a fault, the rung the ring would start on)."""
         problems: list[str] = []
         pending = True  # every problem so far is a step under way (tuning), not something wrong
         start = "source"
-        ref = self._resolve(row.source)
         family = source_family(ref)
         try:
             audio = self.ctx.svc(AudioService)
@@ -540,23 +581,7 @@ class AlarmService(Service):
             log.exception("preparing %s failed", row.label)
             problems.append(f"preparation failed: {e}")
             pending = False
-        if key != self._prep_key:
-            return  # the target moved on while this ran
-        prev = self._prep
-        self._prep = AlarmPrep(
-            alarm_id=key[0], label=row.label, at=at.isoformat(timespec="seconds"), source=ref, ready=not problems, pending=bool(problems) and pending,
-            problems=problems, start_tier=start, checked_at=self.ctx.store.iso(),  # type: ignore[arg-type]
-        )
-        self._prep_at = time.monotonic()
-        self._prep_due = self._prep_at + (PREP_EVERY_S if not problems else PREP_RETRY_S)
-        self.ctx.store.state.alarms.prepare = self._prep
-        self.ctx.store.touch()
-        if prev is None or prev.problems != problems:
-            if not problems:
-                log.info("%s at %s is ready", row.label, at.strftime("%H:%M"))
-            else:
-                (log.info if self._prep.pending else log.warning)("%s at %s: %s (starts on the %s)", row.label, at.strftime("%H:%M"), "; ".join(problems), start)
-            self.ctx.db.log_event("alarm_prepare", id=key[0], label=row.label, occurrence=key[1], ready=not problems, problems=problems, start_tier=start)
+        return problems, pending, start
 
     async def _prepare_dab(self, sid: str, key: tuple[int, str]) -> tuple[str | None, bool, bool]:
         """(what is not ready, whether the ring should start on the chime because of it, whether it is a step
@@ -742,20 +767,25 @@ class AlarmService(Service):
         for row in self.rows_safe():
             try:
                 n = self.next_for(row, now)
-                items.append(
-                    AlarmSummary(
-                        id=row.id or 0, label=row.label, enabled=row.enabled, time=row.time, repeat=row.repeat,
-                        days=parse_days(row.days), source=row.source, volume=row.volume,
-                        skip_next=row.skip_next, skip_public_holidays=row.skip_public_holidays,
-                        next_at=n.isoformat(timespec="seconds") if n else None, light_wake=row.light_wake,
-                    )
-                )
             except Exception as e:  # noqa: BLE001
                 self._row_failed(row, e)
-                continue
+                n = None
+            # a row the engine cannot evaluate (here, or on its tick) is shown as broken, never as scheduled, and is
+            # never the next alarm: a silent row that every screen calls armed is the one failure nobody would notice
+            problem = self._row_errors.get(row.id or 0)
+            if problem is not None:
+                n = None
+            items.append(
+                AlarmSummary(
+                    id=row.id or 0, label=row.label, enabled=row.enabled, time=row.time, repeat=row.repeat,
+                    days=parse_days(row.days), source=row.source, volume=row.volume,
+                    skip_next=row.skip_next, skip_public_holidays=row.skip_public_holidays,
+                    next_at=n.isoformat(timespec="seconds") if n else None, light_wake=row.light_wake, problem=problem,
+                )
+            )
             if n and (nxt is None or n < nxt[0]):
                 nxt = (n, row)
-        summary = ([(i.id, i.enabled, i.next_at, i.skip_next, i.label, i.time) for i in items], nxt[0].isoformat() if nxt else None, (nxt[0] - now).total_seconds() // 60 if nxt else None)
+        summary = ([(i.id, i.enabled, i.next_at, i.skip_next, i.label, i.time, i.problem) for i in items], nxt[0].isoformat() if nxt else None, (nxt[0] - now).total_seconds() // 60 if nxt else None)
         if not force and summary == self._last_summary:
             return
         self._last_summary = summary
@@ -766,8 +796,10 @@ class AlarmService(Service):
             light_wake_at=(nxt[0] - timedelta(minutes=nxt[1].light_wake_minutes)).isoformat(timespec="seconds") if nxt[1].light_wake else None,
         ) if nxt else None
         st.on_leave_until = self._leave.isoformat() if self._leave else None
-        # nothing could be read from the database: the alarms are unknown here, and the face rings from what it
-        # last heard (alarms/degraded on the face)
-        st.degraded = self.ctx.db.degraded or (self._rows_error is not None and not self._rows_cache)
-        st.degraded_reason = self.ctx.db.open_error if self.ctx.db.degraded else self._rows_error
+        # nothing could be read from the database, or what was read may miss recent changes (a read-only open that
+        # cannot see the write-ahead log): the alarms are not to be trusted here, and the face rings from what it last
+        # heard (alarms/degraded on the face)
+        unreliable = self.ctx.db.degraded or self.ctx.db.stale
+        st.degraded = unreliable or (self._rows_error is not None and not self._rows_cache)
+        st.degraded_reason = self.ctx.db.open_error if unreliable else self._rows_error
         self.ctx.store.touch()

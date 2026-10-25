@@ -39,7 +39,11 @@ async def set_hostname(body: dict[str, str], ctx: DawnContext = Depends(get_ctx)
         import asyncio
 
         proc = await asyncio.create_subprocess_exec(ctx.config.system.sudo_binary, "-n", "/usr/local/bin/dawn-set-hostname", name)
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), 60)
+        except TimeoutError:
+            proc.kill()
+            raise HTTPException(504, "hostname change did not finish in 60 s") from None
         if proc.returncode:
             raise HTTPException(500, "hostname change failed")
     await ctx.cfg_mgr.update({"general": {"hostname": name}})
