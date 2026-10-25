@@ -36,6 +36,9 @@ RATE = 48_000
 TONE_HZ = 2_000.0
 BEEP_S, GAP_S, BEEPS, PAUSE_S = 0.12, 0.08, 4, 0.52  # one cycle: four beeps, then a pause (1.32 s)
 CYCLES = 4  # per file; the player is simply started again for the next one
+FILE_S = CYCLES * (BEEPS * (BEEP_S + GAP_S) + PAUSE_S)  # 5.28 s of sound per file
+PLAY_MAX_S = FILE_S + 10.0  # a player still running this long after it should have finished is hung (PipeWire wedged)
+AVOID_HUNG_S = 120.0  # a player that hung is tried after the others for this long
 SIM_CLIENT = "dawn-backup-tone"
 
 
@@ -171,6 +174,7 @@ class Buzzer:
         self._task: asyncio.Task[None] | None = None
         self._proc: asyncio.subprocess.Process | None = None
         self._good: list[str] | None = None  # the command that worked last time
+        self._hung: dict[str, float] = {}  # command -> monotonic time until which it goes last
         self._wav: Path | None = None
         self._logged: str | None = None
 
@@ -236,6 +240,9 @@ class Buzzer:
             if self._good in cmds:
                 cmds.remove(self._good)  # type: ignore[arg-type]
                 cmds.insert(0, self._good)  # type: ignore[arg-type]
+            now = time.monotonic()
+            self._hung = {k: t for k, t in self._hung.items() if t > now}
+            cmds.sort(key=lambda c: " ".join(c) in self._hung)  # the ones that hung lately go last (a stable sort)
             played = False
             for cmd in cmds:
                 if await self._play(cmd):
@@ -268,7 +275,14 @@ class Buzzer:
                 if self.player != name:
                     self.player = name
                     log.warning("backup tone playing with %s", name)
-            _, err = await out
+            try:
+                _, err = await asyncio.wait_for(out, PLAY_MAX_S)
+            except TimeoutError:
+                # the file is 5 s long: a player still at it is stuck in a PipeWire that answers nothing, and would
+                # otherwise count as sounding for ever; the next player (aplay straight on the card) gets its turn
+                hung, err = True, b""
+            else:
+                hung = False
         finally:
             if proc.returncode is None:
                 with suppress(ProcessLookupError):
@@ -276,9 +290,17 @@ class Buzzer:
             if not out.done():
                 out.cancel()
             self._proc = None
+        if hung:
+            self.sounding = False
+            self._hung[" ".join(cmd)] = time.monotonic() + AVOID_HUNG_S
+            if self._good == cmd:
+                self._good = None
+            self.problem = f"{cmd[0]} hung for {PLAY_MAX_S:.0f} s"
+            log.error("backup tone: %s; trying the next player", self.problem)
+            return False
         if proc.returncode == 0 and time.monotonic() - t0 >= 1.0:
             self.problem = None
-            return True
+            return True  # `sounding` stays set: the next file follows at once
         self.sounding = False
         msg = (err or b"").decode(errors="ignore").strip().splitlines()
         self.problem = f"{cmd[0]} failed: {msg[0] if msg else f'exit {proc.returncode}'}"

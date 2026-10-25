@@ -15,13 +15,13 @@ import logging
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from sqlalchemy import event, text
 from sqlalchemy.engine import Engine
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 from .models import KV, EventRow
 
@@ -173,6 +173,19 @@ class Database:
             d = {"detail": r.detail}
         at = r.at if r.at.tzinfo else r.at.replace(tzinfo=UTC)
         return {"id": r.id, "at": at.isoformat(), "kind": r.kind, **d}
+
+    def prune_events(self, days: int) -> int:
+        """Delete events older than `days` (the table grew for ever otherwise). Never raises: a read-only
+        database simply keeps them."""
+        cutoff = datetime.now(UTC) - timedelta(days=days)
+        try:
+            with self.session() as s:
+                n = s.exec(delete(EventRow).where(EventRow.at < cutoff)).rowcount  # type: ignore[arg-type,attr-defined]
+                s.commit()
+        except Exception as e:  # noqa: BLE001
+            self.write_failed("prune events", e)
+            return 0
+        return int(n or 0)
 
     def recent_events(self, limit: int = 100) -> list[dict[str, Any]]:
         with self.session() as s:

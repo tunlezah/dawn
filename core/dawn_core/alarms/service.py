@@ -101,7 +101,8 @@ class AlarmService(Service):
         self._rows_error: str | None = None
         self._row_errors: dict[int, str] = {}  # logged once per alarm and message
         self._leave: date | None = None
-        self.last_tick: float | None = None  # monotonic time the last engine tick ended (the watchdog checks it)
+        self.last_tick: float | None = None  # monotonic time the last engine tick *completed* (the watchdog checks it)
+        self.tick_failures = 0  # ticks that raised since the last one that completed
         self.started: float | None = None
         # preparation of the next alarm
         self._prep: AlarmPrep | None = None
@@ -376,8 +377,13 @@ class AlarmService(Service):
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001
-                log.exception("alarm tick failed")
-            self.last_tick = time.monotonic()
+                # not counted as a tick: a tick that keeps failing evaluates no alarm, so the watchdog is held back
+                # (systemd restarts dawn-core) and the face sees `engine_alive` go false and rings by itself
+                self.tick_failures += 1
+                log.exception("alarm tick failed (%d in a row)", self.tick_failures)
+            else:
+                self.tick_failures = 0
+                self.last_tick = time.monotonic()
             await asyncio.sleep(1.0)
 
     async def tick(self, now: datetime | None = None) -> None:

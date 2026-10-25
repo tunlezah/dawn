@@ -56,6 +56,7 @@ class DabSource(PlayerSource):
     async def start(self) -> None:
         self._started = True
         self.error = None
+        self.player.on_change(self._changed)  # as PlayerSource.start(): again after a stop
         self.dab.channel_for(self.svc.sid)  # an unknown station fails at once
         self.dab.mark_active(self.svc.sid)
         if self.dab.ready_for(self.svc.sid):
@@ -74,7 +75,10 @@ class DabSource(PlayerSource):
         await super().pause()
 
     async def resume(self) -> None:
-        if self._started and (self.dab.channel != self._channel or self.player.loaded_url != self.url or not self.dab.ready_for(self.svc.sid)):
+        if not self._started:
+            await self.start()  # queued behind an alarm and never started (see PlayerSource.resume)
+            return
+        if self.dab.channel != self._channel or self.player.loaded_url != self.url or not self.dab.ready_for(self.svc.sid):
             # never got going (paused while tuning), or something (an alarm on another station) retuned welle while
             # this was paused, so its stream is gone
             self._tune_in_background()
@@ -333,10 +337,15 @@ class DabService(Service):
     async def _unit_state(self) -> str:
         try:
             proc = await asyncio.create_subprocess_exec("systemctl", "is-active", self.ctx.config.dab.service_name, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL)
-            out, _ = await asyncio.wait_for(proc.communicate(), 3)
-            return out.decode().strip() or "unknown"
-        except (TimeoutError, OSError):
+        except OSError:
             return "unknown"
+        try:
+            out, _ = await asyncio.wait_for(proc.communicate(), 3)
+        except TimeoutError:
+            with suppress(ProcessLookupError):
+                proc.kill()
+            return "unknown"
+        return out.decode().strip() or "unknown"
 
     # ---- tuning / source -------------------------------------------------
     def service_row(self, sid: str) -> DabServiceRow | None:

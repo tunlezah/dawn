@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import suppress
 from pathlib import Path
 
 from ..context import DawnContext
@@ -17,10 +18,15 @@ async def _git(ctx: DawnContext, *args: str, timeout: float = 60) -> tuple[int, 
     repo = ctx.config.system.update_repo_dir
     try:
         proc = await asyncio.create_subprocess_exec("git", "-C", repo, *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
-        return proc.returncode or 0, out.decode(errors="ignore").strip()
-    except (TimeoutError, OSError) as e:
+    except OSError as e:
         return 1, str(e)
+    try:
+        out, _ = await asyncio.wait_for(proc.communicate(), timeout)
+    except TimeoutError:
+        with suppress(ProcessLookupError):
+            proc.kill()  # a git fetch stuck on the network is not left running
+        return 1, f"git {args[0]} timed out after {timeout:.0f} s"
+    return proc.returncode or 0, out.decode(errors="ignore").strip()
 
 
 async def check(ctx: DawnContext) -> dict:

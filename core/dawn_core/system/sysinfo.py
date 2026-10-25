@@ -34,6 +34,16 @@ def sd_notify(msg: str) -> None:
         pass
 
 
+def alarms_alive(ctx: DawnContext) -> bool:
+    """The alarm engine is ticking (True when there is no alarm service to ask)."""
+    try:
+        from ..alarms.service import AlarmService
+
+        return ctx.svc(AlarmService).alive()
+    except (ImportError, KeyError):
+        return True
+
+
 def git_rev(repo: str) -> str | None:
     try:
         out = subprocess.run(["git", "-C", repo, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, timeout=5)
@@ -93,12 +103,7 @@ class SysInfoService(Service):
             await asyncio.sleep(self.ctx.config.system.heartbeat_interval_s)
 
     def _alarms_alive(self) -> bool:
-        try:
-            from ..alarms.service import AlarmService
-
-            return self.ctx.svc(AlarmService).alive()
-        except (ImportError, KeyError):
-            return True
+        return alarms_alive(self.ctx)
 
     async def _tick(self) -> None:
         cfg = self.ctx.config
@@ -135,8 +140,10 @@ class SysInfoService(Service):
             (self.ctx.runtime_dir / "heartbeat").write_text(str(int(time.time())))
         except OSError:
             pass
+        alive = self._alarms_alive()
+        self.ctx.store.state.alarms.engine_alive = alive  # the face rings by itself when this stays false
         if cfg.system.watchdog:
-            if self._alarms_alive():
+            if alive:
                 sd_notify("WATCHDOG=1")
                 self._stall_logged = False
             elif not self._stall_logged:

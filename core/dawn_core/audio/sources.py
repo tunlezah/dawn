@@ -70,17 +70,25 @@ class PlayerSource(AudioSource):
     async def start(self) -> None:
         self._started = True
         self.error = None
+        self.player.on_change(self._changed)  # again after a stop (on_change adds a listener once)
         await self.player.load(self.url, loop=self.loop)
 
     async def stop(self) -> None:
         self._started = False
+        # the player outlives its sources (one mpv per family for the life of dawn-core): a source that is done
+        # must not stay on its listener list, or every mpv event would re-publish the state once per past play
+        self.player.off_change(self._changed)
         await self.player.unload()
 
     async def pause(self) -> None:
         await self.player.pause(True)
 
     async def resume(self) -> None:
-        if self._started and (self.player.loaded_url != self.url or self.player.idle):
+        if not self._started:
+            # queued paused behind something higher (a preset picked while an alarm rang) and never started:
+            # un-pausing would leave the player with nothing loaded
+            await self.start()
+        elif self.player.loaded_url != self.url or self.player.idle:
             # the player was used for something else meanwhile, or the stream ended while paused: load it again
             await self.player.load(self.url, loop=self.loop)
         else:
