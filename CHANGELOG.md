@@ -5,6 +5,27 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
+### Changed
+- Time: NTP is now the primary source, GPS the fallback and DAB the last resort (GPS was `prefer trust`).
+  Measured on the device, four NTP servers agreed to within a few ms while the u-blox 7 (NMEA, no PPS) read
+  69–73 ms late, so the clock ran ~70 ms slow and chrony rejected the servers that were right. The pool
+  carries `prefer` and `maxpoll 7`, so a dead network hands over to GPS within minutes. GPS SHM 0 gets
+  `offset 0.070` (NMEA's lateness, measured against NTP) so the handover does not move the clock.
+  **Takes effect after `install.sh` (it installs `deploy/chrony/chrony.conf`) and a chrony restart.**
+- The simulator's fake chrony follows the same order (NTP, then GPS, then DAB).
+
+### Added
+- Diagnostics → Time: "GPS agrees with NTP" shows how far GPS reads from NTP with the configured `offset`
+  applied, and spells out the `offset` to set when it is more than 20 ms out.
+- Diagnostics → DAB radio:
+  - "Interfering carrier": a single carrier inside the ensemble's block (≥ 30 dB above it) from welle's
+    spectrum. A generic R820T stick was found putting one 64–100 dB high at 199.888 MHz on 8D (Canberra),
+    where welle-cli could not find the frame and decoded nothing.
+  - "Stick model": a generic RTL2832U TV stick is named as such (Dawn is built around the RTL-SDR Blog V4).
+  - "Tuner frequency offset" also reports ppm and warns above 10 ppm (no TCXO; it drifts as the stick warms).
+
 ## [0.2.4] - 2026-10-25
 
 Fixes from the second reliability assessment in `docs/RELIABILITY-ASSESSMENT.md`; the tests and soak tools behind it

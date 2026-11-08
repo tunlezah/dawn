@@ -21,6 +21,33 @@ ANTENNA_HINT = ("Check the antenna is screwed on and both elements are extended 
                 "(the amp's output is unfiltered PWM). The short USB extension keeps the stick away from the Pi.")
 
 
+# welle-cli's /spectrum: 2048 bins of 1 kHz (2.048 MS/s), centred on the channel; the ensemble fills about ±768 kHz
+SPUR_DB = 30.0  # a single carrier this far above the ensemble around it
+
+
+def inband_spurs(spectrum: list[float] | None, half_width_khz: int = 700, window: int = 40, min_db: float = SPUR_DB) -> list[dict[str, float]]:
+    """Narrow carriers inside the ensemble's block, strongest first: {"offset_khz", "db"} (dB above the local median).
+
+    A generic RTL2832U/R820T stick's own synthesiser can put one there (it lands somewhere else on every channel). Strong
+    enough, it fills the null symbol welle-cli finds each frame by, so the ensemble cannot be decoded at all."""
+    if not spectrum or len(spectrum) < 2 * (half_width_khz + window):
+        return []
+    mid = len(spectrum) // 2
+    out = []
+    for i in range(mid - half_width_khz, mid + half_width_khz + 1):
+        if abs(i - mid) < 3:  # the DC spike at the centre is the stick's, and harmless
+            continue
+        around = sorted(spectrum[i - window:i] + spectrum[i + 1:i + 1 + window])
+        above = spectrum[i] - around[len(around) // 2]
+        if above >= min_db and spectrum[i] >= max(spectrum[i - 1], spectrum[i + 1]):
+            out.append({"offset_khz": float(i - mid), "db": round(above, 1)})
+    return sorted(out, key=lambda x: -x["db"])[:5]
+
+
+def is_blog_v4(u: dict[str, str]) -> bool:
+    return "blog" in (u.get("manufacturer", "") + " " + u.get("product", "")).lower()
+
+
 def _known_sids(dab: DabService) -> set[str]:
     return {s.sid for s in dab.services()}
 
@@ -38,6 +65,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     expected, notes = welle_args(list(cfg.welle_args), cfg.gain)
     services = []
     mux = None
+    spectrum = await dab.client.plot("spectrum") if m is not None else None
     if m is not None:
         now_ms = time.time() * 1000
         mux = {
@@ -45,7 +73,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "sync": m.sync, "snr": m.snr, "signal": snr_to_signal(m.snr), "freq_correction_hz": m.freq_correction_hz,
             "fic_crc_errors": m.fic_crc_errors, "fic_errors_per_min": dab.fic_errors_per_min,
             "fct0_age_s": round((now_ms - m.last_fct0_ms) / 1000, 1) if m.last_fct0_ms else None,
-            "gain_db": m.gain_db, "hardware": m.hardware, "software": m.software, "tii": m.tii, "cir_peaks": m.cir_peaks, "utc_time": m.utc_time,
+            "gain_db": m.gain_db, "spurs": inband_spurs(spectrum), "hardware": m.hardware, "software": m.software, "tii": m.tii, "cir_peaks": m.cir_peaks, "utc_time": m.utc_time,
         }
         services = [
             {"sid": s.sid, "label": s.label, "codec": s.codec, "bitrate": s.bitrate, "protection": s.protection, "subchannel": s.subchannel_id,
@@ -92,6 +120,13 @@ def checks(f: dict[str, Any]) -> list[Check]:
     sdr = f["sdr"]
     if sdr["present"]:
         add("sdr", "RTL-SDR stick", "ok", f"Detected: {sdr['tuner'] or 'RTL2832U'}")
+        generic = [u for u in sdr["usb"] if not is_blog_v4(u)]
+        if generic and len(generic) == len(sdr["usb"]):
+            u = generic[0]
+            add("sdr_model", "Stick model", "info", f"A generic TV stick ({u.get('manufacturer') or '?'} {u.get('product') or 'RTL2832U'}), not the RTL-SDR Blog V4.",
+                "Generic sticks have no temperature-compensated crystal (the tuning drifts as it warms), little filtering ahead of the tuner "
+                "and an unshielded case, and their R820T can put its own carriers inside an ensemble. A dedicated DAB radio is far more "
+                "tolerant. If reception is unreliable, the Blog V4 on a short USB extension is the first thing to change.")
     else:
         add("sdr", "RTL-SDR stick", "fail", "No RTL-SDR stick on USB.",
             "Check the stick is plugged in (via its short extension), try another USB port, and look for under-voltage under System: "
@@ -144,9 +179,20 @@ def checks(f: dict[str, Any]) -> list[Check]:
                 f"{fic:g} CRC errors per minute (about 7500 blocks a minute arrive).",
                 "Errors in the ensemble's data channel come from a weak or reflected signal. " + ANTENNA_HINT)
     fc = mux["freq_correction_hz"]
-    if fc is not None and mux["sync"] and abs(fc) > 5000:
-        add("freq", "Tuner frequency offset", "warn", f"welle corrects {fc / 1000:+.1f} kHz.",
-            "A large offset suggests a stick without a TCXO, or one still warming up. The RTL-SDR Blog V4 should be within about ±0.5 kHz.")
+    ppm = abs(fc) / mux["mhz"] if fc is not None and mux.get("mhz") else None
+    if fc is not None and mux["sync"] and (abs(fc) > 5000 or (ppm is not None and ppm > 10)):
+        add("freq", "Tuner frequency offset", "warn", f"welle corrects {fc / 1000:+.1f} kHz" + (f" ({ppm:.0f} ppm)." if ppm is not None else "."),
+            "A large offset suggests a stick without a TCXO, or one still warming up; it also drifts as the stick warms, and every "
+            "resync has to find it again. The RTL-SDR Blog V4 should be within about ±0.5 kHz (2 ppm).")
+    spurs = mux.get("spurs") or []
+    if spurs:
+        top = spurs[0]
+        where = f"{mux['mhz'] + top['offset_khz'] / 1000:.3f} MHz" if mux.get("mhz") else f"{top['offset_khz']:+.0f} kHz"
+        add("spur", "Interfering carrier", "warn" if mux["sync"] else "fail",
+            f"A single carrier {top['db']:.0f} dB above the ensemble at {where} ({top['offset_khz']:+.0f} kHz from the centre).",
+            "It stops welle-cli finding each frame's null symbol. Retune to another channel and back: if it lands on a different "
+            "frequency, the stick makes it itself (an R820T synthesiser spur) and a better stick (RTL-SDR Blog V4) is the cure; if it "
+            "stays put, something nearby transmits it (a switch-mode supply, a screen, LED lighting).")
     if f["playing"]:
         p = f["playing"]
         svc = next((s for s in f["services"] if s["sid"] == p["sid"]), None)

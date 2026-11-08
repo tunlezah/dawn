@@ -394,9 +394,20 @@ each section. Every entry says what was decided and why, so it can be revisited.
   can run unprivileged as user `dawn`; the segment layout follows ntpd's
   `struct shmTime`, with the `time_t` width chosen for the platform (64-bit, or
   32-bit builds older than Debian 13) and overridable with `--time-t-bytes`.
-- **GPS SHM 0 is `prefer trust` with `delay 0.2`**: NMEA-only receivers deliver
-  the sentence tens of ms after the second; the fixed delay bounds the error and
-  chrony still steps the clock with `makestep 1 3` on boot.
+- **NTP is the primary source, GPS the fallback, DAB the last resort** (0.3.0;
+  GPS was `prefer trust` before). The pool carries `prefer`; GPS SHM 0 has no
+  `prefer`/`trust`. Measured on the device: four NTP servers agreed with each
+  other to within a few ms while GPS (u-blox 7, NMEA only, no PPS) read 69-73 ms
+  late, so with GPS trusted the clock itself ran ~70 ms slow and chrony rejected
+  the servers that were right. NTP over home broadband is good to a few ms.
+  When NTP's samples go stale or unreachable chrony falls back to GPS; `maxpoll 7`
+  (128 s) makes that minutes, not the default ~17 min per poll.
+- **GPS SHM 0 carries `offset 0.070` and `delay 0.2`**: the offset is NMEA's
+  fixed lateness for this receiver, measured against NTP, so GPS takes over
+  without the clock moving by 70 ms. It depends on the receiver and its message
+  set; Diagnostics → Time → "GPS agrees with NTP" shows GPS against NTP (with the
+  configured offset applied) and spells out the new value when it is off by more
+  than 20 ms. chrony still steps the clock with `makestep 1 3` on boot.
 
 ## Weather and control UI
 

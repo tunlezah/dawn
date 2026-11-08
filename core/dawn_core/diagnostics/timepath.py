@@ -55,6 +55,44 @@ def merge_sources(src: str | None, stats: str | None, sel: str | None, ntp: str 
     return out
 
 
+def refclock_offset(conf: str, which: str) -> float | None:
+    """The 'offset' option of a refclock line in chrony.conf (`which` e.g. "SHM 0"); 0.0 when the line has none."""
+    for ln in conf.splitlines():
+        w = ln.split("#", 1)[0].split()
+        if len(w) >= 3 and w[0] == "refclock" and f"{w[1]} {w[2].split(':')[0]}" == which:
+            for i, tok in enumerate(w[:-1]):
+                if tok == "offset":
+                    try:
+                        return float(w[i + 1])
+                    except ValueError:
+                        return None
+            return 0.0
+    return None
+
+
+# GPS (NMEA, no PPS) vs NTP disagreement worth recalibrating chrony's 'offset' for
+GPS_CAL_WARN_MS = 20.0
+
+
+def _gps_calibration(c: list[Check], f: dict[str, Any], group: str, gps: dict[str, Any] | None, ntp_used: list[dict[str, Any]]) -> None:
+    """With NTP steering the clock, the GPS refclock's offset is how late its NMEA still reads: the correction for
+    chrony's `offset` option, so that GPS takes over without a jump when the network goes."""
+    if not gps or not gps["reach_count"] or not ntp_used:
+        return
+    st = gps.get("stats")
+    off_ms = st["offset_s"] * 1000 if st and st.get("samples", 0) >= 4 else gps["offset_ms"]
+    conf = f.get("gps_offset_s")
+    want = f" Set 'offset {conf + off_ms / 1000:.3f}' on the 'refclock SHM 0' line in /etc/chrony/chrony.conf and restart chrony." \
+        if conf is not None else ""
+    detail = f"GPS reads {off_ms:+.1f} ms from NTP" + (f" (with 'offset {conf:.3f}' applied)." if conf is not None else ".")
+    if abs(off_ms) <= GPS_CAL_WARN_MS:
+        c.append(Check("time.gps.calibration", "time", "GPS agrees with NTP", "ok", detail + " It can stand in for NTP without a jump.", None, [], group))
+    else:
+        c.append(Check("time.gps.calibration", "time", "GPS agrees with NTP", "warn",
+                       detail + " If the network drops, the clock would follow GPS and move by that much.",
+                       "NMEA-only receivers deliver the time late by a fixed amount that depends on the receiver." + want, [], group))
+
+
 def _timed_status(path: str) -> tuple[dict[str, Any] | None, float | None, str | None]:
     try:
         d = json.loads(Path(path).read_text())
@@ -82,6 +120,7 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
     shm = parse_sysvipc_shm(await host.read("/proc/sysvipc/shm") or "")
     conf = await host.read("/etc/chrony/chrony.conf") or ""
     servers = [ln.split()[1] for ln in conf.splitlines() if len(ln.split()) > 1 and ln.split()[0] in ("pool", "server")]
+    gps_offset_s = refclock_offset(conf, "SHM 0")
     dns = {}
     if online:
         for h in servers[:3]:
@@ -94,7 +133,7 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
         "tracking": asdict(t) if t else None, "synced": bool(t and t.synced),
         "sources": merge_sources(src, stats, sel, ntp, cfg.time_sources.stale_after_s),
         "activity": asdict(a) if (a := parse_activity(act or "")) else None,
-        "shm": [asdict(s) for s in shm if s.unit is not None], "servers": servers, "dns": dns, "online": online,
+        "shm": [asdict(s) for s in shm if s.unit is not None], "servers": servers, "gps_offset_s": gps_offset_s, "dns": dns, "online": online,
         "timed": timed, "timed_age_s": round(timed_age, 1) if timed_age is not None else None, "timed_error": timed_err,
         "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"]},
         "dab": {"enabled": dab["enabled"], "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
@@ -174,7 +213,7 @@ def checks(f: dict[str, Any]) -> list[Check]:
                 "chrony creates it at start ('refclock SHM 0'), and gpsd (running as root) writes it. Restart chrony, then gpsd.",
                 ["time.restart_chrony", "gps.restart"])
         _source_step(c, "time.gps.source", g, "chrony uses GPS", (by_kind.get("gps") or [None])[0], fix,
-                     "Add 'refclock SHM 0 refid GPS prefer trust' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
+                     "Add 'refclock SHM 0 refid GPS offset 0.070 delay 0.2' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
                      "gpsd has a fix but chrony gets no samples from SHM 0: restart gpsd, then chrony.", ["gps.restart", "time.restart_chrony"])
 
     if f["dab"]["enabled"]:
@@ -218,7 +257,7 @@ def checks(f: dict[str, Any]) -> list[Check]:
         others = [s for s in f["sources"] if s["used"] and s["kind"] != "dab"]
         if dsrc and dsrc["reach_count"] and others and abs(dsrc["offset_ms"]) > 1000:
             add("dab.offset", g, "Broadcaster's clock", "warn", f"DAB time is {dsrc['offset_ms'] / 1000:+.1f} s from the other sources.",
-                "The ensemble's clock is off; chrony gives DAB little weight ('delay 1.0') and ignores it while GPS or NTP agree.")
+                "The ensemble's clock is off; chrony gives DAB little weight ('delay 1.0') and ignores it while NTP or GPS work.")
 
     g = "Network → chrony"
     add("ntp.online", g, "Internet", "ok" if f["online"] else "fail", "Online." if f["online"] else "Offline (see Network).")
@@ -237,6 +276,8 @@ def checks(f: dict[str, Any]) -> list[Check]:
             "Outgoing UDP port 123 looks blocked by the router or the ISP.")
     used = [s for s in ntp if s["used"]]
     reachable = [s for s in ntp if s["reach_count"]]
+    if f["gps"]["enabled"]:
+        _gps_calibration(c, f, "GPS → chrony", (by_kind.get("gps") or [None])[0], used)
     if used:
         add("ntp.source", g, "chrony uses NTP", "ok", f"{len(used)} of {len(ntp)} servers used; best offset {min(abs(s['offset_ms']) for s in used):.1f} ms.")
     elif reachable:

@@ -25,7 +25,7 @@ class SimState:
     sdr_present: bool = True  # fake welle up at all
     network_online: bool = True
     audio_flowing: bool = True  # fake PipeWire stream activity
-    chrony_active: str = "GPS"  # which fake source chrony prefers
+    chrony_active: str = "NTP"  # which fake source chrony prefers (falls back NTP -> GPS -> DAB)
     channel: str = "9A"
     tuned_at: float = field(default_factory=time.time)
     input_queue: asyncio.Queue[dict[str, Any]] = field(default_factory=asyncio.Queue)

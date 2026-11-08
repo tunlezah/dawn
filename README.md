@@ -321,7 +321,8 @@ deploy/      install.sh, systemd units, udev, chrony, gpsd, PipeWire/WirePlumber
 config/      config.example.yaml (generated from the schema), config.sim.yaml
 ```
 
-Time: gpsd → `SHM 0` (prefer, trust), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
+Time: `au.pool.ntp.org` (prefer) first, then gpsd → `SHM 0` (GPS, NMEA lateness calibrated with
+`offset`), then dawn-timed → `SHM 2` (DAB);
 chrony `makestep 1 3`. The face shows a dot per source (green live, grey stale).
 Alarms are evaluated against the system clock only and remember the last
 occurrence they handled, so a clock step never double-fires or skips one.
