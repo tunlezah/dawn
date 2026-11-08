@@ -21,7 +21,8 @@ def by_id(checks: list[Check]) -> dict[str, Check]:
 # ---- DAB -----------------------------------------------------------------
 def dab_facts(**over) -> dict:
     f = {
-        "enabled": True, "sdr": {"present": True, "tuner": "Rafael Micro R828D", "usb": [{"vid": "0bda", "pid": "2838"}]}, "dvb_driver_loaded": False,
+        "enabled": True, "sdr": {"present": True, "tuner": "Rafael Micro R828D", "usb": [{"vid": "0bda", "pid": "2838", "manufacturer": "RTLSDRBlog", "product": "Blog V4"}]},
+        "dvb_driver_loaded": False,
         "unit": "active", "service_name": "dawn-dab", "reachable": True, "welle_url": "http://127.0.0.1:8000",
         "cmdline": "/usr/local/bin/welle-cli -c 9A -w 8000", "expected_args": ["-w", "8000"], "arg_notes": [], "gain_config": None,
         "mux": {"channel": "9A", "mhz": 204.928, "ensemble": "ABC Sydney", "ensemble_id": "1001", "sync": True, "snr": 15.0, "signal": 75,
@@ -58,6 +59,44 @@ def test_dab_problems_have_causes_and_fixes() -> None:
     nosync["mux"] = {**nosync["mux"], "sync": False}
     c = by_id(dab.checks(nosync))
     assert c["dab.sync"].status == "fail" and "dab.scan" in c["dab.sync"].actions and "dab.snr" not in c
+
+
+def _spectrum(spur_at: int | None = None, spur_db: float = 80.0) -> list[float]:
+    """welle-cli-like spectrum: floor 2 dB, ensemble block +10 dB over the centre ±768 kHz, a DC spike, optional spur."""
+    sp = [12.0 + (i % 7) * 0.3 if abs(i - 1024) <= 768 else 2.0 for i in range(2048)]
+    sp[1024] = 21.0
+    if spur_at is not None:
+        sp[1024 + spur_at] = 12.0 + spur_db
+    return sp
+
+
+def test_inband_spur_found_and_explained() -> None:
+    assert dab.inband_spurs(_spectrum()) == []  # a clean block and the DC spike are not spurs
+    assert dab.inband_spurs(None) == [] and dab.inband_spurs([1.0] * 10) == []
+    spurs = dab.inband_spurs(_spectrum(528))
+    assert spurs[0]["offset_khz"] == 528.0 and spurs[0]["db"] > 70
+    # seen on a generic R820T stick on 8D (Canberra): a carrier at +528 kHz and no sync
+    f = dab_facts(sdr={"present": True, "tuner": "Rafael Micro R820T", "usb": [{"vid": "0bda", "pid": "2838", "manufacturer": "Realtek",
+                                                                             "product": "RTL2838UHIDIR"}]})
+    f["mux"] = {**f["mux"], "channel": "8D", "mhz": 199.360, "sync": False, "spurs": spurs}
+    c = by_id(dab.checks(f))
+    assert c["dab.spur"].status == "fail" and "199.888 MHz" in c["dab.spur"].detail and "Blog V4" in (c["dab.spur"].hint or "")
+    assert c["dab.sdr_model"].status == "info" and "RTL2838UHIDIR" in c["dab.sdr_model"].detail
+    assert "dab.sdr_model" not in by_id(dab.checks(dab_facts()))  # the Blog V4 is what Dawn is built around
+
+
+def test_r828d_clone_without_v4_eeprom_is_warned() -> None:
+    f = dab_facts(sdr={"present": True, "tuner": "Rafael Micro R828D", "usb": [{"vid": "0bda", "pid": "2838", "manufacturer": "Realtek",
+                                                                             "product": "RTL2838UHIDIR"}]})
+    c = by_id(dab.checks(f))
+    assert c["dab.sdr_model"].status == "warn" and "RTL-SDR Blog V4 Detected" in (c["dab.sdr_model"].hint or "")
+
+
+def test_tuner_offset_in_ppm() -> None:
+    f = dab_facts()
+    f["mux"] = {**f["mux"], "channel": "8D", "mhz": 199.360, "freq_correction_hz": -3358.0}  # 17 ppm: no TCXO
+    c = by_id(dab.checks(f))
+    assert c["dab.freq"].status == "warn" and "17 ppm" in c["dab.freq"].detail
 
 
 def test_dab_playing_and_history() -> None:
@@ -167,6 +206,31 @@ def test_dab_time_far_off_is_called_out() -> None:
     src = SOURCES.replace("-0.012000000,-0.012000000", "-4.500000000,-4.500000000")
     c = by_id(timepath.checks(time_facts(sources=timepath.merge_sources(src, None, SELECT, None, 600))))
     assert c["time.dab.offset"].status == "warn" and "-4.5 s" in c["time.dab.offset"].detail
+
+
+def test_refclock_offset_from_chrony_conf() -> None:
+    conf = ("pool au.pool.ntp.org iburst prefer\nrefclock SHM 0 refid GPS offset 0.070 delay 0.2  # u-blox\n"
+            "refclock SHM 2:perm=0666 refid DAB delay 1.0\n")
+    assert timepath.refclock_offset(conf, "SHM 0") == 0.070
+    assert timepath.refclock_offset(conf, "SHM 2") == 0.0
+    assert timepath.refclock_offset(conf, "SHM 1") is None
+
+
+def test_gps_calibration_against_ntp() -> None:
+    # NTP steers the clock; GPS (NMEA, no PPS) still reads 69 ms late with offset 0.0 applied
+    src = ("^,*,203.0.113.10,2,7,377,40,0.000100000,0.000100000,0.010000000\n"
+           "#,-,GPS,0,4,377,8,0.069000000,0.069000000,0.100000000\n#,-,DAB,0,4,377,8,0.800000000,0.800000000,0.5\n")
+    sources = timepath.merge_sources(src, None, None, None, 600)
+    c = by_id(timepath.checks(time_facts(sources=sources, gps_offset_s=0.0)))
+    cal = c["time.gps.calibration"]
+    assert cal.status == "warn" and "+69.0 ms" in cal.detail and "offset 0.069" in (cal.hint or "")
+    assert cal.group == "GPS → chrony"
+    # once calibrated it agrees
+    src_ok = src.replace("0.069000000,0.069000000", "-0.002000000,-0.002000000")
+    c = by_id(timepath.checks(time_facts(sources=timepath.merge_sources(src_ok, None, None, None, 600), gps_offset_s=0.069)))
+    assert c["time.gps.calibration"].status == "ok"
+    # GPS steering (NTP down): nothing to compare against, no verdict
+    assert "time.gps.calibration" not in by_id(timepath.checks(time_facts()))
 
 
 # ---- network and system ------------------------------------------------------

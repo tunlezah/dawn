@@ -117,6 +117,39 @@ def _sdr_vidpid() -> str | None:
     return None
 
 
+USB_DEVICES = "/sys/bus/usb/devices"
+BLOG_V4_TUNER = "Rafael Micro R828D (RTL-SDR Blog V4)"
+
+
+def sdr_usb(root: str = USB_DEVICES) -> dict[str, str] | None:
+    """The first RTL-SDR stick's USB descriptors from sysfs, without opening it: vidpid, path, busnum, devnum,
+    manufacturer, product, serial. busnum/devnum change whenever the stick is unplugged and plugged back."""
+    for dev in sorted(glob.glob(os.path.join(root, "*"))):
+        vid, pid = (_read(os.path.join(dev, "idVendor")) or "").strip(), (_read(os.path.join(dev, "idProduct")) or "").strip()
+        if vid and pid and f"{vid}:{pid}" in _RTL_IDS:
+            return {"vidpid": f"{vid}:{pid}", "path": os.path.basename(dev),
+                    **{k: (_read(os.path.join(dev, k)) or "").strip() for k in ("busnum", "devnum", "manufacturer", "product", "serial")}}
+    return None
+
+
+def is_blog_v4(u: dict[str, str]) -> bool:
+    """The RTL-SDR Blog V4 says so in its EEPROM (manufacturer "RTLSDRBlog", product "Blog V4"). The rtl-sdr-blog
+    driver goes by the same strings to switch on its V4 handling (R828D input switching), so a stick without them
+    is treated as a generic one whatever is printed on its case."""
+    text = f"{u.get('manufacturer', '')} {u.get('product', '')}".lower()
+    return "blog" in text and "v4" in text
+
+
+def tuner_from_usb(u: dict[str, str]) -> str:
+    """A tuner name from the USB descriptors alone, for when rtl_test cannot open the stick (welle-cli has it)."""
+    return BLOG_V4_TUNER if is_blog_v4(u) else _RTL_IDS.get(u.get("vidpid", ""), "RTL2832U")
+
+
+def sdr_identity(u: dict[str, str] | None) -> tuple[str, ...] | None:
+    """What changes when a stick is swapped or replugged (a new bus address, or another stick)."""
+    return None if u is None else (u["path"], u.get("busnum", ""), u.get("devnum", ""), u.get("serial", ""), u.get("product", ""))
+
+
 def sdr_on_usb() -> tuple[bool, str | None]:
     """(present, generic name) from the USB ids alone, without opening the stick."""
     vidpid = _sdr_vidpid()
@@ -125,21 +158,24 @@ def sdr_on_usb() -> tuple[bool, str | None]:
 
 def detect_sdr() -> tuple[bool, str | None, str | None]:
     """Presence from USB IDs; tuner type from rtl_test when available (boot only: it opens the stick)."""
-    vidpid = _sdr_vidpid()
-    if vidpid is None:
+    u = sdr_usb()
+    if u is None:
         return False, None, None
-    tuner = None
     try:
         out = subprocess.run(["rtl_test", "-t"], capture_output=True, text=True, timeout=6)
-        txt = out.stdout + out.stderr
-        m = re.search(r"Found (.+?) tuner", txt)
-        if m:
-            tuner = m.group(1).strip()
-            if "R828D" in tuner or "RTL-SDR Blog V4" in txt:
-                tuner += " (RTL-SDR Blog V4)" if "V4" in txt or "R828D" in tuner else ""
+        tuner = tuner_from_rtl_test(out.stdout + out.stderr)
     except (OSError, subprocess.TimeoutExpired):
-        tuner = _RTL_IDS.get(vidpid or "", "RTL2832U")
-    return True, tuner, vidpid
+        tuner = None
+    # rtl_test cannot open a stick welle-cli already holds (dawn-dab starts first at boot): the descriptors still tell
+    return True, tuner or tuner_from_usb(u), u["vidpid"]
+
+
+def tuner_from_rtl_test(txt: str) -> str | None:
+    m = re.search(r"Found (.+?) tuner", txt)
+    if not m:
+        return None
+    tuner = m.group(1).strip()
+    return BLOG_V4_TUNER if "RTL-SDR Blog V4 Detected" in txt else tuner
 
 
 # vcgencmd get_throttled bits: (mask, label, happening now?)

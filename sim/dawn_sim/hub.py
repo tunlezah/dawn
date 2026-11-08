@@ -33,6 +33,18 @@ def _live() -> tuple[bool, bool, bool]:
     dab = STATE.sdr_present and STATE.dab_sync and STATE.dab_snr >= 3 and "dawn-timed" not in STATE.units_down
     return gps, dab, STATE.network_online
 
+
+FALLBACK = ("NTP", "GPS", "DAB")  # chrony.conf: NTP 'prefer', then GPS, then DAB
+
+
+def _active() -> str:
+    """The source chrony steers from: the chosen one, else the next live one down the fallback order."""
+    live = dict(zip(("GPS", "DAB", "NTP"), _live(), strict=True))
+    want = STATE.chrony_active
+    if want not in FALLBACK:
+        return "none"
+    return next((k for k in FALLBACK[FALLBACK.index(want):] if live[k]), "none")
+
 PANEL = """<!doctype html><html><head><meta charset=utf-8><title>Dawn sim hub</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
 <style>
@@ -70,7 +82,7 @@ button.alt{background:#444}.row{display:flex;flex-wrap:wrap;gap:4px}pre{backgrou
 <label>GPS signal (strongest) <span id=gpsv></span> dBHz: <input id=gpss type=range min=0 max=50 step=1 oninput="set({gps_signal:+this.value})"></label>
 <label>Wi-Fi <span id=wifiv></span> dBm: <input id=wifi type=range min=-95 max=-35 step=1 oninput="set({wifi_dbm:+this.value})"></label>
 <label>Failed services (comma separated, e.g. gpsd,chrony): <input id=down onchange="set({units_down:this.value.split(',').map(x=>x.trim()).filter(Boolean)})"></label>
-<label>chrony active source: <select id=chrony onchange="set({chrony_active:this.value})"><option>GPS</option><option>DAB</option><option>NTP</option><option>none</option></select></label>
+<label>chrony active source: <select id=chrony onchange="set({chrony_active:this.value})"><option>NTP</option><option>GPS</option><option>DAB</option><option>none</option></select></label>
 </section>
 <section><b>Log</b><pre id=log></pre></section>
 <script>
@@ -149,18 +161,14 @@ def create_app() -> FastAPI:
         lines = []
 
         def row(mode: str, name: str, live: bool, selected: bool, offset: float) -> str:
-            # with GPS selected ('prefer'), chrony does not combine the others: they show '-'
-            state = "*" if selected and live else ("-" if STATE.chrony_active == "GPS" and _live()[0] else "+") if live else "?"
+            # with NTP selected ('prefer'), chrony does not combine the others: they show '-'
+            state = "*" if selected and live else ("-" if act == "NTP" else "+") if live else "?"
             reach = 377 if live else 0
             lastrx = 8 if live else 1800
             return f"{mode},{state},{name},{0 if mode == '#' else 2},4,{reach},{lastrx},{offset:.9f},{offset:.9f},0.000100000"
 
         gps_live, dab_live, ntp_live = _live()
-        act = STATE.chrony_active
-        if act == "GPS" and not gps_live:
-            act = "DAB" if dab_live else ("NTP" if ntp_live else "none")
-        if act == "DAB" and not dab_live:
-            act = "NTP" if ntp_live else "none"
+        act = _active()
         lines.append(row("#", "GPS", gps_live, act == "GPS", 0.0000031))
         lines.append(row("#", "DAB", dab_live, act == "DAB", -0.012))
         lines.append(row("^", "time.cloudflare.com", ntp_live, act == "NTP", 0.0021))
@@ -169,14 +177,11 @@ def create_app() -> FastAPI:
 
     def _states() -> dict[str, str]:
         gps_live, dab_live, ntp_live = _live()
-        act = STATE.chrony_active
-        if act == "GPS" and not gps_live:
-            act = "DAB" if dab_live else ("NTP" if ntp_live else "none")
-        if act == "DAB" and not dab_live:
-            act = "NTP" if ntp_live else "none"
-        return {"GPS": "*" if act == "GPS" else ("P" if gps_live else "M"), "DAB": "*" if act == "DAB" else ("P" if dab_live and act == "GPS" else "+" if dab_live else "M"),
-                "time.cloudflare.com": "*" if act == "NTP" else ("P" if ntp_live and act == "GPS" else "+" if ntp_live else "M"),
-                "ntp.example.au": ("P" if act == "GPS" else "+") if ntp_live else "M"}
+        act = _active()
+        other = "P" if act == "NTP" else "+"  # a preferred (NTP) source in use leaves the rest 'not preferred'
+        return {"GPS": "*" if act == "GPS" else (other if gps_live else "M"), "DAB": "*" if act == "DAB" else (other if dab_live else "M"),
+                "time.cloudflare.com": "*" if act == "NTP" else ("+" if ntp_live else "M"),
+                "ntp.example.au": "+" if ntp_live else "M"}
 
     @app.get("/chrony/sourcestats")
     async def chrony_sourcestats() -> PlainTextResponse:
@@ -189,7 +194,7 @@ def create_app() -> FastAPI:
     @app.get("/chrony/selectdata")
     async def chrony_selectdata() -> PlainTextResponse:
         st = _states()
-        opts = {"GPS": "-,P,T,-,-"}
+        opts = {"time.cloudflare.com": "-,P,-,-,-", "ntp.example.au": "-,P,-,-,-"}
         return PlainTextResponse("".join(f"{v},{k},N,{opts.get(k, '-,-,-,-,-')},{opts.get(k, '-,-,-,-,-')},{8 if v != 'M' else 1800},1.0,-0.000123000,0.000456000,Normal\n"
                                          for k, v in st.items()))
 
@@ -256,7 +261,7 @@ def create_app() -> FastAPI:
 
     @app.get("/chrony/tracking")
     async def chrony_tracking() -> PlainTextResponse:
-        act = STATE.chrony_active
+        act = _active()
         refid = {"GPS": "47505300,GPS", "DAB": "44414200,DAB", "NTP": "A29FC87B,time.cloudflare.com"}.get(act, "7F7F0101,")
         stratum = 1 if act in ("GPS", "DAB") else (2 if act == "NTP" else 0)
         return PlainTextResponse(f"{refid},{stratum},1700000000.0,0.000000400,0.000000300,0.000001,1.2,0.001,0.5,0.0001,0.0005,0.0010,Normal\n")

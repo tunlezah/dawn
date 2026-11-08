@@ -5,6 +5,35 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-08
+
+### Changed
+- Time: NTP is now the primary source, GPS the fallback and DAB the last resort (GPS was `prefer trust`).
+  Measured on the device, four NTP servers agreed to within a few ms while the u-blox 7 (NMEA, no PPS) read
+  69–73 ms late, so the clock ran ~70 ms slow and chrony rejected the servers that were right. The pool
+  carries `prefer` and `maxpoll 7`, so a dead network hands over to GPS within minutes. GPS SHM 0 gets
+  `offset 0.070` (NMEA's lateness, measured against NTP) so the handover does not move the clock.
+  **Takes effect after `install.sh` (it installs `deploy/chrony/chrony.conf`) and a chrony restart.**
+- The simulator's fake chrony follows the same order (NTP, then GPS, then DAB).
+
+### Added
+- Diagnostics → Time: "GPS agrees with NTP" shows how far GPS reads from NTP with the configured `offset`
+  applied, and spells out the `offset` to set when it is more than 20 ms out.
+- Diagnostics → DAB radio:
+  - "Interfering carrier": a single carrier inside the ensemble's block (≥ 30 dB above it) from welle's
+    spectrum. A generic R820T stick was found putting one 64–100 dB high at 199.888 MHz on 8D (Canberra),
+    where welle-cli could not find the frame and decoded nothing.
+  - "Stick model": a generic RTL2832U TV stick is named as such (Dawn is built around the RTL-SDR Blog V4).
+  - "Tuner frequency offset" also reports ppm and warns above 10 ppm (no TCXO; it drifts as the stick warms).
+  - "Stick model" warns about an R828D stick whose EEPROM does not say RTLSDRBlog / Blog V4 (a clone): the
+    rtl-sdr-blog driver only switches on its V4 handling for those strings.
+- RTL-SDR Blog V4 support checked end to end (driver: the rtl-sdr-blog fork already installed; same USB id and
+  gain table as before). The tuner is now named from the stick's USB descriptors when `rtl_test` cannot open it
+  (welle-cli holds it at boot, which showed every stick as "generic"), e.g. "Rafael Micro R828D (RTL-SDR Blog V4)".
+- Swapping or replugging the SDR stick restarts welle-cli within about 5 s. Before, a welle-cli left running when
+  its stick went away kept answering with no samples and DAB stayed dead until a reboot; presence was also only
+  re-checked once a minute and the old stick's name stayed on show.
+
 ## [0.2.4] - 2026-10-25
 
 Fixes from the second reliability assessment in `docs/RELIABILITY-ASSESSMENT.md`; the tests and soak tools behind it
