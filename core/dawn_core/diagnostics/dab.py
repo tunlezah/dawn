@@ -10,6 +10,7 @@ from typing import Any
 from ..context import DawnContext
 from ..dab.service import DabService, snr_to_signal
 from ..dab.welle import CHANNEL_MHZ, welle_args
+from ..system.hw import is_blog_v4
 from .checks import Check
 from .host import Host
 
@@ -42,10 +43,6 @@ def inband_spurs(spectrum: list[float] | None, half_width_khz: int = 700, window
         if above >= min_db and spectrum[i] >= max(spectrum[i - 1], spectrum[i + 1]):
             out.append({"offset_khz": float(i - mid), "db": round(above, 1)})
     return sorted(out, key=lambda x: -x["db"])[:5]
-
-
-def is_blog_v4(u: dict[str, str]) -> bool:
-    return "blog" in (u.get("manufacturer", "") + " " + u.get("product", "")).lower()
 
 
 def _known_sids(dab: DabService) -> set[str]:
@@ -100,7 +97,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "playing": {"sid": np.station_sid, "label": np.station, "flowing": st.audio.audio_flowing} if np.source == "dab" else None,
         "stations": len(known), "ensembles": ensembles, "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
         "presets_unknown": presets_unknown, "alarms_unknown": alarms_unknown,
-        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") not in ("manual", "supervisor")],
+        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") not in ("manual", "supervisor", "replugged")],
         "supervisor_restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") == "supervisor"],
         # a DAB alarm that left the radio for the chime (not the chime's own climb to the backup tone)
         "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback" and str(e.get("source", "")).startswith("dab:") and e.get("from_tier", "source") == "source"],
@@ -121,7 +118,14 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if sdr["present"]:
         add("sdr", "RTL-SDR stick", "ok", f"Detected: {sdr['tuner'] or 'RTL2832U'}")
         generic = [u for u in sdr["usb"] if not is_blog_v4(u)]
-        if generic and len(generic) == len(sdr["usb"]):
+        if generic and len(generic) == len(sdr["usb"]) and "R828D" in (sdr["tuner"] or ""):
+            u = generic[0]
+            add("sdr_model", "Stick model", "warn", f"An R828D stick that does not identify as the RTL-SDR Blog V4 ({u.get('manufacturer') or '?'} "
+                f"{u.get('product') or '?'}).",
+                "The rtl-sdr-blog driver switches on its V4 handling only for a stick whose EEPROM says RTLSDRBlog / Blog V4; without "
+                "it the V4's band switching is wrong and VHF reception suffers. A clone, or a V4 whose EEPROM was rewritten: check "
+                "`rtl_test -t` prints \"RTL-SDR Blog V4 Detected\" (stop dawn-dab first), or buy from the RTL-SDR Blog store.")
+        elif generic and len(generic) == len(sdr["usb"]):
             u = generic[0]
             add("sdr_model", "Stick model", "info", f"A generic TV stick ({u.get('manufacturer') or '?'} {u.get('product') or 'RTL2832U'}), not the RTL-SDR Blog V4.",
                 "Generic sticks have no temperature-compensated crystal (the tuning drifts as it warms), little filtering ahead of the tuner "

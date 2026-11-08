@@ -125,6 +125,14 @@ each section. Every entry says what was decided and why, so it can be revisited.
 
 ## DAB+
 
+- **The stick is identified from its USB descriptors, and a swap restarts welle-cli** (0.3.0). `rtl_test -t`
+  cannot open a stick that welle-cli already holds (dawn-dab starts first at boot), so the tuner name falls back
+  to the EEPROM strings: "RTLSDRBlog" / "Blog V4" is the RTL-SDR Blog V4 (R828D), and the rtl-sdr-blog
+  driver goes by the same strings to switch on its V4 handling, so a stick without them is treated as generic
+  whatever its case says. sysinfo reads sysfs every heartbeat (never opening the stick); a new bus address or
+  another stick restarts dawn-dab (`reason="replugged"`, not counted as a decoder failure). welle-cli left running
+  when its stick goes away keeps answering on its web port with no samples, so neither the supervisor (which
+  restarts only an unreachable decoder) nor the udev rule (which only starts a stopped unit) would recover it.
 - **welle-cli runs as its own unit (`dawn-dab`)** and core talks to it over HTTP
   only. Core writes `/var/lib/dawn/dab.env` (`DAWN_DAB_CHANNEL`, `DAWN_WELLE_ARGS`)
   so a restart, by us or by systemd, comes back on the last-used channel. The

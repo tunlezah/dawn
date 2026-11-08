@@ -25,6 +25,14 @@ All notable changes to Dawn are recorded here. The format follows
     where welle-cli could not find the frame and decoded nothing.
   - "Stick model": a generic RTL2832U TV stick is named as such (Dawn is built around the RTL-SDR Blog V4).
   - "Tuner frequency offset" also reports ppm and warns above 10 ppm (no TCXO; it drifts as the stick warms).
+  - "Stick model" warns about an R828D stick whose EEPROM does not say RTLSDRBlog / Blog V4 (a clone): the
+    rtl-sdr-blog driver only switches on its V4 handling for those strings.
+- RTL-SDR Blog V4 support checked end to end (driver: the rtl-sdr-blog fork already installed; same USB id and
+  gain table as before). The tuner is now named from the stick's USB descriptors when `rtl_test` cannot open it
+  (welle-cli holds it at boot, which showed every stick as "generic"), e.g. "Rafael Micro R828D (RTL-SDR Blog V4)".
+- Swapping or replugging the SDR stick restarts welle-cli within about 5 s. Before, a welle-cli left running when
+  its stick went away kept answering with no samples and DAB stayed dead until a reboot; presence was also only
+  re-checked once a minute and the old stick's name stayed on show.
 
 ## [0.2.4] - 2026-10-25
 

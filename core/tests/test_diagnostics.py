@@ -85,6 +85,13 @@ def test_inband_spur_found_and_explained() -> None:
     assert "dab.sdr_model" not in by_id(dab.checks(dab_facts()))  # the Blog V4 is what Dawn is built around
 
 
+def test_r828d_clone_without_v4_eeprom_is_warned() -> None:
+    f = dab_facts(sdr={"present": True, "tuner": "Rafael Micro R828D", "usb": [{"vid": "0bda", "pid": "2838", "manufacturer": "Realtek",
+                                                                             "product": "RTL2838UHIDIR"}]})
+    c = by_id(dab.checks(f))
+    assert c["dab.sdr_model"].status == "warn" and "RTL-SDR Blog V4 Detected" in (c["dab.sdr_model"].hint or "")
+
+
 def test_tuner_offset_in_ppm() -> None:
     f = dab_facts()
     f["mux"] = {**f["mux"], "channel": "8D", "mhz": 199.360, "freq_correction_hz": -3358.0}  # 17 ppm: no TCXO
