@@ -1,11 +1,73 @@
 #!/usr/bin/env bash
-# Software update: git pull + install.sh --update + restart. Called by dawn-core via sudo.
-# Progress is written to /var/log/dawn-update.log which the UI tails.
+# Software update: git pull + install.sh --update, a health check of the new dawn-core, and a rollback to the
+# version that was running when any of that fails. Called by dawn-core via sudo (Settings -> Software update).
+# Progress is written to /var/log/dawn-update.log, which dawn-core follows for the UI.
 set -uo pipefail
 DAWN_DIR="${DAWN_DIR:-/opt/dawn}"
 LOG="${DAWN_UPDATE_LOG:-/var/log/dawn-update.log}"
 BRANCH="${1:-main}"
 DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"
+UNIT=dawn-update
+HEALTH_WAIT="${DAWN_UPDATE_HEALTH_WAIT:-180}"   # seconds the new dawn-core has to answer as healthy
+HEALTH_STEP="${DAWN_UPDATE_HEALTH_STEP:-5}"     # seconds between two looks
+
+# Started by dawn-core, this script is in dawn-core.service's control group, and install.sh restarts dawn-core:
+# systemd stops every process in the group, this one included, so the update ended right there (the kiosk never
+# restarted, nothing after it done, no "done" in the log). Run in a unit of its own instead; dawn-core reads the log.
+if [ -z "${DAWN_UPDATE_DETACHED:-}" ] && [ -d "${DAWN_SYSTEMD_DIR:-/run/systemd/system}" ] && command -v systemd-run >/dev/null 2>&1; then
+  if systemctl is-active --quiet "$UNIT.service"; then echo "an update is already running (systemctl status $UNIT)"; exit 1; fi
+  systemctl reset-failed "$UNIT.service" 2>/dev/null || true
+  exec systemd-run --quiet --collect --unit="$UNIT" --description="Dawn software update" \
+    --setenv=DAWN_UPDATE_DETACHED=1 --setenv=HOME=/root --setenv=DAWN_DIR="$DAWN_DIR" \
+    --setenv=DAWN_UPDATE_LOG="$LOG" --setenv=DAWN_REPO="$DAWN_REPO" "$(readlink -f "$0")" "$BRANCH"
+fi
+
+version() { sed -n 's/^__version__ = "\(.*\)"/\1/p' "$DAWN_DIR/core/dawn_core/__init__.py"; }
+
+# dawn-core answers /api/health as version $1 with its alarm engine ticking, three times in a row $HEALTH_STEP s
+# apart (one answer is not enough: a core that crashes a few seconds after starting answers once per restart),
+# within $2 s.
+healthy() {
+  local want="$1" deadline=$(( $(date +%s) + $2 )) good=0 port body
+  port="$(awk '/^web:/{w=1;next} /^[^ #]/{w=0} w && /^  port:/{print $2; exit}' /etc/dawn/config.yaml 2>/dev/null)"
+  case "$port" in ''|*[!0-9]*) port=8080;; esac
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    body="$(curl -sf --max-time 3 "http://127.0.0.1:$port/api/health" 2>/dev/null || true)"
+    if echo "$body" | grep -q '"alarms_alive":true' && echo "$body" | grep -Fq "\"version\":\"$want\""; then
+      good=$((good + 1)); [ "$good" -ge 3 ] && return 0
+    else
+      good=0
+    fi
+    sleep "$HEALTH_STEP"
+  done
+  return 1
+}
+
+# Back to the commit that was running: the code, then everything install.sh puts in place from it.
+rollback() {
+  local why="$1"
+  if [ "$(git rev-parse HEAD)" = "$BEFORE_SHA" ]; then
+    echo "=== failed $(date -Is): $why (the code is unchanged at $BEFORE) ==="
+    return
+  fi
+  echo "$why; going back to $BEFORE"
+  # --keep, not --hard: local edits to files the update did not touch stay as they are
+  if ! sudo -u dawn git reset --keep "$BEFORE_SHA"; then
+    echo "=== failed $(date -Is): $why, and $DAWN_DIR could not be put back to $BEFORE (git -C $DAWN_DIR status) ==="
+    return
+  fi
+  if ! "$DAWN_DIR/deploy/install.sh" --update --no-build; then
+    echo "WARNING: reinstalling $BEFORE failed as well; restarting the services on its code as it is"
+    systemctl restart dawn-core dawn-dab dawn-timed || true
+    systemctl restart dawn-face || true
+  fi
+  if healthy "$(version)" "$HEALTH_WAIT"; then
+    echo "=== failed $(date -Is): $why; rolled back to $BEFORE (version $(version)), which is running ==="
+  else
+    echo "=== failed $(date -Is): $why; rolled back to $BEFORE, but dawn-core is not answering as healthy: journalctl -u dawn-core ==="
+  fi
+}
+
 {
   echo "=== dawn-update $(date -Is) branch=$BRANCH ==="
   cd "$DAWN_DIR" || { echo "no $DAWN_DIR"; exit 1; }
@@ -16,6 +78,7 @@ DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"
   fi
   sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed (network, or no access to $(git remote get-url origin))"; exit 1; }
   BEFORE="$(git rev-parse --short HEAD)"
+  BEFORE_SHA="$(git rev-parse HEAD)"
   if [ -z "$(git merge-base HEAD "origin/$BRANCH" 2>/dev/null)" ]; then
     echo "$DAWN_DIR has its own history, unrelated to origin/$BRANCH, so it cannot be fast-forwarded."
     echo "If it has no local work worth keeping, point it at $BRANCH once (as root), then update again:"
@@ -24,12 +87,17 @@ DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"
   fi
   sudo -u dawn git merge --ff-only "origin/$BRANCH" || { echo "fast-forward failed: local commits or changed files in $DAWN_DIR (git -C $DAWN_DIR status)"; exit 1; }
   AFTER="$(git rev-parse --short HEAD)"
-  echo "updated $BEFORE -> $AFTER (version $(sed -n 's/^__version__ = "\(.*\)"/\1/p' core/dawn_core/__init__.py))"
-  "$DAWN_DIR/deploy/install.sh" --update --no-build || { echo "install.sh failed"; exit 1; }
-  echo "restarting services"
-  systemctl restart dawn-timed dawn-dab || true
-  systemctl restart dawn-face || true
-  echo "=== done $(date -Is) ==="
-  # core restarts last so the UI sees 'done'
-  (sleep 2; systemctl restart dawn-core) &
+  echo "updated $BEFORE -> $AFTER (version $(version))"
+  # install.sh restarts dawn-core, the decoder, dawn-timed and then the kiosk (which waits for the new core)
+  if ! "$DAWN_DIR/deploy/install.sh" --update --no-build; then
+    rollback "install.sh failed"
+    exit 1
+  fi
+  echo "waiting for dawn-core $(version) to answer"
+  if ! healthy "$(version)" "$HEALTH_WAIT"; then
+    rollback "dawn-core $(version) did not come up healthy"
+    exit 1
+  fi
+  echo "=== done $(date -Is): $AFTER (version $(version)) is running ==="
 } 2>&1 | tee -a "$LOG"
+exit "${PIPESTATUS[0]}"

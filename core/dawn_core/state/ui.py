@@ -367,6 +367,7 @@ class SystemState(BaseModel):
     update_available: bool = False
     update_running: bool = False
     update_log: str | None = None
+    web_build: str | None = None  # identifies the web UI on disk when dawn-core started; an open page reloads when it changes
     heartbeat_at: str | None = None
     sim: bool = False
     version: str = "0.0.0"

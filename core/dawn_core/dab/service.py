@@ -26,6 +26,8 @@ from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid, welle_args
 log = logging.getLogger("dawn.dab")
 
 RESTART_TIMEOUT_S = 90.0  # systemd's own stop timeout; a `systemctl restart` still running after it is given up on
+SILENT_PEAK = 64  # welle-cli reports the peak sample of the audio it last decoded (16 bit): at or below this is silence (-54 dBFS)
+DECODE_STALE_S = 10.0  # no audio decoded for this long while the stream is open: the station is not being decoded
 
 
 def snr_to_signal(snr: float | None) -> int | None:
@@ -121,7 +123,10 @@ class DabSource(PlayerSource):
 
     @property
     def flowing(self) -> bool:
-        return super().flowing and self.dab.live_sync
+        """mpv has a stream and the ensemble is in sync, and the decoder is not known to be giving it nothing: a
+        station that is on air but silent, or one welle-cli has stopped decoding, is not sound, and an alarm on it
+        has to move on to the chime."""
+        return super().flowing and self.dab.live_sync and self.dab.audio_problem(self.svc.sid) is None
 
     def status(self, priority: int, state: str):
         if state == "playing" and self.tuning:
@@ -183,6 +188,8 @@ class DabService(Service):
         # per service: (time, frame, rs, aac) at the start of the window, and the last rates per minute
         self._err_prev: dict[str, tuple[float, int, int, int]] = {}
         self.error_rates: dict[str, dict[str, float]] = {}
+        self._quiet_since: dict[str, float] = {}  # station -> time.time() its decoded audio was first seen silent
+        self._quiet_logged: str | None = None
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -272,6 +279,7 @@ class DabService(Service):
                 for s in m.services:
                     prev = self.live.get(s.sid)
                     self.live[s.sid] = s
+                    self._track_audio(s)
                     if s.mot_lastchange and s.mot_lastchange != self._slide_seen.get(s.sid):
                         await self._fetch_slide(s.sid, s.mot_lastchange)
                     if prev is None or prev.dls != s.dls:
@@ -309,6 +317,37 @@ class DabService(Service):
                 self.error_rates[svc.sid] = {"frame": round((cur[1] - prev[1]) * k, 1), "rs": round((cur[2] - prev[2]) * k, 1),
                                              "aac": round((cur[3] - prev[3]) * k, 1), "at": now}
                 self._err_prev[svc.sid] = cur
+
+    def _track_audio(self, s: ServiceInfo) -> None:
+        """Since when a station that is being decoded has been silent (welle-cli's own peak level)."""
+        if s.decoding and s.audio_level is not None and s.audio_level <= SILENT_PEAK:
+            self._quiet_since.setdefault(s.sid, time.time())
+        else:
+            self._quiet_since.pop(s.sid, None)
+
+    def audio_problem(self, sid: str, now: float | None = None) -> str | None:
+        """Why the decoder is giving no sound for a station that is being played, or None. Only what welle-cli
+        itself reports counts, so a build that reports no audio level or time never fails a station here."""
+        sid = norm_sid(sid)
+        now = time.time() if now is None else now
+        problem = None
+        live = self.live.get(sid)
+        limit = self.ctx.config.dab.silence_after_s  # 0 switches both checks off
+        quiet = self._quiet_since.get(sid)
+        if limit <= 0:
+            pass
+        elif live is not None and live.audio_time and now - live.audio_time > DECODE_STALE_S and (self.last_mux_at or 0) > live.audio_time:
+            problem = f"no audio decoded for {now - live.audio_time:.0f} s"
+        elif quiet is not None and now - quiet >= limit:
+            problem = f"the station has been silent for {now - quiet:.0f} s"
+        silent = problem is not None and quiet is not None and problem.startswith("the station")
+        if not silent:
+            if self._quiet_logged == sid:
+                self._quiet_logged = None
+        elif self._quiet_logged != sid:  # once per silence (a stale decode time is normal for a moment at every start)
+            self._quiet_logged = sid
+            log.warning("%s is on air but silent (peak level %s for %.0f s)", self._svc_info(sid).label, live.audio_level if live else None, now - quiet)
+        return problem
 
     async def fresh_mux(self) -> MuxInfo | None:
         """A read of mux.json right now (Diagnostics' live meter). welle drains its message log on every read,
@@ -431,6 +470,7 @@ class DabService(Service):
             raise RuntimeError("welle-cli unreachable")
         self.channel = channel
         self.live.clear()
+        self._quiet_since.clear()
         self.live_sync = False
         self.ctx.db.try_set("dab.last_channel", channel)  # a read-only database must not undo a retune
         self._write_env()

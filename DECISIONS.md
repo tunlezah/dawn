@@ -279,6 +279,17 @@ each section. Every entry says what was decided and why, so it can be revisited.
   `move`) instead of restarting the stream; cancelling demotes it back and keeps
   playing. Nothing playing: the last-played source starts at the sleep level.
 
+- **"Audio flowing" has to mean the speaker is fed.** A PipeWire stream is `running` whenever something consumes
+  it, including the tone control with nothing behind it, so the check also walks the links from the stream to the
+  chosen sound card (`PipeWireBackend.reaches_speaker`). It only ever adds a "no" it is sure of: a graph whose links
+  it cannot read counts as before. Sink ids are compared as well as names (a PipeWire restart keeps the name and
+  changes the id), `wpctl` exit codes are checked, and a refused volume or mute re-selects the sink and is made
+  once more (`AudioService._output`), never raising into the fade, ramp or ring that asked for it.
+- **A DAB station is sound only while welle-cli says so.** Sync and a running mpv are not enough: a station can be
+  on air and silent. welle-cli's per-station peak level and the time it last decoded audio decide
+  (`DabService.audio_problem`); a build that reports neither never fails a station. Garbled audio at a marginal
+  signal is *not* judged: the error-rate thresholds would have to come from a real receiver.
+
 ## Face design system
 
 - **One header slot on every screen.** The clock is always top-right at the same
@@ -467,6 +478,20 @@ each section. Every entry says what was decided and why, so it can be revisited.
   (`RuntimeWatchdogSec=15s`), and `dawn-core.service` has `WatchdogSec=60` fed by
   `sd_notify(WATCHDOG=1)` from the heartbeat loop that also writes
   `/run/dawn/heartbeat`.
+- **An update is its own systemd unit, checks its work and can undo it.** `dawn-update` is started by dawn-core
+  but re-executes itself with `systemd-run --unit=dawn-update`: inside dawn-core's control group it was stopped by
+  the restart of dawn-core it asks for, half-way through. dawn-core follows its log file instead of its output, and
+  picks that up again after being restarted. The new dawn-core must answer `/api/health` as the new version with
+  the alarm engine ticking, three times in a row; otherwise, or when `install.sh` fails, the checkout is put back
+  with `git reset --keep` (local edits the update did not touch survive) and installed again. `install.sh --update`
+  passes `--no-upgrade` to apt, so a Dawn update never changes Chromium, PipeWire or mpv under a working clock.
+- **The database schema only grows.** `Database._migrate` adds columns the models have gained since the file was
+  made (with their defaults, in the table too) and runs numbered steps from `MIGRATIONS` against `PRAGMA
+  user_version`. Because a failed update is rolled back to code that then reads the already-migrated database,
+  nothing an older version reads or writes may be renamed, removed or change meaning.
+- **Open pages follow the build on disk.** dawn-core publishes a hash of the two built pages (`system.web_build`);
+  a page that sees it change reloads, except while an alarm rings or a field has the focus. The kiosk page
+  otherwise runs for months on the scripts it was first loaded with.
 - **dawn-core supervises the programs it depends on** (`system/supervisor.py`, `system.supervisor`).
   systemd only restarts what exits; what broke in practice stayed up: a Chromium on an error page or
   frozen after a GPU hiccup (the unit is `active`, nobody looks at the screen until morning), a welle-cli

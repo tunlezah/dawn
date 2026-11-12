@@ -327,6 +327,10 @@ class DabConfig(StrictModel):
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
     gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")
     poll_interval_s: float = Field(1.0, ge=0.2, le=10, description="How often /mux.json is read for DLS/MOT.")
+    silence_after_s: float = Field(
+        20.0, ge=0, le=600,
+        description="A station that is on air but silent for this long (or that the decoder has stopped decoding) counts as not playing, going by welle-cli's own audio level: an alarm on it moves on to the chime. 0 = go by sync and the player alone.",
+    )
 
     @field_validator("scan_channels", "scan_priority")
     @classmethod
@@ -413,6 +417,10 @@ class HotspotConfig(StrictModel):
     ssid: str | None = Field(None, description="Hotspot SSID (null = <name>-<serial4>).")
     password: str = Field("dawnsetup", min_length=8, max_length=63)
     wait_for_network_s: int = Field(45, ge=5, le=600, description="Seconds without a network before the hotspot starts.")
+    retry_wifi_s: int = Field(
+        300, ge=0, le=86400,
+        description="While the hotspot is up, take it down this often for a look and join a saved Wi-Fi network that is back in range (a router that came up after the clock did); 0 = stay on the hotspot until a network is chosen.",
+    )
     interface: str = "wlan0"
 
 

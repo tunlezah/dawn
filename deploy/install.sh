@@ -100,7 +100,17 @@ echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTE
 # ---------------------------------------------------------------------------
 step "apt packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
+# An update (from the UI, or `make deploy`) installs what is missing and leaves what is installed alone: without
+# --no-upgrade, naming a package upgrades it, so every Dawn update also moved Chromium, PipeWire, mpv, BlueZ and
+# chrony to whatever apt had that day. OS upgrades are a decision of their own (apt full-upgrade, then a reboot).
+# And a package index that cannot be fetched must not stop an update whose packages are all there already.
+APT_INSTALL=(apt-get install -y --no-install-recommends)
+if [ "$UPDATE" -eq 1 ]; then
+  APT_INSTALL+=(--no-upgrade)
+  apt-get update -qq || echo "WARNING: apt-get update failed; carrying on with the packages that are installed"
+else
+  apt-get update -qq
+fi
 CHROMIUM=chromium; apt-cache show chromium >/dev/null 2>&1 || CHROMIUM=chromium-browser
 PKGS=(
   git curl rsync build-essential cmake pkg-config autoconf automake libtool xxd
@@ -112,10 +122,13 @@ PKGS=(
   bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
 )
-apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"
-apt-cache show python3-lgpio >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-lgpio liblgpio-dev || true
-apt-cache show python3-gpiozero >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-gpiozero || true
-apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && apt-get install -y --no-install-recommends nodejs npm || true
+if ! "${APT_INSTALL[@]}" "${PKGS[@]}" && ! "${APT_INSTALL[@]}" "${PKGS[@]/libpipewire-0.3-dev/}"; then
+  [ "$UPDATE" -eq 1 ] || exit 1
+  echo "WARNING: apt-get install failed; carrying on with the packages that are installed"
+fi
+apt-cache show python3-lgpio >/dev/null 2>&1 && "${APT_INSTALL[@]}" python3-lgpio liblgpio-dev || true
+apt-cache show python3-gpiozero >/dev/null 2>&1 && "${APT_INSTALL[@]}" python3-gpiozero || true
+apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && "${APT_INSTALL[@]}" nodejs npm || true
 
 # ---------------------------------------------------------------------------
 # User, directories, repository

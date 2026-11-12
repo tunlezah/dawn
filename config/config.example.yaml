@@ -313,6 +313,8 @@ dab:
   gain: null
   # How often /mux.json is read for DLS/MOT.
   poll_interval_s: 1.0
+  # A station that is on air but silent for this long (or that the decoder has stopped decoding) counts as not playing, going by welle-cli's own audio level: an alarm on it moves on to the chime. 0 = go by sync and the player alone.
+  silence_after_s: 20.0
 
 alarm_defaults:
   volume: 70
@@ -382,6 +384,8 @@ network:
     password: dawnsetup
     # Seconds without a network before the hotspot starts.
     wait_for_network_s: 45
+    # While the hotspot is up, take it down this often for a look and join a saved Wi-Fi network that is back in range (a router that came up after the clock did); 0 = stay on the hotspot until a network is chosen.
+    retry_wifi_s: 300
     interface: wlan0
   online_check_host: 1.1.1.1
   online_check_interval_s: 30

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable
 from contextlib import suppress
 from datetime import timedelta
@@ -21,6 +22,8 @@ from .player import MpvPlayer, Player, SimPlayer
 from .sources import CHIME_NAMES, AudioSource, ChimeSource, PlaylistSource, UrlSource, list_playlists
 
 log = logging.getLogger("dawn.audio")
+
+RELINK_EVERY_S = 15.0  # a stream that runs but does not reach the speaker: the output is set up again this often
 
 SourceFactory = Callable[[str, str], Awaitable[AudioSource]]  # (argument, level) -> source
 
@@ -45,6 +48,9 @@ class AudioService(Service):
         self._last_published_level: str | None = None
         self._pinned_missing_logged: str | None = None
         self._last_source: str | None = None  # `last-played`, as last read or set
+        self.output_error: str | None = None  # the output refused the volume or mute last time (Diagnostics)
+        self._output_error_logged: str | None = None
+        self._relinked_at = 0.0
         self.register_factory("chime", self._make_chime)
         self.register_factory("url", self._make_url)
         self.register_factory("playlist", self._make_playlist)
@@ -57,10 +63,10 @@ class AudioService(Service):
         self.volume = min(cfg.audio.max_volume, int(self.ctx.db.get("audio.volume", cfg.audio.default_volume)))
         self.muted = bool(self.ctx.db.get("audio.muted", False))
         await self.refresh_sinks(select_now=True)
-        await self.backend.set_volume(self.hw_volume(self.volume))
-        await self.backend.set_mute(self.muted)
+        await self._output(volume=self.volume, mute=self.muted)
         await self.apply_eq()
-        self._task = asyncio.create_task(self._loop(), name="audio-loop")
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(self._loop(), name="audio-loop")
         self.publish()
 
     async def stop(self) -> None:
@@ -82,7 +88,7 @@ class AudioService(Service):
         if new.audio.max_volume < self.volume:
             await self.set_volume(new.audio.max_volume, overlay=False)
         elif old.audio.output_ceiling_percent != new.audio.output_ceiling_percent:
-            await self.backend.set_volume(self.hw_volume(self.volume))
+            await self._output(volume=self.volume)
         self.arbiter.duck_percent = new.audio.duck_percent
         self.arbiter.duck_seconds = new.audio.duck_seconds
         self.publish()
@@ -98,9 +104,54 @@ class AudioService(Service):
                 if n % 5 == 0:
                     await self.refresh_sinks()
                 self.ctx.store.state.audio.audio_flowing = await self.audio_flowing()
+                await self._relink_if_unheard()
                 self.publish()
             except Exception:  # noqa: BLE001
                 log.exception("audio loop")
+
+    async def _relink_if_unheard(self) -> None:
+        """The backend found a stream that runs without being connected to the speaker (the tone control lost its
+        link to the sound card when PipeWire or WirePlumber came back): set the output up again, now and then
+        until it holds."""
+        if self.backend.link_problem is None:
+            return
+        if not any(slot.state in ("playing", "ducked") for slot in self.arbiter.slots.values()):
+            self.backend.link_problem = None  # nothing plays any more: nothing to judge the path by until something does
+            return
+        if time.monotonic() - self._relinked_at < RELINK_EVERY_S:
+            return
+        self._relinked_at = time.monotonic()
+        log.warning("%s; setting the audio output up again", self.backend.link_problem)
+        await self.refresh_sinks(select_now=True)
+        await self.apply_eq()
+
+    async def _output(self, *, volume: int | None = None, mute: bool | None = None) -> bool:
+        """Put a volume and/or mute state on the output. A backend that refuses is, almost always, holding a sink id
+        from before PipeWire or WirePlumber restarted: the sink is chosen again and the call made once more. False
+        (and `output_error`, shown in Diagnostics) when that fails too. It never raises: every volume change in
+        core ends up here, and none of them may fail the fade, ramp or ring that asked for it."""
+        err = ""
+        for attempt in (1, 2):
+            try:
+                if mute is not None:
+                    await self.backend.set_mute(mute)
+                if volume is not None:
+                    await self.backend.set_volume(self.hw_volume(volume))
+            except Exception as e:  # noqa: BLE001
+                err = str(e) or type(e).__name__
+                if attempt == 1:
+                    log.warning("the audio output refused a volume or mute change (%s); choosing the output again", err)
+                    await self.refresh_sinks(select_now=True, apply=False)
+                continue
+            if self.output_error:
+                log.warning("the audio output takes volume and mute changes again")
+            self.output_error = self._output_error_logged = None
+            return True
+        self.output_error = err
+        if self._output_error_logged != err:
+            self._output_error_logged = err
+            log.error("the audio output cannot be set (%s): volume and mute are whatever it was left at", err)
+        return False
 
     async def _retry_pipewire(self) -> None:
         """PipeWire not answering when core started means the ALSA fallback (or no backend) for the whole run, and
@@ -265,10 +316,10 @@ class AudioService(Service):
         self.volume = volume
         if overlay:
             self.hand_changes += 1
-        if self.muted and volume > 0:
+        unmute = self.muted and volume > 0
+        if unmute:
             self.muted = False
-            await self.backend.set_mute(False)
-        await self.backend.set_volume(self.hw_volume(volume))
+        await self._output(volume=volume, mute=False if unmute else None)
         if persist:
             self.ctx.db.try_set("audio.volume", volume)
             self.ctx.db.try_set("audio.muted", self.muted)
@@ -283,7 +334,7 @@ class AudioService(Service):
 
     async def set_mute(self, muted: bool | None = None, *, overlay: bool = True) -> bool:
         self.muted = (not self.muted) if muted is None else muted
-        await self.backend.set_mute(self.muted)
+        await self._output(mute=self.muted)
         self.ctx.db.try_set("audio.muted", self.muted)
         if overlay:
             self._show_overlay()
@@ -296,31 +347,41 @@ class AudioService(Service):
         if self.muted:
             await self.set_mute(False, overlay=False)
         else:
-            await self.backend.set_mute(False)
+            await self._output(mute=False)
 
     def _show_overlay(self) -> None:
         until = self.ctx.store.now() + timedelta(seconds=self.ctx.config.audio.volume_overlay_s)
         self.ctx.store.state.audio.volume_overlay_until = until.isoformat(timespec="milliseconds")
 
     # ---- sinks -----------------------------------------------------------
-    async def refresh_sinks(self, select_now: bool = False) -> None:
+    async def refresh_sinks(self, select_now: bool = False, *, apply: bool = True) -> None:
+        """List the outputs and (re)select the one to use. A sink that keeps its name but has a new id means PipeWire
+        or WirePlumber restarted behind core's back (a crash systemd put right, a package upgrade): the id is what
+        volume and mute are sent to, so the sink is selected afresh, with its volume, mute and the tone control.
+        `apply=False` selects without setting volume and mute (the caller is about to)."""
         try:
             sinks = await self.backend.list_sinks()
         except Exception:  # noqa: BLE001
             log.exception("list sinks failed")
             return
-        changed = [s.name for s in sinks] != [s.name for s in self._sinks]
+        changed = [(s.name, s.id) for s in sinks] != [(s.name, s.id) for s in self._sinks]
         self._sinks = sinks
         want = self._choose_sink(sinks)
         if want and (select_now or changed or self._sink is None or want.name != self._sink.name):
-            if self._sink is None or want.name != self._sink.name or select_now:
+            restarted = self._sink is not None and want.name == self._sink.name and want.id != self._sink.id
+            if self._sink is None or want.name != self._sink.name or restarted or select_now:
+                if restarted:
+                    log.warning("audio sink %s has a new id (%s -> %s): PipeWire restarted; selecting it again", want.description, self._sink.id, want.id)  # type: ignore[union-attr]
                 try:
                     await self.backend.set_default_sink(want)
-                    await self.backend.set_volume(self.hw_volume(self.volume))
-                    await self.backend.set_mute(self.muted)
                     log.info("audio sink -> %s (%s)", want.description, want.kind)
                 except Exception:  # noqa: BLE001
                     log.exception("set default sink failed")
+                self._sink = want
+                if apply:
+                    await self._output(volume=self.volume, mute=self.muted)
+                if restarted:
+                    await self.apply_eq()  # the tone control's settings went with the old PipeWire
             self._sink = want
         if changed or select_now:
             self.publish()

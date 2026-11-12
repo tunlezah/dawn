@@ -1,4 +1,11 @@
-"""NetworkService: online check, IP/SSID, setup hotspot when there is no network."""
+"""NetworkService: online check, IP/SSID, setup hotspot when there is no network.
+
+The hotspot takes the Wi-Fi radio, so while it is up the clock cannot see its own network come back: a router
+that boots slower than the Pi after a power cut, or one that was restarted, would leave the clock on its hotspot
+(off the LAN, no NTP, no weather, the face on the setup screen) until someone noticed. So while the hotspot is up
+and a Wi-Fi network has been saved before, the hotspot is taken down every `retry_wifi_s` for a look: a saved
+network in range is joined, otherwise the hotspot comes straight back. Not while someone is connected to the
+hotspot's page: they are setting the clock up."""
 
 from __future__ import annotations
 
@@ -13,12 +20,14 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import SetupInfo
-from .nmcli import parse_active, parse_wifi_list, run
+from .nmcli import _split_terse, parse_active, parse_wifi_list, run
 
 log = logging.getLogger("dawn.net")
 
 HOTSPOT_CON = "dawn-hotspot"
 HOTSPOT_IP = "10.42.0.1"  # NetworkManager's default shared-connection gateway
+HOTSPOT_NET = HOTSPOT_IP.rsplit(".", 1)[0] + "."
+MAX_DEFERRALS = 6  # a page left open on the hotspot holds the look for Wi-Fi off this many times, then no longer
 
 
 class NetworkService(Service):
@@ -30,6 +39,8 @@ class NetworkService(Service):
         self._offline_since: float | None = None
         self._booted = time.monotonic()
         self.hotspot_active = False
+        self._wifi_tried_at = 0.0  # monotonic: when the hotspot came up, or the saved networks were last tried
+        self._deferred = 0
         self._hub = httpx.AsyncClient(timeout=2.0)
 
     async def start(self) -> None:
@@ -93,6 +104,10 @@ class NetworkService(Service):
             waited = now - max(self._offline_since, self._booted)
             if cfg.hotspot.enabled and not self.hotspot_active and waited >= (cfg.hotspot.wait_for_network_s if not self.ctx.sim else 10):
                 await self._hotspot(True)
+            elif self.hotspot_active and await self._retry_wifi(now):
+                self._offline_since = None
+                online, ip, ssid, iface = await self._probe()
+                has_net = online or (ip is not None and not ip.startswith(HOTSPOT_NET))
         st.online = online
         st.ip = ip if has_net else (HOTSPOT_IP if self.hotspot_active else None)
         st.ssid = ssid if has_net else None
@@ -117,18 +132,85 @@ class NetworkService(Service):
             pass
         return f"{cfg.general.name.split(' ')[0]}-{serial}"
 
-    async def _hotspot(self, on: bool) -> None:
+    # ---- back to Wi-Fi from the hotspot -----------------------------------
+    def _hotspot_in_use(self) -> bool:
+        """Someone has the control UI open over the hotspot."""
+        hub = self.ctx.ws_hub
+        if hub is None:
+            return False
+        return any(str(c.get("remote") or "").startswith(HOTSPOT_NET) and c.get("remote") != HOTSPOT_IP for c in hub.connections())
+
+    async def _saved_wifi(self) -> list[tuple[str, str]]:
+        """(connection name, SSID) of every Wi-Fi network saved on this box, the hotspot's own profile left out."""
+        rc, out = await run("nmcli", "-t", "-f", "NAME,TYPE", "con", "show", timeout=10)
+        if rc != 0:
+            return []
+        saved = []
+        for line in out.splitlines():
+            parts = _split_terse(line)
+            if len(parts) < 2 or parts[1] not in ("802-11-wireless", "wifi") or parts[0] == HOTSPOT_CON:
+                continue
+            rc, detail = await run("nmcli", "-g", "802-11-wireless.ssid,802-11-wireless.mode", "con", "show", parts[0], timeout=10)
+            fields = detail.splitlines() if rc == 0 else []
+            if len(fields) >= 2 and fields[1].strip() == "ap":
+                continue  # another access-point profile: bringing it up would not be a network
+            saved.append((parts[0], fields[0].strip() if fields and fields[0].strip() else parts[0]))
+        return saved
+
+    async def _retry_wifi(self, now: float) -> bool:
+        """The hotspot is up: when it is time, take it down and join a saved Wi-Fi network that is in range. True
+        when one was joined; the hotspot is back up otherwise."""
+        cfg = self.ctx.config.network.hotspot
+        if self.ctx.sim or cfg.retry_wifi_s <= 0 or now - self._wifi_tried_at < cfg.retry_wifi_s:
+            return False
+        self._wifi_tried_at = now
+        if self._hotspot_in_use() and self._deferred < MAX_DEFERRALS:
+            self._deferred += 1
+            log.info("someone is connected to the setup hotspot; not looking for Wi-Fi now")
+            return False
+        self._deferred = 0
+        saved = await self._saved_wifi()
+        if not saved:
+            return False  # never been on a network: the hotspot is all there is until one is chosen
+        log.info("setup hotspot down for a moment to look for %s", ", ".join(ssid for _, ssid in saved))
+        await run("nmcli", "con", "down", HOTSPOT_CON, timeout=15)
+        rc, out = await run("nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "ifname", cfg.interface, "--rescan", "yes", timeout=25)
+        in_range = {n.ssid for n in parse_wifi_list(out)} if rc == 0 else None  # None: the scan failed, try them all
+        for name, ssid in saved:
+            if in_range is not None and ssid not in in_range:
+                continue
+            rc, out = await run("nmcli", "con", "up", name, "ifname", cfg.interface, timeout=45)
+            if rc == 0:
+                log.warning("Wi-Fi %s is back; the setup hotspot stays down", ssid)
+                self.hotspot_active = False
+                self.ctx.store.state.face.setup = None
+                self.ctx.db.log_event("hotspot_stop", reason="wifi_back", ssid=ssid)
+                self.ctx.store.touch()
+                return True
+            log.info("could not join %s: %s", ssid, out.strip().splitlines()[-1] if out.strip() else f"exit {rc}")
+        await self._hotspot(True, again=True)
+        return False
+
+    async def _hotspot(self, on: bool, *, again: bool = False) -> None:
         cfg = self.ctx.config.network.hotspot
         ssid = self._hotspot_ssid()
         if on:
-            log.warning("no network for %ss; starting setup hotspot %s", cfg.wait_for_network_s, ssid)
+            if not again:
+                log.warning("no network for %ss; starting setup hotspot %s", cfg.wait_for_network_s, ssid)
             if not self.ctx.sim:
                 await run("nmcli", "con", "delete", HOTSPOT_CON, timeout=10)
                 rc, out = await run("nmcli", "dev", "wifi", "hotspot", "ifname", cfg.interface, "con-name", HOTSPOT_CON, "ssid", ssid, "password", cfg.password, timeout=30)
                 if rc != 0:
                     log.error("hotspot failed: %s", out.strip())
+                    if again:  # it was up a moment ago: the next poll starts it afresh
+                        self.hotspot_active = False
+                        self.ctx.store.state.face.setup = None
+                        self.ctx.store.touch()
                     return
             self.hotspot_active = True
+            if again:
+                return  # the same hotspot as before the look for Wi-Fi: nothing new to show or to log
+            self._wifi_tried_at, self._deferred = time.monotonic(), 0
             port = self.ctx.config.web.port
             url = f"http://{HOTSPOT_IP}{'' if port == 80 else f':{port}'}/"  # core listens on web.port; nothing serves port 80
             self.ctx.store.state.face.setup = SetupInfo(ssid=ssid, password=cfg.password, url=url, qr_payload=f"WIFI:T:WPA;S:{ssid};P:{cfg.password};;")

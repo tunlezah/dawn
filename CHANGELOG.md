@@ -5,6 +5,53 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-12
+
+Fixes from a third reliability pass, which looked at what the first two did not: PipeWire restarting under
+dawn-core, updates, power cuts and the web pages. Regression tests are in `core/tests/test_reliability_round3.py`
+and `core/tests/test_update.py`; the findings are summarised at the end of `docs/RELIABILITY-ASSESSMENT.md`.
+
+### Fixed
+- **Volume and unmute sent to a PipeWire node that no longer exists.** After PipeWire or WirePlumber restarted on
+  its own (a crash systemd put right, a package upgrade) the sound card kept its name but got a new id; dawn-core
+  compared names only, kept sending `wpctl` to the old id and ignored its exit code, so an alarm rang at whatever
+  volume the output had been left at (0 or muted included) and was reported as audible. A sink whose id changes is
+  selected again with its volume, mute and tone control; a `wpctl` that fails is a failure, after which the sink is
+  chosen again and the change made once more; what still fails is shown under *Diagnostics → Audio → Volume
+  control*, and an alarm's ramp keeps trying.
+- **A stream counted as heard while connected to nothing.** A PipeWire stream runs just as well into the tone
+  control when that has lost its link to the sound card, or into pipewire-pulse's null sink. "Audio flowing" now
+  follows the links from the stream to the chosen sound card; an unconnected output is set up again every 15 s
+  (*Diagnostics → Audio → Path to the speaker*), and a null sink is no longer listed as an output.
+- **A DAB alarm on a silent station never fell back to the chime.** A station that is in sync but silent (dead air),
+  or that welle-cli has stopped decoding, no longer counts as sound: after `dab.silence_after_s` (20 s; 0 = off)
+  the alarm's ladder moves on. welle-cli's own peak level and decode time are used, so builds that report neither
+  behave as before.
+- **"Update now" was stopped half-way by the restart it asked for.** `dawn-update` ran in dawn-core's control
+  group, and `install.sh` restarts dawn-core: systemd stopped the script there, so the kiosk was never restarted
+  (and ran the old page against the new core from then on) and the log never reached `=== done`. The update now
+  runs in a unit of its own (`dawn-update.service`); dawn-core follows its log, also across its own restart.
+- **A failed update left new code on old dependencies.** The update now waits for the new dawn-core to answer
+  `/api/health` as healthy and, when it does not or `install.sh` fails, goes back to the commit that was running and
+  installs that again. It refuses to start while an alarm rings or is snoozed, within 30 minutes of the next alarm
+  or during a nap timer (the API answers 409 with the reason).
+- **Every update also upgraded the OS packages it names** (Chromium, PipeWire, WirePlumber, mpv, BlueZ, chrony):
+  `install.sh --update` now passes `--no-upgrade`, and an `apt-get update` that fails no longer stops an update
+  whose packages are all installed.
+- **The kiosk page never loaded a new build.** dawn-core publishes an id of the web build on disk
+  (`system.web_build`); an open page reloads when it changes, but not while an alarm rings or something is being
+  typed.
+- **A column added to a table made every row unreadable after the update.** `create_all` never alters an existing
+  table, so the first release to add a field to an alarm would have left dawn-core unable to read any alarm. On
+  opening, missing columns are now added with their defaults, and numbered migrations run against `PRAGMA
+  user_version` (`db/engine.py`); a database that cannot be brought up to date is reported under *Diagnostics →
+  System → Database layout*.
+- **The setup hotspot never went back to Wi-Fi.** The hotspot takes the radio, so a clock that started it (the Pi
+  boots faster than the router after a power cut) stayed on it, off the LAN and on the setup screen, until someone
+  chose the network again. While the hotspot is up it is now taken down every `network.hotspot.retry_wifi_s` (5 min)
+  to look for a saved network and rejoin it; not while someone has the hotspot's page open, and not before a
+  network has ever been saved.
+
 ## [0.2.4] - 2026-10-25
 
 Fixes from the second reliability assessment in `docs/RELIABILITY-ASSESSMENT.md`; the tests and soak tools behind it

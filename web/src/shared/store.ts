@@ -16,6 +16,8 @@ class DawnStore {
   private started = false;
   /** Sent to core on connect ("face" for the kiosk) so Diagnostics can tell the face is up. */
   private role: string | null = null;
+  /** The web build this page was loaded from, as core first named it. */
+  private build: string | null = null;
 
   start(role: string | null = null) {
     if (this.started) return;
@@ -50,11 +52,24 @@ class DawnStore {
     this.ws.onmessage = (ev) => {
       try {
         const msg = JSON.parse(ev.data);
-        if (msg.type === 'state') { this.state = msg.data as UIState; this.emit(); }
+        if (msg.type === 'state') { this.state = msg.data as UIState; this.emit(); this.followBuild(); }
       } catch { /* ignore */ }
     };
     this.ws.onclose = () => { this.stopHeartbeat(); this.connected = false; this.emit(); this.scheduleReconnect(); };
     this.ws.onerror = () => { try { this.ws?.close(); } catch { /* ignore */ } };
+  }
+
+  /** An update replaces the files this page was built from and restarts core, but a page that is open (the kiosk
+   *  runs for months) would carry on with its old scripts against the new core. Core names the build on disk in
+   *  its state: when that changes, load the page again. Never while an alarm rings (the reload would cut the
+   *  face's own beep), nor while something is being typed. */
+  private followBuild() {
+    const build = this.state.system?.web_build;
+    if (!build) return;
+    if (this.build === null) { this.build = build; return; }
+    if (build === this.build || !shouldReload(this.state.alarms?.ringing != null, document.activeElement)) return;
+    this.build = build; // once: if the reload does not happen, do not ask for it on every message
+    location.reload();
   }
 
   private stopHeartbeat() {
@@ -72,6 +87,13 @@ class DawnStore {
   private emit() { this.snapshot = { state: this.state, connected: this.connected }; for (const l of this.listeners) l(); }
   snapshot = { state: this.state, connected: this.connected };
   getSnapshot = () => this.snapshot;
+}
+
+/** Whether a page whose build has been replaced may load the new one now. */
+export function shouldReload(ringing: boolean, focused: Element | null): boolean {
+  if (ringing) return false;
+  const tag = focused?.tagName;
+  return !(tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT');
 }
 
 export const store = new DawnStore();

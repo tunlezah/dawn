@@ -245,6 +245,27 @@ out were left running; a tick that raised every time still fed the watchdog and 
 never pruned; and a station picked during a ring came back silent. The eighth was the power-cut design risk above.
 All seven fixes were re-verified in this round.
 
+**Round 3 (0.2.4, November 2026)** looked outside the alarm engine: PipeWire restarting under dawn-core, updates,
+power cuts and the web pages. Fixed in 0.2.5, each with a regression test (`core/tests/test_reliability_round3.py`,
+`core/tests/test_update.py`): volume and unmute going to a sink id that died with a PipeWire restart; a stream
+counted as heard while linked to nothing; a DAB station in sync but silent; the UI update stopped half-way by its own
+restart of dawn-core, with no health check, no rollback, and OS package upgrades as a side effect; a kiosk page that
+never loaded a new build; no schema migration (a new alarm column would have made every alarm unreadable); and a
+setup hotspot that never returned to Wi-Fi.
+
+Not verified on hardware in that round, and worth one look on the clock: the PipeWire link check against a real
+`pw-dump` (it is written to change nothing when it cannot read the links), welle-cli's audio level during normal
+play (a test ring on a DAB station should stay on the station), and an update from the UI end to end (the log should
+reach `=== done`).
+
+Found and still open: the kiosk page is served by dawn-core and has no offline copy, so a Chromium that starts while
+dawn-core is down shows an error page and has no backup alarm; the face has no error boundary; with a degraded core
+the face knows one occurrence only; a tuner that stops delivering samples while welle-cli still answers is not
+restarted; garbled DAB audio at a marginal signal still counts as sound; `makestep 1 3` corrects a wrong first time
+source by slewing; nothing on the face says the clock is unsynchronised; an empty `config.yaml` silently becomes the
+defaults; the supervisor never escalates to a reboot; and the hardware points of finding 6 (RTC, grace window, UPS,
+persistent journald, a GPIO buzzer as the one sound path independent of PipeWire).
+
 ## How to re-run
 
 Everything used here is in [`docs/reliability/`](reliability/README.md): the reproductions (`test_repro.py`, which

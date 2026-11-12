@@ -165,7 +165,12 @@ the 0–100 scale itself.
 
 - From the UI: *Settings → Software update → Check for updates*, then *Update now* (`dawn-update`: fast-forwards
   `/opt/dawn` to GitHub `main`, runs `install.sh --update`, restarts the services; log in `/var/log/dawn-update.log`).
-  The version shown there goes up with every merged PR.
+  The version shown there goes up with every merged PR. The update runs in a systemd unit of its own
+  (`dawn-update.service`), waits for the new dawn-core to answer as healthy, and **goes back to the version that was
+  running** when the install fails or the new dawn-core does not come up (the log then ends in `=== failed … rolled
+  back`). It will not start while an alarm rings or is snoozed, within 30 minutes of the next one, or during a nap
+  timer. It installs packages that are missing but upgrades none: OS upgrades are yours to run (`sudo apt
+  full-upgrade`, then reboot). Pages that are open, the kiosk's included, load the new build by themselves.
 - From a laptop: `make deploy HOST=dawn.local` builds the web UI and rsyncs the repo. The files then differ from
   `/opt/dawn`'s git commit, so the UI update refuses to fast-forward until they match `main` again.
 - On the Pi: `cd /opt/dawn && sudo -u dawn git pull --ff-only && sudo ./deploy/install.sh --update`.
@@ -205,7 +210,9 @@ countdown, so a clock with the button fitted and one without behave the same.
 An alarm has to make a noise whatever else is broken, so it climbs a ladder of sounds and each rung is
 watched for audio actually reaching the speaker:
 
-1. **Its own source** (a DAB station, a stream, a playlist, a chime), ramping up over `ramp_seconds`.
+1. **Its own source** (a DAB station, a stream, a playlist, a chime), ramping up over `ramp_seconds`. "Heard" means
+   the player is producing audio, its PipeWire stream runs *and is connected through to the sound card*; for a DAB
+   station also that welle-cli is decoding it and that it is not silent (`dab.silence_after_s`, 20 s of dead air; 0 switches both off).
 2. **The chime**, when nothing is heard `fallback_after_s` (15 s) after the alarm, or when the source stops for
    10 s mid-ring.
 3. **The backup tone**, when the chime is not heard either within `alarm_defaults.buzzer_after_s` (8 s): beeps
@@ -382,7 +389,9 @@ set the tuner gain, poll the time sources, play a test tone):
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
-| Wi-Fi lost | the setup hotspot appears after 45 s; *Settings → Wi-Fi* |
+| Wi-Fi lost | the setup hotspot appears after 45 s; *Settings → Wi-Fi*. While it is up, the clock takes it down every 5 minutes (`network.hotspot.retry_wifi_s`) to look for a network it has been on before and rejoins it when it is back (a router that came up after the clock did), unless someone has the hotspot's page open |
+| *Diagnostics → Audio* says "Volume control" or "Path to the speaker" failed | PipeWire or WirePlumber restarted and the output had to be found again; dawn-core does that by itself (`journalctl -u dawn-core \| grep -i "audio sink\|cannot be heard"`). If it stays, `systemctl --user restart pipewire wireplumber` as user dawn, or reboot |
+| "Update now" ends in `=== failed … rolled back` | the new version did not install or its dawn-core did not come up; the clock is on the version it had. `/var/log/dawn-update.log` and `journalctl -u dawn-update -u dawn-core` say why |
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
 | A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 

@@ -93,7 +93,7 @@ export interface SystemState {
   model: string; hostname: string; cpu_temp_c: number | null; uptime_s: number; load1: number | null; mem_used_percent: number | null;
   throttled: number | null; throttle_flags: string[];
   sdr_present: boolean; sdr_tuner: string | null; panel: string; network: NetworkInfo; update_available: boolean; update_running: boolean;
-  update_log: string | null; heartbeat_at: string | null; sim: boolean; version: string; git_rev: string | null; booted_at: string | null;
+  update_log: string | null; web_build?: string | null; heartbeat_at: string | null; sim: boolean; version: string; git_rev: string | null; booted_at: string | null;
   config_error: string | null; services: Record<string, string>;
 }
 export interface BtDevice { address: string; name: string; paired: boolean; connected: boolean; trusted: boolean; icon: string | null; rssi: number | null }

@@ -19,13 +19,32 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import event, text
-from sqlalchemy.engine import Engine
+from sqlalchemy import event, inspect, text
+from sqlalchemy.engine import Connection, Engine
 from sqlmodel import Session, SQLModel, create_engine, delete, select
 
 from .models import KV, EventRow
 
 log = logging.getLogger("dawn.db")
+
+# The schema's version, kept in SQLite's `PRAGMA user_version`. Raise it, and add a step to MIGRATIONS, for a change
+# that adding columns cannot express (new columns need neither: see Database._migrate). Changes must stay
+# *additive*: a failed update is rolled back to the previous code (deploy/bin/dawn-update), which then runs on the
+# database the newer code has already migrated, so nothing an older version reads or writes may be renamed, removed
+# or given a new meaning.
+SCHEMA_VERSION = 1
+MIGRATIONS: dict[int, list[str]] = {}  # {version reached: [SQL statements]}, applied in order above the stored version
+
+
+def _sql_literal(v: Any) -> str | None:
+    """A constant as SQLite DDL takes it for DEFAULT, or None when there is none to give."""
+    if isinstance(v, bool):
+        return "1" if v else "0"
+    if isinstance(v, int | float):
+        return repr(v)
+    if isinstance(v, str):
+        return "'" + v.replace("'", "''") + "'"
+    return None
 
 
 class Database:
@@ -39,6 +58,8 @@ class Database:
         # read-only, with a write-ahead log beside the file that this open cannot read: what was read is as of the last
         # checkpoint, so alarms changed since then are missing and the face's own memory of them is the better one
         self.stale = False
+        self.migrated: list[str] = []  # what opening changed in the schema ("alarm.light_wake"), for the log and tests
+        self.migration_error: str | None = None  # the schema could not be brought up to date (Diagnostics)
         if str(self.path) == ":memory:":
             self.engine = self._open("sqlite://", create=True)
             self.mode = "memory"
@@ -89,10 +110,57 @@ class Database:
 
         if create:
             SQLModel.metadata.create_all(engine)
+            self._migrate(engine)
         else:
             with engine.connect() as conn:  # prove it can be read before relying on it
                 conn.execute(text("SELECT name FROM sqlite_master LIMIT 1")).fetchall()
         return engine
+
+    def _migrate(self, engine: Engine) -> None:
+        """Bring a database made by an older version up to this one. `create_all` makes missing tables but never
+        touches an existing one, so a column added to a model since the file was made is simply not there, and
+        every read of that table fails: for the alarm table that is every alarm, on every tick, from the first
+        start after the update. Missing columns are added here with their defaults (existing rows get them), then
+        the numbered steps in MIGRATIONS run. Never raises: a database that cannot be altered (read-only card) is
+        left as it is, and the reads that then fail are handled where they are made."""
+        try:
+            with engine.begin() as conn:
+                have = int(conn.execute(text("PRAGMA user_version")).scalar() or 0)
+                self._add_missing_columns(conn)
+                for version in sorted(v for v in MIGRATIONS if v > have):
+                    for stmt in MIGRATIONS[version]:
+                        conn.execute(text(stmt))
+                    self.migrated.append(f"schema {version}")
+                if have > SCHEMA_VERSION:
+                    log.warning("%s was last written by a newer version (schema %d, this is %d); used as it is", self.path, have, SCHEMA_VERSION)
+                elif have != SCHEMA_VERSION:
+                    conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
+            if self.migrated:
+                log.warning("database brought up to date: %s", ", ".join(self.migrated))
+        except Exception as e:  # noqa: BLE001
+            self.migration_error = f"{type(e).__name__}: {e}"
+            log.critical("cannot bring %s up to date (%s): tables changed since it was made may not be readable", self.path, self.migration_error)
+
+    def _add_missing_columns(self, conn: Connection) -> None:
+        insp = inspect(conn)
+        for table in SQLModel.metadata.sorted_tables:
+            present = {c["name"] for c in insp.get_columns(table.name)}
+            for col in table.columns:
+                if col.name in present:
+                    continue
+                default = getattr(col.default, "arg", None) if col.default is not None else None
+                value = default(None) if callable(default) else default  # a default_factory (created_at): its value now
+                literal = _sql_literal(value)
+                ddl = f'ALTER TABLE "{table.name}" ADD COLUMN "{col.name}" {col.type.compile(dialect=conn.dialect)}'
+                if literal is not None:
+                    # in the table itself, so rows written by an older version (after a rolled-back update) get it too
+                    ddl += f" DEFAULT {literal}" + ("" if col.nullable else " NOT NULL")
+                conn.execute(text(ddl))
+                if literal is None and value is not None:
+                    conn.execute(table.update().where(col.is_(None)).values({col.name: value}))
+                self.migrated.append(f"{table.name}.{col.name}")
+            for index in table.indexes:  # an index on a column that was just added (create_all skips existing tables)
+                index.create(conn, checkfirst=True)
 
     @property
     def degraded(self) -> bool:

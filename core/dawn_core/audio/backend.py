@@ -68,6 +68,8 @@ def classify_sink(name: str, description: str, props: dict[str, Any] | None = No
 class AudioBackend:
     name = "none"
     supports_eq = False
+    # a stream that runs but is not connected to the speaker (PipeWire only): why, else None
+    link_problem: str | None = None
 
     @property
     def eq_present(self) -> bool:
@@ -98,9 +100,12 @@ class PipeWireBackend(AudioBackend):
     EQ_SINK = "dawn_eq"
     HIGHPASS_OFF_HZ = 10.0  # the biquad stays in the graph; this far down it changes nothing audible
 
+    NULL_SINKS = ("auto_null",)  # pipewire-pulse's stand-in when there is no sound card: it plays into nothing
+
     def __init__(self) -> None:
         self._eq_present = False
         self._hw_sink: Sink | None = None
+        self.link_problem = None
 
     @property
     def eq_present(self) -> bool:
@@ -138,8 +143,8 @@ class PipeWireBackend(AudioBackend):
             if props.get("media.class") != "Audio/Sink":
                 continue
             name = props.get("node.name", "")
-            if name == self.EQ_SINK:
-                continue
+            if name == self.EQ_SINK or name in self.NULL_SINKS or props.get("factory.name") == "support.null-audio-sink":
+                continue  # the tone control is not an output, and a null sink is not a speaker
             desc = props.get("node.description") or props.get("node.nick") or name
             out.append(Sink(id=str(n.get("id")), name=name, description=desc, kind=classify_sink(name, desc, props), serial=str(props.get("object.serial", ""))))
         return out
@@ -177,11 +182,20 @@ class PipeWireBackend(AudioBackend):
 
     async def set_volume(self, percent: int) -> None:
         target = self._hw_sink.id if self._hw_sink else "@DEFAULT_AUDIO_SINK@"
-        await run("wpctl", "set-volume", "-l", "1.0", target, f"{max(0, min(100, percent)) / 100:.3f}")
+        await self._wpctl("set-volume", "-l", "1.0", target, f"{max(0, min(100, percent)) / 100:.3f}")
 
     async def set_mute(self, muted: bool) -> None:
         target = self._hw_sink.id if self._hw_sink else "@DEFAULT_AUDIO_SINK@"
-        await run("wpctl", "set-mute", target, "1" if muted else "0")
+        await self._wpctl("set-mute", target, "1" if muted else "0")
+
+    @staticmethod
+    async def _wpctl(*args: str) -> None:
+        """A wpctl call that must take effect. A sink id only lives as long as the PipeWire that gave it: after
+        PipeWire or WirePlumber restarts, the old id names nothing (or another node), wpctl says so with its exit
+        code, and the caller has to hear about it, or an alarm's volume and unmute go nowhere unnoticed."""
+        rc, out = await run("wpctl", *args)
+        if rc != 0:
+            raise RuntimeError(f"wpctl {args[0]} {' '.join(args[1:])}: {out.strip().splitlines()[-1] if out.strip() else f'exit {rc}'}")
 
     async def set_eq(self, bass_db: float, treble_db: float, highpass_hz: float | None = None) -> None:
         if not self._eq_present:
@@ -193,15 +207,60 @@ class PipeWireBackend(AudioBackend):
             await run("pw-cli", "set-param", eq_id, "Props", params)
 
     async def stream_running(self, client_name: str) -> bool | None:
-        for n in await self._dump():
+        """The stream of `client_name` runs *and* is connected through to the speaker. A stream runs just as
+        happily into the tone control when nothing links that to the sound card (PipeWire came back and the link's
+        target was lost), or into a null sink, and then "running" is silence."""
+        dump = await self._dump()
+        for n in dump:
             info = n.get("info") or {}
             props = info.get("props") or {}
             if props.get("media.class") != "Stream/Output/Audio":
                 continue
             names = {str(props.get(k, "")) for k in ("application.name", "node.name", "media.name", "application.process.binary")}
             if any(client_name in x for x in names):
-                return info.get("state") == "running"
+                if info.get("state") != "running":
+                    return False
+                return self.reaches_speaker(dump, str(n.get("id"))) is not False
         return False
+
+    def reaches_speaker(self, dump: list[dict[str, Any]], stream_id: str) -> bool | None:
+        """Whether the links in `dump` carry stream `stream_id` to the chosen sound card, directly or through the
+        tone control. None when that cannot be told (no sink chosen yet, or a dump without readable links), which
+        never counts against the stream: this check may only ever add a "no", not take a sound away."""
+        if self._hw_sink is None:
+            return None
+        ids: dict[str, str] = {}
+        links: set[tuple[str, str]] = set()
+        for n in dump:
+            info = n.get("info") or {}
+            props = info.get("props") or {}
+            if str(n.get("type", "")).endswith(":Link"):
+                out = info.get("output-node-id", props.get("link.output.node"))
+                inp = info.get("input-node-id", props.get("link.input.node"))
+                if out is not None and inp is not None and info.get("state") != "error":
+                    links.add((str(out), str(inp)))
+            elif props.get("node.name"):
+                ids[str(props["node.name"])] = str(n.get("id"))
+        if not links:
+            return None
+        hw = ids.get(self._hw_sink.name)
+        eq = ids.get(self.EQ_SINK)
+        eq_out = ids.get(f"output.{self.EQ_SINK}") or ids.get(f"{self.EQ_SINK}.output")
+        if hw is None:
+            ok, why = False, f"the sound card {self._hw_sink.description or self._hw_sink.name} is not in PipeWire"
+        elif (stream_id, hw) in links:
+            ok, why = True, ""
+        elif eq is not None and (stream_id, eq) in links:
+            ok = eq_out is not None and (eq_out, hw) in links
+            why = "" if ok else f"the tone control is not connected to {self._hw_sink.description or self._hw_sink.name}"
+        else:
+            ok, why = False, f"the stream is not connected to {self._hw_sink.description or self._hw_sink.name}"
+        if ok:
+            self.link_problem = None
+        elif self.link_problem != why:
+            self.link_problem = why
+            log.error("audio is playing but cannot be heard: %s", why)
+        return ok
 
 
     async def set_stream_mute(self, match: str, muted: bool) -> None:

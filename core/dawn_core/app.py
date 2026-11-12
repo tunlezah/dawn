@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -36,6 +37,20 @@ def find_web_dist(override: str | None) -> Path | None:
     return None
 
 
+def web_build_id(dist: Path) -> str | None:
+    """What identifies the built web UI: the two pages name their scripts and styles by content hash, so the pages
+    themselves change whenever anything in the build does."""
+    h = hashlib.sha1(usedforsecurity=False)
+    found = False
+    for page in (dist / "index.html", dist / "face" / "index.html"):
+        try:
+            h.update(page.read_bytes())
+            found = True
+        except OSError:
+            pass
+    return h.hexdigest()[:12] if found else None
+
+
 def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
     cfg_mgr = cfg_mgr or ConfigManager()
     ctx = DawnContext(cfg_mgr)
@@ -51,6 +66,9 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
         await cfg_mgr.start()
         ctx.refresh_settings_summary()
         log.info("dawn-core %s started (sim=%s)", __version__, ctx.sim)
+        from .system import update
+
+        await update.resume(ctx)  # started by an update that is still running: carry on showing it
         try:
             yield
         finally:
@@ -82,6 +100,8 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
 
     dist = find_web_dist(cfg_mgr.config.web.static_dir)
     if dist:
+        # pages that are open (the kiosk's above all) load the new build when this changes: see web/src/shared/store.ts
+        ctx.store.state.system.web_build = web_build_id(dist)
         app.mount("/assets", StaticFiles(directory=dist / "assets"), name="assets")
         if (dist / "static").exists():
             app.mount("/static", StaticFiles(directory=dist / "static"), name="static")

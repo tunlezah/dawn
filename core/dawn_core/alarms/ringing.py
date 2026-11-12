@@ -37,6 +37,7 @@ DROPOUT_S = {"source": 10.0, "chime": 5.0}  # audio that stops for this long has
 START_EXTRA_S = 10.0  # a rung still starting this long after its deadline is abandoned
 DAB_RESTART_AFTER_S = 3.0
 BUZZER_RETRY_S = 5.0
+OUTPUT_RETRY_S = 5.0  # an output that refuses the alarm's volume is tried again this often
 SAVE_EVERY_S = 30.0  # a ringing session is saved this often, so a restart knows it was still going
 
 
@@ -277,12 +278,21 @@ class RingSession:
                 return
             done = self.tier == "buzzer" or self.req.ramp_seconds <= 0 or time.monotonic() - self._ramp_origin >= self.req.ramp_seconds
             v = self._ramp_level(self.tier)
-            if v != self.audio.volume:
+            refused = self.audio.output_error is not None  # the last change did not reach the output: make it again
+            if v != self.audio.volume or refused:
                 try:
                     await self.audio.set_volume(v, persist=False, overlay=False)
+                    if refused:
+                        await self.audio.ensure_unmuted()  # the unmute at the start of the ring went the same way
                 except Exception as e:  # noqa: BLE001
                     self._trouble("setting the volume", e)
                     done = False  # try the next step
+            if self.audio.output_error is not None:
+                # the output would not take it even after being chosen again (see AudioService._output): the alarm is
+                # as loud as the output was left. Keep trying, slowly; each try sets the output up afresh.
+                self._trouble("setting the volume", RuntimeError(self.audio.output_error))
+                await asyncio.sleep(OUTPUT_RETRY_S)
+                continue
             if done:
                 return
             await asyncio.sleep(0.5)

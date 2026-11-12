@@ -57,6 +57,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "pinned": cfg.audio.pinned_sink, "volume": st.audio.volume, "muted": st.audio.muted, "active_source": st.audio.active_source,
             "flowing": st.audio.audio_flowing, "eq_present": bool(audio and audio.backend.eq_present), "ceiling": cfg.audio.output_ceiling_percent,
             "max_volume": cfg.audio.max_volume, "sources": [s.model_dump() for s in st.audio.sources],
+            "output_error": audio.output_error if audio else None, "link_problem": audio.backend.link_problem if audio else None,
         },
         "alarms": {
             "engine_alive": alarms.alive() if alarms else None, "prepare": st.alarms.prepare.model_dump() if st.alarms.prepare else None,
@@ -92,7 +93,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
             "disk_root": {"total": root[0], "free": root[1]} if root else None,
             "errors": recent[-8:], "error_count": len(recent), "update_running": st.system.update_running,
             "db_write_errors": ctx.db.write_errors, "db_last_write_error": ctx.db.last_write_error,
-            "db_mode": ctx.db.mode, "db_open_error": ctx.db.open_error, "db_path": str(ctx.db.path), "db_stale": ctx.db.stale,
+            "db_mode": ctx.db.mode, "db_open_error": ctx.db.open_error, "db_path": str(ctx.db.path), "db_stale": ctx.db.stale, "db_migration_error": ctx.db.migration_error,
         },
     }
 
@@ -119,6 +120,12 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if a["backend"] == "pipewire" and not a["eq_present"]:
         add("audio", "eq", "Speaker protection filter", "warn", "The dawn_eq filter chain (mono mix, 110 Hz high-pass, tone controls) is not loaded.",
             "Re-run install.sh (--audio hifiberry for the SHIM); it installs /etc/pipewire/pipewire.conf.d/dawn-eq.conf.")
+    if a.get("output_error"):
+        add("audio", "output", "Volume control", "fail", f"The output does not take volume or mute changes: {a['output_error']}.",
+            "An alarm then rings at whatever volume the output was left at. Restart the PipeWire session (`systemctl --user restart pipewire wireplumber` as user dawn) or reboot.")
+    if a.get("link_problem"):
+        add("audio", "link", "Path to the speaker", "fail", f"Audio is playing but cannot be heard: {a['link_problem']}.",
+            "dawn-core sets the output up again every few seconds while this lasts; `wpctl status` as user dawn shows what is connected to what.")
     if a["muted"] or a["volume"] == 0:
         add("audio", "volume", "Volume", "warn", "Muted." if a["muted"] else "Volume is 0.", "Alarms unmute and ramp up on their own; user playback stays silent.")
     else:
@@ -246,6 +253,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
         stale = " Its write-ahead log could not be read, so alarms changed since the last checkpoint are missing here; the face rings from what it last heard." if s.get("db_stale") else ""
         add("system", "database", "Database", "fail", f"{s.get('db_path')} could only be opened read-only at start ({s.get('db_open_error')}): the alarms and settings are read from it, nothing can be saved.{stale}",
             "The storage has probably gone read-only (a failing SD card, or ext4 errors at boot). Alarms ring as saved; changes made now are lost at the next restart. Check dmesg and reboot once the card is sound.")
+    if s.get("db_migration_error"):
+        add("system", "db_schema", "Database layout", "fail", f"{s.get('db_path')} was made by an older version and could not be brought up to date ({s['db_migration_error']}).",
+            "Alarms or stations may not be readable until it is. Check that the storage can be written (`dmesg`, free space), then restart dawn-core.")
     if s.get("db_write_errors"):
         add("system", "db_writes", "Saving to storage", "fail", f"{s['db_write_errors']} write(s) to the database failed since start; last: {s['db_last_write_error']}.",
             "The storage may have gone read-only (a failing SD card) or be full; see Data storage. Alarms keep working from memory, but changes made now are lost at the next restart.")
