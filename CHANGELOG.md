@@ -19,6 +19,8 @@ and `core/tests/test_update.py`; the findings are summarised at the end of `docs
   selected again with its volume, mute and tone control; a `wpctl` that fails is a failure, after which the sink is
   chosen again and the change made once more; what still fails is shown under *Diagnostics → Audio → Volume
   control*, and an alarm's ramp keeps trying.
+  A PipeWire that does not answer at all is not asked twice, and unmuting and setting the volume get 6 s at the
+  start of a ring (the backup tone waits for neither), so a hung PipeWire cannot hold the alarm's sound back.
 - **A stream counted as heard while connected to nothing.** A PipeWire stream runs just as well into the tone
   control when that has lost its link to the sound card, or into pipewire-pulse's null sink. "Audio flowing" now
   follows the links from the stream to the chosen sound card; an unconnected output is set up again every 15 s
@@ -44,8 +46,8 @@ and `core/tests/test_update.py`; the findings are summarised at the end of `docs
 - **A column added to a table made every row unreadable after the update.** `create_all` never alters an existing
   table, so the first release to add a field to an alarm would have left dawn-core unable to read any alarm. On
   opening, missing columns are now added with their defaults, and numbered migrations run against `PRAGMA
-  user_version` (`db/engine.py`); a database that cannot be brought up to date is reported under *Diagnostics →
-  System → Database layout*.
+  user_version` (`db/engine.py`), each step all or nothing; a database that cannot be brought up to date is reported
+  under *Diagnostics → System → Database layout*.
 - **The setup hotspot never went back to Wi-Fi.** The hotspot takes the radio, so a clock that started it (the Pi
   boots faster than the router after a power cut) stayed on it, off the LAN and on the setup screen, until someone
   chose the network again. While the hotspot is up it is now taken down every `network.hotspot.retry_wifi_s` (5 min)

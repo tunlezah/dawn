@@ -48,6 +48,10 @@ async def run(*cmd: str, timeout: float = 5.0) -> tuple[int, str]:
         with suppress(ProcessLookupError):
             proc.kill()
         return 124, "timeout"
+    except asyncio.CancelledError:
+        with suppress(ProcessLookupError):
+            proc.kill()  # the caller gave up (a ring's start has a time limit): the tool goes with it
+        raise
     return proc.returncode or 0, out.decode(errors="ignore")
 
 
@@ -194,8 +198,12 @@ class PipeWireBackend(AudioBackend):
         PipeWire or WirePlumber restarts, the old id names nothing (or another node), wpctl says so with its exit
         code, and the caller has to hear about it, or an alarm's volume and unmute go nowhere unnoticed."""
         rc, out = await run("wpctl", *args)
+        if rc == 124:
+            # PipeWire is there but answers nothing. Not the same as a refusal: choosing the sink again would only
+            # hang as well, and whoever is waiting (an alarm about to sound) has no time for that.
+            raise TimeoutError(f"wpctl {args[0]}: no answer from PipeWire")
         if rc != 0:
-            raise RuntimeError(f"wpctl {args[0]} {' '.join(args[1:])}: {out.strip().splitlines()[-1] if out.strip() else f'exit {rc}'}")
+            raise RuntimeError(f"wpctl {args[0]}: {out.strip().splitlines()[-1] if out.strip() else f'exit {rc}'}")
 
     async def set_eq(self, bass_db: float, treble_db: float, highpass_hz: float | None = None) -> None:
         if not self._eq_present:

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState as useReactState } from 'react';
-import { useDawn } from '../shared/store';
+import { store, useDawn } from '../shared/store';
 import { actions } from '../shared/api';
 import { Standby } from './states/Standby';
 import { Sleep } from './states/Sleep';
@@ -21,6 +21,7 @@ export function Face() {
   const { state: s, connected } = useDawn();
   // the face's own safety net: beeps along when core asks, rings by itself when core is down at an alarm
   const backup = useBackup(s, connected);
+  store.localRing = backup.local !== null; // the page must not be reloaded for a new build while it rings by itself
 
   // sleep mode is always amber on black, whatever the room's light
   const palette = s.face.mode === 'sleep' ? 'night' : s.display.palette;

@@ -140,8 +140,9 @@ class NetworkService(Service):
             return False
         return any(str(c.get("remote") or "").startswith(HOTSPOT_NET) and c.get("remote") != HOTSPOT_IP for c in hub.connections())
 
-    async def _saved_wifi(self) -> list[tuple[str, str]]:
-        """(connection name, SSID) of every Wi-Fi network saved on this box, the hotspot's own profile left out."""
+    async def _saved_wifi(self) -> list[tuple[str, str, bool]]:
+        """(connection name, SSID, hidden) of every Wi-Fi network saved on this box, the hotspot's own profile left
+        out."""
         rc, out = await run("nmcli", "-t", "-f", "NAME,TYPE", "con", "show", timeout=10)
         if rc != 0:
             return []
@@ -150,11 +151,13 @@ class NetworkService(Service):
             parts = _split_terse(line)
             if len(parts) < 2 or parts[1] not in ("802-11-wireless", "wifi") or parts[0] == HOTSPOT_CON:
                 continue
-            rc, detail = await run("nmcli", "-g", "802-11-wireless.ssid,802-11-wireless.mode", "con", "show", parts[0], timeout=10)
+            rc, detail = await run("nmcli", "-g", "802-11-wireless.ssid,802-11-wireless.mode,802-11-wireless.hidden", "con", "show", parts[0], timeout=10)
             fields = detail.splitlines() if rc == 0 else []
             if len(fields) >= 2 and fields[1].strip() == "ap":
                 continue  # another access-point profile: bringing it up would not be a network
-            saved.append((parts[0], fields[0].strip() if fields and fields[0].strip() else parts[0]))
+            # -g escapes ":" and "\\" in a value the way -t does; the scan's SSIDs are compared unescaped
+            ssid = "".join(_split_terse(fields[0])).strip() if fields and fields[0].strip() else parts[0]
+            saved.append((parts[0], ssid, len(fields) >= 3 and fields[2].strip() == "yes"))
         return saved
 
     async def _retry_wifi(self, now: float) -> bool:
@@ -172,13 +175,13 @@ class NetworkService(Service):
         saved = await self._saved_wifi()
         if not saved:
             return False  # never been on a network: the hotspot is all there is until one is chosen
-        log.info("setup hotspot down for a moment to look for %s", ", ".join(ssid for _, ssid in saved))
+        log.info("setup hotspot down for a moment to look for %s", ", ".join(ssid for _, ssid, _ in saved))
         await run("nmcli", "con", "down", HOTSPOT_CON, timeout=15)
         rc, out = await run("nmcli", "-t", "-f", "ACTIVE,SSID,SIGNAL,SECURITY", "dev", "wifi", "list", "ifname", cfg.interface, "--rescan", "yes", timeout=25)
         in_range = {n.ssid for n in parse_wifi_list(out)} if rc == 0 else None  # None: the scan failed, try them all
-        for name, ssid in saved:
-            if in_range is not None and ssid not in in_range:
-                continue
+        for name, ssid, hidden in saved:
+            if in_range is not None and ssid not in in_range and not hidden:
+                continue  # (a hidden network never shows in a scan: it is simply tried)
             rc, out = await run("nmcli", "con", "up", name, "ifname", cfg.interface, timeout=45)
             if rc == 0:
                 log.warning("Wi-Fi %s is back; the setup hotspot stays down", ssid)

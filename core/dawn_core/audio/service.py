@@ -127,9 +127,11 @@ class AudioService(Service):
 
     async def _output(self, *, volume: int | None = None, mute: bool | None = None) -> bool:
         """Put a volume and/or mute state on the output. A backend that refuses is, almost always, holding a sink id
-        from before PipeWire or WirePlumber restarted: the sink is chosen again and the call made once more. False
-        (and `output_error`, shown in Diagnostics) when that fails too. It never raises: every volume change in
-        core ends up here, and none of them may fail the fade, ramp or ring that asked for it."""
+        from before PipeWire or WirePlumber restarted: the sink is chosen again and the call made once more. A
+        backend that does not answer at all (PipeWire hung) is not asked twice: the caller may be an alarm about to
+        sound, and the time belongs to the backup tone. False (and `output_error`, shown in Diagnostics) when the
+        change could not be made. It never raises: every volume change in core ends up here, and none of them may
+        fail the fade, ramp or ring that asked for it."""
         err = ""
         for attempt in (1, 2):
             try:
@@ -137,10 +139,14 @@ class AudioService(Service):
                     await self.backend.set_mute(mute)
                 if volume is not None:
                     await self.backend.set_volume(self.hw_volume(volume))
+            except TimeoutError as e:
+                err = str(e) or "no answer"
+                break
             except Exception as e:  # noqa: BLE001
                 err = str(e) or type(e).__name__
                 if attempt == 1:
-                    log.warning("the audio output refused a volume or mute change (%s); choosing the output again", err)
+                    if self._output_error_logged != err:
+                        log.warning("the audio output refused a volume or mute change (%s); choosing the output again", err)
                     await self.refresh_sinks(select_now=True, apply=False)
                 continue
             if self.output_error:

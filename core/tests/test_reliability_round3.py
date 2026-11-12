@@ -5,6 +5,7 @@ half-way by the restart it asked for."""
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import time
 from datetime import datetime, timedelta
@@ -49,9 +50,13 @@ class FakePipeWire(PipeWireBackend):
         self.sink_id = "55"
         self.calls: list[tuple[str, ...]] = []
         self.broken = False  # every wpctl fails
+        self.hang_s = 0.0  # PipeWire is there but answers nothing: every tool runs into its timeout after this long
 
         async def run(*cmd: str, timeout: float = 5.0) -> tuple[int, str]:
             self.calls.append(cmd)
+            if self.hang_s:
+                await asyncio.sleep(self.hang_s)
+                return 124, "timeout"
             if cmd[0] == "wpctl" and cmd[1] in ("set-volume", "set-mute"):
                 target = cmd[-2]
                 return (0, "") if target == self.sink_id and not self.broken else (1, f"Object '{target}' not found")
@@ -138,9 +143,36 @@ async def test_the_alarm_ramp_makes_a_refused_volume_again(svc, monkeypatch) -> 
     await a.stop_ringing()
 
 
-async def _until(pred, timeout: float = 5.0) -> None:
-    import asyncio
+async def test_a_pipewire_that_answers_nothing_does_not_hold_the_alarm_back(svc, monkeypatch) -> None:
+    """PipeWire hung, not gone: wpctl runs into its timeout. Unmuting and setting the volume must not use up the
+    time a rung has to start, and the backup tone (which then plays straight on the sound card) waits for neither."""
+    from dawn_core.alarms.ringing import RingRequest
 
+    a, ctx = svc
+    audio, pw = await _on_pipewire(ctx, monkeypatch)
+    monkeypatch.setattr("dawn_core.alarms.ringing.OUTPUT_PREP_MAX_S", 0.3)
+    monkeypatch.setattr("dawn_core.alarms.ringing.OUTPUT_RETRY_S", 30.0)
+    pw.hang_s = 2.0
+    pw.calls.clear()
+    t0 = time.monotonic()
+    await audio.set_volume(50, persist=False, overlay=False)
+    assert 1.9 < time.monotonic() - t0 < 3.0  # one try: no second one, no choosing the sink again, after a timeout
+    assert [c[:2] for c in pw.calls] == [("wpctl", "set-volume")] and "no answer" in audio.output_error
+
+    t0 = time.monotonic()
+    await a.start_ring(RingRequest(kind="alarm", label="Wake", source="chime:birds", volume=70, ramp_seconds=0, start_tier="buzzer"))
+    await _until(lambda: a.buzzer.active, timeout=0.5)  # the tone is going while the output is still being asked
+    await a.stop_ringing()
+
+    t0 = time.monotonic()
+    await a.start_ring(RingRequest(kind="alarm", label="Wake", source="chime:birds", volume=70, ramp_seconds=0))
+    await _until(lambda: audio.arbiter.slot("alarm") is not None, timeout=1.5)  # the chime was started 0.3 s in, not 4 s
+    assert time.monotonic() - t0 < 1.5
+    pw.hang_s = 0.0
+    await a.stop_ringing()
+
+
+async def _until(pred, timeout: float = 5.0) -> None:
     end = time.monotonic() + timeout
     while not pred():
         assert time.monotonic() < end, "timed out"
@@ -254,7 +286,9 @@ async def test_a_station_that_is_on_air_but_silent_stops_counting_as_sound(svc) 
     dab._track_audio(info)
     assert src.flowing  # a pause is not a failure
     dab._quiet_since["1002"] = now - ctx.config.dab.silence_after_s - 1
-    assert not src.flowing and "silent" in dab.audio_problem("1002")
+    assert src.flowing  # silence from before this play began does not count against it...
+    src._began = now - 3600
+    assert not src.flowing and "silent" in dab.audio_problem("1002")  # ...silence all through it does
     info.audio_level = 9000  # the programme is back
     dab._track_audio(info)
     assert src.flowing and dab.audio_problem("1002") is None
@@ -263,7 +297,9 @@ async def test_a_station_that_is_on_air_but_silent_stops_counting_as_sound(svc) 
 async def test_a_station_welle_has_stopped_decoding_is_not_sound(svc) -> None:
     _, ctx = svc
     dab, src, info = _playing(ctx, decoding=False, audio_level=11000, audio_time=int(time.time()) - 60)
-    assert not src.flowing and "no audio decoded" in dab.audio_problem("1002")
+    assert src.flowing  # yesterday's decode time: this play has only just begun, and mpv's own state covers it
+    src._began = time.time() - 120  # two minutes in, and welle-cli last decoded audio a minute ago
+    assert not src.flowing and "no audio decoded" in dab.audio_problem("1002", since=src._began)
     info.audio_time = int(time.time())
     assert src.flowing
 
@@ -277,9 +313,10 @@ async def test_a_decoder_that_reports_no_levels_never_fails_a_station(svc) -> No
     info.decoding, info.audio_level, info.audio_time = True, 0, int(time.time())
     dab._track_audio(info)
     dab._quiet_since["1002"] = time.time() - 3600
+    src._began = time.time() - 7200
     assert not src.flowing
     info.audio_time = int(time.time()) - 60  # and not decoded for a minute
-    assert "no audio decoded" in dab.audio_problem("1002")
+    assert "no audio decoded" in dab.audio_problem("1002", since=src._began)
     await ctx.cfg_mgr.update({"dab": {"silence_after_s": 0}})
     assert src.flowing and dab.audio_problem("1002") is None  # one switch for both checks
 
@@ -346,6 +383,11 @@ def test_numbered_migrations_run_once_and_in_order(tmp_path, monkeypatch) -> Non
     assert db.migrated == ["schema 2", "schema 3"] and db.get("m2") == 2
     db.engine.dispose()
     assert Database(path).migrated == []  # the stored version is 3 now
+    new = Database(tmp_path / "new.db")  # a file made by this version has its layout already: no step runs on it
+    assert new.migrated == [] and new.get("m2") is None
+    con = sqlite3.connect(tmp_path / "new.db")
+    assert con.execute("PRAGMA user_version").fetchone()[0] == 3
+    con.close()
     monkeypatch.setattr(engine_module, "SCHEMA_VERSION", 2)  # the previous version, after a rolled-back update
     older = Database(path)
     assert older.migration_error is None and older.get("m2") == 2
@@ -358,13 +400,22 @@ def test_a_migration_that_fails_does_not_stop_the_database_opening(tmp_path, mon
     path = tmp_path / "dawn.db"
     Database(path).engine.dispose()
     monkeypatch.setattr(engine_module, "SCHEMA_VERSION", 2)
-    monkeypatch.setattr(engine_module, "MIGRATIONS", {2: ["INSERT INTO kv (key, value) VALUES ('half', '1')", "THIS IS NOT SQL"]})
+    # a step that begins with CREATE and ALTER: sqlite3 would commit those one by one unless the transaction is
+    # opened by hand, and the step could then never run again ("table extra already exists")
+    steps = {2: ["CREATE TABLE extra (id INTEGER PRIMARY KEY)", "ALTER TABLE kv ADD COLUMN note TEXT", "INSERT INTO kv (key, value) VALUES ('half', '1')", "THIS IS NOT SQL"]}
+    monkeypatch.setattr(engine_module, "MIGRATIONS", steps)
     db = Database(path)
     assert db.mode == "rw" and db.migration_error and "syntax" in db.migration_error
     assert db.get("half") is None  # the step is all or nothing
+    db.engine.dispose()
     con = sqlite3.connect(path)
     assert con.execute("PRAGMA user_version").fetchone()[0] == 1  # and is tried again at the next start
+    assert "extra" not in {r[0] for r in con.execute("SELECT name FROM sqlite_master")}
+    assert "note" not in {r[1] for r in con.execute("PRAGMA table_info(kv)")}
     con.close()
+    steps[2].pop()  # the next release fixes the step: it runs from its beginning
+    fixed = Database(path)
+    assert fixed.migration_error is None and fixed.migrated == ["schema 2"] and fixed.get("half") == 1
 
 
 async def test_alarms_in_an_older_database_ring_after_an_update(tmp_config, tmp_path) -> None:
@@ -444,10 +495,9 @@ async def test_a_core_restarted_by_the_update_carries_on_showing_it(svc, tmp_pat
     async def unit_state() -> str:
         return states.pop(0) if len(states) > 1 else states[0]
 
-    real_sleep = __import__("asyncio").sleep
     monkeypatch.setattr(update, "LOG_PATH", path)
     monkeypatch.setattr(update, "_unit_state", unit_state)
-    monkeypatch.setattr(update.asyncio, "sleep", lambda s: real_sleep(0.01))
+    monkeypatch.setattr(update, "FOLLOW_EVERY_S", 0.01)
     monkeypatch.setattr(ctx, "sim", False)
     await update.resume(ctx)
     st = ctx.store.state.system
@@ -477,6 +527,7 @@ class FakeNm:
 
     def __init__(self, monkeypatch, *, saved=("HomeWiFi",), in_range=("HomeWiFi", "Neighbour"), joins=True) -> None:
         self.saved, self.in_range, self.joins = list(saved), list(in_range), joins
+        self.hidden: set[str] = set()
         self.calls: list[tuple[str, ...]] = []
         from dawn_core.net import service as net_module
 
@@ -486,14 +537,19 @@ class FakeNm:
         self.calls.append(args)
         a = args[1:]
         if a[:5] == ("-t", "-f", "NAME,TYPE", "con", "show"):
-            return 0, "".join(f"{n}:802-11-wireless\n" for n in [*self.saved, "dawn-hotspot"]) + "Wired:802-3-ethernet\n"
+            return 0, "".join(f"{self.esc(n)}:802-11-wireless\n" for n in [*self.saved, "dawn-hotspot"]) + "Wired:802-3-ethernet\n"
         if a[0] == "-g":
-            return 0, f"{a[-1]}\n{'ap' if a[-1] == 'dawn-hotspot' else 'infrastructure'}\n"
+            return 0, f"{self.esc(a[-1])}\n{'ap' if a[-1] == 'dawn-hotspot' else 'infrastructure'}\n{'yes' if a[-1] in self.hidden else 'no'}\n"
         if a[:2] == ("-t", "-f") and "list" in a:
-            return 0, "".join(f"no:{s}:70:WPA2\n" for s in self.in_range)
+            return 0, "".join(f"no:{self.esc(s)}:70:WPA2\n" for s in self.in_range)
         if a[:2] == ("con", "up"):
             return (0, "Connection successfully activated") if self.joins else (4, "Error: Connection activation failed")
         return 0, ""
+
+    @staticmethod
+    def esc(value: str) -> str:
+        """As nmcli's terse output escapes a value."""
+        return value.replace("\\", "\\\\").replace(":", "\\:")
 
     def did(self, *prefix: str) -> bool:
         return any(c[1:1 + len(prefix)] == prefix for c in self.calls)
@@ -535,6 +591,16 @@ async def test_the_hotspot_comes_straight_back_when_the_wifi_is_still_away(svc, 
     nm.in_range, nm.joins = ["HomeWiFi"], False  # in range, but it will not let us in (a changed password)
     assert not await net._retry_wifi(due + ctx.config.network.hotspot.retry_wifi_s + 1)
     assert nm.did("con", "up", "HomeWiFi") and nm.did("dev", "wifi", "hotspot") and net.hotspot_active
+
+
+async def test_a_saved_network_with_a_colon_in_its_name_or_a_hidden_one_is_rejoined(svc, monkeypatch) -> None:
+    _, ctx = svc
+    step = ctx.config.network.hotspot.retry_wifi_s + 1
+    net, nm = await _on_hotspot(ctx, monkeypatch, saved=("Flat 3: upstairs",), in_range=("Flat 3: upstairs",))
+    assert await net._retry_wifi(time.monotonic() + step) and nm.did("con", "up", "Flat 3: upstairs")
+    net, nm = await _on_hotspot(ctx, monkeypatch, saved=("Hidden",), in_range=("Neighbour",))
+    nm.hidden = {"Hidden"}  # it never shows in a scan: tried all the same
+    assert await net._retry_wifi(time.monotonic() + step) and nm.did("con", "up", "Hidden")
 
 
 async def test_the_hotspot_is_left_alone_while_it_is_being_used_or_is_all_there_is(svc, monkeypatch) -> None:

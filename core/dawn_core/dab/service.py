@@ -56,9 +56,11 @@ class DabSource(PlayerSource):
         self.ref = f"dab:{svc.sid}"
         self._channel: str | None = None
         self._reload: asyncio.Task[None] | None = None
+        self._began = time.time()  # when this source last started or resumed: what welle-cli said before is not about it
 
     async def start(self) -> None:
         self._started = True
+        self._began = time.time()
         self.error = None
         self.player.on_change(self._changed)  # as PlayerSource.start(): again after a stop
         self.dab.channel_for(self.svc.sid)  # an unknown station fails at once
@@ -82,6 +84,7 @@ class DabSource(PlayerSource):
         if not self._started:
             await self.start()  # queued behind an alarm and never started (see PlayerSource.resume)
             return
+        self._began = time.time()
         if self.dab.channel != self._channel or self.player.loaded_url != self.url or not self.dab.ready_for(self.svc.sid):
             # never got going (paused while tuning), or something (an alarm on another station) retuned welle while
             # this was paused, so its stream is gone
@@ -126,7 +129,7 @@ class DabSource(PlayerSource):
         """mpv has a stream and the ensemble is in sync, and the decoder is not known to be giving it nothing: a
         station that is on air but silent, or one welle-cli has stopped decoding, is not sound, and an alarm on it
         has to move on to the chime."""
-        return super().flowing and self.dab.live_sync and self.dab.audio_problem(self.svc.sid) is None
+        return super().flowing and self.dab.live_sync and self.dab.audio_problem(self.svc.sid, since=self._began) is None
 
     def status(self, priority: int, state: str):
         if state == "playing" and self.tuning:
@@ -325,18 +328,24 @@ class DabService(Service):
         else:
             self._quiet_since.pop(s.sid, None)
 
-    def audio_problem(self, sid: str, now: float | None = None) -> str | None:
+    def audio_problem(self, sid: str, now: float | None = None, since: float = 0.0) -> str | None:
         """Why the decoder is giving no sound for a station that is being played, or None. Only what welle-cli
-        itself reports counts, so a build that reports no audio level or time never fails a station here."""
+        itself reports counts, so a build that reports no audio level or time never fails a station here; and only
+        what it reported after `since` (when the play began or resumed): the decode time and silence left over
+        from the last time the station was played say nothing about this one, and mpv's own state covers the
+        seconds until welle-cli has decoded something new."""
         sid = norm_sid(sid)
         now = time.time() if now is None else now
         problem = None
         live = self.live.get(sid)
         limit = self.ctx.config.dab.silence_after_s  # 0 switches both checks off
         quiet = self._quiet_since.get(sid)
+        if quiet is not None:
+            quiet = max(quiet, since)
         if limit <= 0:
             pass
-        elif live is not None and live.audio_time and now - live.audio_time > DECODE_STALE_S and (self.last_mux_at or 0) > live.audio_time:
+        elif (live is not None and live.audio_time and live.audio_time >= since and now - live.audio_time > DECODE_STALE_S
+              and (self.last_mux_at or 0) > live.audio_time):
             problem = f"no audio decoded for {now - live.audio_time:.0f} s"
         elif quiet is not None and now - quiet >= limit:
             problem = f"the station has been silent for {now - quiet:.0f} s"

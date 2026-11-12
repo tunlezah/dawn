@@ -18,6 +18,9 @@ class DawnStore {
   private role: string | null = null;
   /** The web build this page was loaded from, as core first named it. */
   private build: string | null = null;
+  /** The face is ringing by itself (core was down at alarm time): set by the face. That ring lives in this page
+   *  only, so loading the page again would end it, and core, back up, no longer owes one. */
+  localRing = false;
 
   start(role: string | null = null) {
     if (this.started) return;
@@ -61,13 +64,13 @@ class DawnStore {
 
   /** An update replaces the files this page was built from and restarts core, but a page that is open (the kiosk
    *  runs for months) would carry on with its old scripts against the new core. Core names the build on disk in
-   *  its state: when that changes, load the page again. Never while an alarm rings (the reload would cut the
-   *  face's own beep), nor while something is being typed. */
+   *  its state: when that changes, load the page again. Never while an alarm rings, core's or the face's own (the
+   *  reload would cut the face's beep), nor while something is being typed: it then waits for a later message. */
   private followBuild() {
     const build = this.state.system?.web_build;
     if (!build) return;
     if (this.build === null) { this.build = build; return; }
-    if (build === this.build || !shouldReload(this.state.alarms?.ringing != null, document.activeElement)) return;
+    if (build === this.build || !shouldReload(this.localRing || this.state.alarms?.ringing != null, document.activeElement)) return;
     this.build = build; // once: if the reload does not happen, do not ask for it on every message
     location.reload();
   }

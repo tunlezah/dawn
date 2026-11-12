@@ -25,6 +25,7 @@ LOG_PATH = Path("/var/log/dawn-update.log")
 HEADER = "=== dawn-update "  # every run begins its part of the log with this
 HOLD_BEFORE_ALARM_S = 30 * 60  # an update restarts dawn-core, the decoder and the kiosk, and can take ten minutes
 FOLLOW_MAX_S = 45 * 60
+FOLLOW_EVERY_S = 1.0
 
 _tasks: set[asyncio.Task[None]] = set()  # the event loop only keeps weak references to tasks
 
@@ -168,7 +169,7 @@ async def _follow(ctx: DawnContext, since: float | None = None) -> None:
                 st.update_log = text
                 ctx.store.touch()
             ended = ended + 1 if await _unit_state() not in ("active", "activating") else 0  # twice: the last lines are in the file by then
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(FOLLOW_EVERY_S)
         if ended < 2:
             st.update_log = (st.update_log or "") + f"\nstill running after {FOLLOW_MAX_S // 60} min; see {LOG_PATH} and `systemctl status {UNIT}`\n"
     finally:

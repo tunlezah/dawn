@@ -37,6 +37,7 @@ DROPOUT_S = {"source": 10.0, "chime": 5.0}  # audio that stops for this long has
 START_EXTRA_S = 10.0  # a rung still starting this long after its deadline is abandoned
 DAB_RESTART_AFTER_S = 3.0
 BUZZER_RETRY_S = 5.0
+OUTPUT_PREP_MAX_S = 6.0  # unmuting and setting the volume get this long before the sound starts without them
 OUTPUT_RETRY_S = 5.0  # an output that refuses the alarm's volume is tried again this often
 SAVE_EVERY_S = 30.0  # a ringing session is saved this often, so a restart knows it was still going
 
@@ -103,6 +104,7 @@ class RingSession:
         self._stopping = False
         self._stopped = asyncio.Event()
         self._dab_task: asyncio.Task[None] | None = None
+        self._output_task: asyncio.Task[None] | None = None  # held so it is not garbage-collected while it runs
         self._trouble_logged: str | None = None
 
     @property
@@ -198,7 +200,12 @@ class RingSession:
 
     async def _start_tier(self, tier: str, epoch: int) -> str | None:
         """Start `tier` at the alarm level. None when it is playing (or the start was overtaken), else why not."""
-        await self._prepare_output(tier, epoch)
+        if tier == "buzzer":
+            # the last rung waits for nothing: it is what sounds when PipeWire answers nobody, and that is exactly
+            # when unmuting and setting the volume take for ever. They are tried alongside the tone.
+            self._output_task = asyncio.create_task(self._prepare_output(tier, epoch), name="ring-output")
+        else:
+            await self._prepare_output(tier, epoch)
         if self._stale(epoch):
             return None
         ref = self._resolved(tier)
@@ -229,11 +236,22 @@ class RingSession:
             await self.audio.arbiter.pause_level("alarm")
 
     async def _prepare_output(self, tier: str, epoch: int) -> None:
-        """Unmute and set the starting volume. Best effort: a backend that cannot do it must not stop the sound."""
-        try:
+        """Unmute and set the starting volume. Best effort, and within OUTPUT_PREP_MAX_S: a backend that cannot do
+        it, or takes its time over it, must not stop the sound or use up the time the rung has to start (the ramp
+        makes a change that did not get through again)."""
+
+        async def prepare() -> None:
+            if self._stale(epoch):
+                return
             await self.audio.ensure_unmuted()
             if not self._stale(epoch):
                 await self.audio.set_volume(self._ramp_level(tier), persist=False, overlay=False)
+
+        try:
+            await asyncio.wait_for(prepare(), OUTPUT_PREP_MAX_S)
+        except TimeoutError:
+            self.audio.output_error = self.audio.output_error or "the output did not answer in time"
+            log.error("%s: the output did not take the alarm's volume within %.0f s; sounding without it", self.req.label, OUTPUT_PREP_MAX_S)
         except Exception:  # noqa: BLE001
             log.exception("could not set the alarm volume")
 
@@ -440,7 +458,7 @@ class RingSession:
             self.active = False
             self.epoch += 1
             self._cancel_watch()
-            for t in (self._snooze_task, self._max_task):
+            for t in (self._snooze_task, self._max_task, self._output_task):
                 if t and not t.done() and t is not asyncio.current_task():
                     t.cancel()
             # the face first: tearing the audio down can wait for a DAB tune that is still under way

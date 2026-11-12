@@ -109,37 +109,70 @@ class Database:
             cur.close()
 
         if create:
+            fresh = not inspect(engine).get_table_names()
             SQLModel.metadata.create_all(engine)
-            self._migrate(engine)
+            self._migrate(engine, fresh)
         else:
             with engine.connect() as conn:  # prove it can be read before relying on it
                 conn.execute(text("SELECT name FROM sqlite_master LIMIT 1")).fetchall()
         return engine
 
-    def _migrate(self, engine: Engine) -> None:
+    def _migrate(self, engine: Engine, fresh: bool = False) -> None:
         """Bring a database made by an older version up to this one. `create_all` makes missing tables but never
         touches an existing one, so a column added to a model since the file was made is simply not there, and
         every read of that table fails: for the alarm table that is every alarm, on every tick, from the first
         start after the update. Missing columns are added here with their defaults (existing rows get them), then
-        the numbered steps in MIGRATIONS run. Never raises: a database that cannot be altered (read-only card) is
-        left as it is, and the reads that then fail are handled where they are made."""
+        the numbered steps in MIGRATIONS run, each all or nothing with the version it reaches. A file that was just
+        created (`fresh`) is at this version already. Never raises: a database that cannot be altered (read-only
+        card) is left as it is, and the reads that then fail are handled where they are made."""
         try:
-            with engine.begin() as conn:
-                have = int(conn.execute(text("PRAGMA user_version")).scalar() or 0)
-                self._add_missing_columns(conn)
-                for version in sorted(v for v in MIGRATIONS if v > have):
-                    for stmt in MIGRATIONS[version]:
-                        conn.execute(text(stmt))
-                    self.migrated.append(f"schema {version}")
-                if have > SCHEMA_VERSION:
-                    log.warning("%s was last written by a newer version (schema %d, this is %d); used as it is", self.path, have, SCHEMA_VERSION)
-                elif have != SCHEMA_VERSION:
-                    conn.execute(text(f"PRAGMA user_version = {SCHEMA_VERSION}"))
+            with engine.connect() as conn:
+                # sqlite3 only opens a transaction of its own before INSERT/UPDATE/DELETE: a step that begins with
+                # CREATE or ALTER would be committed statement by statement, and one that failed half-way could
+                # never run again ("table already exists"). So the transactions here are opened by hand.
+                dbapi = conn.connection.dbapi_connection
+                level = dbapi.isolation_level  # type: ignore[union-attr]
+                conn.commit()
+                dbapi.isolation_level = None  # type: ignore[union-attr]
+                try:
+                    have = int(conn.exec_driver_sql("PRAGMA user_version").scalar() or 0)
+                    conn.rollback()
+                    self._step(conn, lambda: self._add_missing_columns(conn))
+                    if fresh:
+                        have = SCHEMA_VERSION
+                        self._step(conn, lambda: None, version=SCHEMA_VERSION)
+                    # 0 is a database from before versions were kept: the same layout as version 1
+                    for version in sorted(v for v in MIGRATIONS if v > max(have, 1)):
+                        self._step(conn, lambda v=version: [conn.exec_driver_sql(stmt) for stmt in MIGRATIONS[v]], version=version)
+                        self.migrated.append(f"schema {version}")
+                        have = version
+                    if have > SCHEMA_VERSION:
+                        log.warning("%s was last written by a newer version (schema %d, this is %d); used as it is", self.path, have, SCHEMA_VERSION)
+                    elif have < SCHEMA_VERSION:
+                        self._step(conn, lambda: None, version=SCHEMA_VERSION)
+                finally:
+                    conn.rollback()
+                    dbapi.isolation_level = level  # type: ignore[union-attr]
             if self.migrated:
                 log.warning("database brought up to date: %s", ", ".join(self.migrated))
         except Exception as e:  # noqa: BLE001
             self.migration_error = f"{type(e).__name__}: {e}"
             log.critical("cannot bring %s up to date (%s): tables changed since it was made may not be readable", self.path, self.migration_error)
+
+    @staticmethod
+    def _step(conn: Connection, work: Any, version: int | None = None) -> None:
+        """`work` in one transaction, with the schema version it reaches (also stored in the transaction)."""
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        try:
+            work()
+            if version is not None:
+                conn.exec_driver_sql(f"PRAGMA user_version = {int(version)}")
+            conn.exec_driver_sql("COMMIT")
+        except BaseException:
+            conn.exec_driver_sql("ROLLBACK")
+            raise
+        finally:
+            conn.rollback()  # SQLAlchemy's own (empty) transaction, so the next step starts clean
 
     def _add_missing_columns(self, conn: Connection) -> None:
         insp = inspect(conn)
