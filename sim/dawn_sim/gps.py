@@ -58,7 +58,7 @@ class GpsSim:
             STATE.note(f"GPS NMEA on pty {self.pty_path} (point gpsd at it with: gpsd -N {self.pty_path})")
         self._server = await asyncio.start_server(self._client, self.host, self.gpsd_port)
         STATE.note(f"fake gpsd listening on {self.host}:{self.gpsd_port}")
-        asyncio.create_task(self._tick(), name="gps-tick")
+        self._tick_task = asyncio.create_task(self._tick(), name="gps-tick")  # held: a bare task can be collected
 
     async def _client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         writer.write(json.dumps({"class": "VERSION", "release": "3.25-sim", "rev": "3.25", "proto_major": 3, "proto_minor": 15}).encode() + b"\n")

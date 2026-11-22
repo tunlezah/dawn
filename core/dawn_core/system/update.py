@@ -8,6 +8,7 @@ from contextlib import suppress
 from pathlib import Path
 
 from ..context import DawnContext
+from ..tasks import spawn
 
 log = logging.getLogger("dawn.update")
 
@@ -61,7 +62,7 @@ async def run_update(ctx: DawnContext) -> None:
     st.update_log = "starting update…\n"
     ctx.store.touch()
     ctx.db.log_event("update_start")
-    asyncio.create_task(_run(ctx), name="dawn-update")
+    spawn(_run(ctx), name="dawn-update", owner="system")
 
 
 async def _run(ctx: DawnContext) -> None:

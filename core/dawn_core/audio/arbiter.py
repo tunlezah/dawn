@@ -13,6 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
+from ..tasks import spawn
 from .sources import AudioSource
 
 log = logging.getLogger("dawn.audio.arbiter")
@@ -219,4 +220,4 @@ class Arbiter:
                 log.exception("arbiter change callback failed")
                 return
             if asyncio.iscoroutine(r):
-                asyncio.ensure_future(r)
+                spawn(r, name="arbiter-change", owner="audio")

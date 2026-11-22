@@ -5,6 +5,42 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.7] - 2026-11-22
+
+Timers and background tasks (robustness plan WP-C).
+
+### Fixed
+- A nap timer could vanish: it cleared its saved state before asking for the ring, so a ring that would not start
+  lost the nap without a trace. The nap stays saved until the ring has started, a failure is retried every 5 s up to
+  three times (`nap_ring_failed` events), and after that the backup tone is sounded directly with the face beeping
+  along, as a ring does when the audio arbiter fails it; stop and snooze end it.
+- A sleep-timer fade step that failed (a hung PipeWire) ended the fade before the sleep source was stopped, so the
+  radio played all night. Each fade step is on its own, and stopping the source and putting the volume back always
+  happen, each bounded to 10 s.
+- Nap, snooze and sleep countdowns ran on the monotonic clock but were shown and saved in wall time, so a clock step
+  (chrony at boot) showed the wrong countdown. They are kept as monotonic deadlines and what is shown or saved is
+  derived from them. A new clock watch notices the wall clock jumping against the monotonic one (more than 2 s), logs
+  a `clock_step` event with the step and puts the right countdowns on the face at once.
+- dawn-timed's status and the face's heartbeat were judged against the wall clock, so a clock step could restart a
+  healthy dawn-timed or kiosk. The supervisor now measures how long dawn-timed's `updated_at` has stayed the same on
+  its own monotonic clock, and the WebSocket hub's `last_seen` is monotonic.
+- Fire-and-forget tasks (weather refresh, the update, the test tone, Bluetooth discoverable, two change callbacks) were
+  held by nobody, so Python could collect them part way through, and their exceptions were never logged.
+- A snooze stuck behind volume steps: the input pump handled every encoder detent in turn, so twenty detents queued
+  behind a hung `wpctl` held up a push for minutes. Consecutive detents are added up into one volume change on a
+  worker of its own, and every input is given 10 s.
+
+### Changed
+- The alarm engine keeps the alarm table and the leave date in memory instead of reading them several times a second
+  on the event loop (the leave date was read once per alarm per pass): every write re-reads at once, otherwise they
+  are read again every 30 s, so an edit to `dawn.db` from outside is seen within 30 s. Measured on a laptop with 12
+  alarms: 6.0 ms of event-loop time per second down to 0.5 ms.
+
+### Added
+- `dawn_core.tasks.spawn()`: holds a task until it ends and logs its failure with its name; the last 20 failures are
+  `system.task_failures` and a *Diagnostics → System → Background tasks* row. ruff's RUF006 now fails new dangling
+  tasks.
+
 ## [0.2.6] - 2026-11-22
 
 GPS is optional now: a box without a module never shows GPS as a problem.

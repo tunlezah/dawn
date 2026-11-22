@@ -14,6 +14,8 @@ from typing import Any
 
 import httpx
 
+from ..tasks import spawn
+
 log = logging.getLogger("dawn.bt.backend")
 
 
@@ -67,7 +69,7 @@ class BluetoothBackend:
     def _changed(self) -> None:
         r = self.on_change()
         if asyncio.iscoroutine(r):
-            asyncio.ensure_future(r)
+            spawn(r, name="bluetooth-change", owner="bluetooth")
 
 
 # --------------------------------------------------------------------------- #

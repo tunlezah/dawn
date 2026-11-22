@@ -11,6 +11,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..system.sysinfo import SysInfoService
+from ..tasks import spawn
 from .backlight import Backlight, make_backlight
 from .curve import BrightnessController, Hysteresis
 from .sensors import LuxSensor, make_sensor
@@ -58,7 +59,7 @@ class DisplayService(Service):
         st.sensor_found = self.sensor is not None
         st.backlight_driver = self.backlight.name
         self.controller.jump(self.manual_percent)
-        self._task = asyncio.create_task(self._loop(), name="display-loop")
+        self._task = spawn(self._loop(), name="display-loop")
         log.info("display: sensor=%s backlight=%s mode=%s", st.sensor, st.backlight_driver, self.mode)
 
     async def stop(self) -> None:

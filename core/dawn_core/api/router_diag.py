@@ -20,7 +20,8 @@ router = APIRouter(prefix="/api/diag", tags=["diagnostics"])
 PLOTS = ("spectrum", "nullspectrum", "impulseresponse", "constellation")
 # events worth marking on the history graphs
 TIMELINE = ["dab_restart", "dab_scan", "ring_start", "ring_fallback", "ring_restored", "alarm_fire", "alarm_missed", "hotspot_start", "hotspot_stop",
-            "diag_action", "light_wake", "sleep_mode", "reboot", "shutdown", "restore", "update_start", "wifi_connect"]
+            "diag_action", "light_wake", "sleep_mode", "reboot", "shutdown", "restore", "update_start", "wifi_connect",
+            "hotspot_retry", "gps_presence", "clock_step", "nap_ring_failed"]
 
 
 def diag(ctx: DawnContext = Depends(get_ctx)) -> DiagnosticsService:

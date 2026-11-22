@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from contextlib import suppress
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -32,6 +33,7 @@ from ..context import DawnContext
 from ..db.models import AlarmRow
 from ..services import Service
 from ..state.ui import AlarmPrep, AlarmSummary, NextAlarm
+from ..tasks import spawn
 from .buzzer import Buzzer, BuzzerSource
 from .holidays import HolidayCalendar
 from .ringing import RingRequest, RingSession
@@ -39,6 +41,7 @@ from .scheduler import AlarmSpec, due_occurrence, next_occurrence, parse_stamp
 from .schemas import AlarmIn, AlarmOut
 
 log = logging.getLogger("dawn.alarms")
+ROWS_FRESH_S = 30.0  # alarms and the leave date are read again at least this often (every write re-reads at once)
 
 PREP_EVERY_S = 20.0  # re-check a prepared alarm this often
 PREP_RETRY_S = 5.0  # and this often while something is not ready
@@ -100,6 +103,14 @@ class AlarmService(Service):
         self._disabled: set[int] = set()  # once-alarms that switched themselves off
         self._skip_spent: set[int] = set()  # alarms whose skip-next has been used
         self._rows_cache: list[AlarmRow] = []
+        # The engine reads the table and the leave date many times a second (tick, publish, next_for per alarm), on the
+        # event loop. Both are kept in memory: every write path bumps the generation (seen by the very next pass), and
+        # otherwise they are read again at most every ROWS_FRESH_S, so an edit to dawn.db from outside is seen too.
+        # (Not moved to a thread: in "memory" mode the pool would hand another thread a different, empty database.)
+        self._gen = 0
+        self._rows_read: tuple[int, float] | None = None  # (generation, monotonic) of _rows_cache
+        self._leave_read: tuple[int, float] | None = None
+        self._mono = time.monotonic  # tests replace it
         self._rows_error: str | None = None
         self._row_errors: dict[int, str] = {}  # logged once per alarm and message
         self._leave: date | None = None
@@ -120,7 +131,7 @@ class AlarmService(Service):
         self.started = time.monotonic()
         # the engine first: nothing below may keep it from running (and once only, should start() be tried again)
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="alarm-engine")
+            self._task = spawn(self._loop(), name="alarm-engine")
         try:
             self.ctx.svc(AudioService).register_factory("buzzer", self._make_buzzer)
         except KeyError:
@@ -178,20 +189,32 @@ class AlarmService(Service):
         with self.ctx.db.session() as s:
             return list(s.exec(select(AlarmRow).order_by(AlarmRow.time)).all())  # type: ignore[attr-defined]
 
+    def _invalidate(self) -> None:
+        """An alarm or the leave date was written: the next pass reads them again."""
+        self._gen += 1
+
+    def _fresh(self, read: tuple[int, float] | None) -> bool:
+        return read is not None and read[0] == self._gen and self._mono() - read[1] < ROWS_FRESH_S
+
     def rows_safe(self) -> list[AlarmRow]:
-        """The alarms as the engine sees them: read fresh (the last copy if the database cannot be read), with the
-        engine's own unsaved changes on top."""
-        try:
-            rows = self.rows()
-            self._rows_cache = rows
-            if self._rows_error:
-                log.warning("alarms can be read again")
-            self._rows_error = None
-        except Exception as e:  # noqa: BLE001
-            if self._rows_error is None:
-                log.error("cannot read the alarms (%s); using the last copy read (%d alarms)", e, len(self._rows_cache))
-            self._rows_error = str(e)
+        """The alarms as the engine sees them: read when they changed or every ROWS_FRESH_S (the last copy if the
+        database cannot be read), with the engine's own unsaved changes on top."""
+        if self._fresh(self._rows_read) and self._rows_error is None:
             rows = self._rows_cache
+        else:
+            try:
+                gen = self._gen
+                rows = self.rows()
+                self._rows_cache = rows
+                self._rows_read = (gen, self._mono())
+                if self._rows_error:
+                    log.warning("alarms can be read again")
+                self._rows_error = None
+            except Exception as e:  # noqa: BLE001
+                if self._rows_error is None:
+                    log.error("cannot read the alarms (%s); using the last copy read (%d alarms)", e, len(self._rows_cache))
+                self._rows_error = str(e)
+                rows = self._rows_cache
         for row in rows:
             rid = row.id or 0
             stored = row.last_fired_occurrence
@@ -227,12 +250,14 @@ class AlarmService(Service):
             s.add(row)
             s.commit()
             s.refresh(row)
+        self._invalidate()
         self._forget(row.id or 0)
         self.ctx.db.log_event("alarm_create", id=row.id, label=row.label, time=row.time)
         self.publish_safe(force=True)
         return row
 
     def update(self, alarm_id: int, data: AlarmIn, *, now: datetime | None = None) -> AlarmRow | None:
+        self._invalidate()
         with self.ctx.db.session() as s:
             row = s.get(AlarmRow, alarm_id)
             if not row:
@@ -266,6 +291,7 @@ class AlarmService(Service):
         return out
 
     def patch(self, alarm_id: int, **fields: Any) -> AlarmRow | None:
+        self._invalidate()
         with self.ctx.db.session() as s:
             row = s.get(AlarmRow, alarm_id)
             if not row:
@@ -279,6 +305,7 @@ class AlarmService(Service):
         return row
 
     def delete(self, alarm_id: int) -> bool:
+        self._invalidate()
         with self.ctx.db.session() as s:
             row = s.get(AlarmRow, alarm_id)
             if not row:
@@ -297,6 +324,7 @@ class AlarmService(Service):
         self._skip_spent.clear()
         self._row_errors.clear()
         self._rows_cache = []
+        self._invalidate()
 
     def _save(self, row: AlarmRow, **fields: Any) -> None:
         """A change the engine makes to an alarm. It takes effect in memory at once and is then saved; if saving
@@ -332,6 +360,9 @@ class AlarmService(Service):
         )
 
     def leave_until(self) -> date | None:
+        if self._fresh(self._leave_read):
+            return self._leave
+        gen = self._gen
         try:
             v = self.ctx.db.get("alarms.leave_until")
         except Exception:  # noqa: BLE001
@@ -340,6 +371,7 @@ class AlarmService(Service):
             self._leave = date.fromisoformat(v) if v else None
         except (TypeError, ValueError):
             self._leave = None
+        self._leave_read = (gen, self._mono())
         return self._leave
 
     def _holiday_fn(self, row: AlarmRow):
@@ -713,19 +745,36 @@ class AlarmService(Service):
         self.publish_safe(force=True)
 
     async def snooze(self) -> bool:
-        return await self.ring.snooze() if self.ring else False
+        if self.ring:
+            return await self.ring.snooze()
+        return await self.stop_orphan_tone("tap")
 
     async def stop_ringing(self) -> bool:
         if not self.ring:
-            return False
+            return await self.stop_orphan_tone("user")
         await self.ring.stop("user")
         return True
 
-    async def ring_nap(self) -> None:
+    async def stop_orphan_tone(self, why: str) -> bool:
+        """The nap timer's last resort (no ring session could be made, so it sounded the backup tone directly): a tap,
+        a hold or the button ends it like a ring."""
+        st = self.ctx.store.state.alarms
+        if self.ring is not None or st.ringing is None:
+            return False
+        log.info("backup tone without a ring session stopped (%s)", why)
+        with suppress(Exception):
+            await self.buzzer.stop()
+        kind = st.ringing.kind
+        st.ringing = None
+        self.ctx.store.touch()
+        self.ctx.db.log_event("ring_stop", ring_kind=kind, label="Nap", reason=why, tier="buzzer")
+        return True
+
+    async def ring_nap(self) -> RingSession:
         t = self.ctx.config.timers
         d = self.ctx.config.alarm_defaults
-        await self.start_ring(RingRequest(kind="nap", label="Nap", source=f"chime:{t.nap_chime}", volume=t.nap_volume, ramp_seconds=0, chime=t.nap_chime,
-                                          snooze_minutes=d.snooze_minutes, buzzer_after_s=d.buzzer_after_s))
+        return await self.start_ring(RingRequest(kind="nap", label="Nap", source=f"chime:{t.nap_chime}", volume=t.nap_volume, ramp_seconds=0,
+                                                 chime=t.nap_chime, snooze_minutes=d.snooze_minutes, buzzer_after_s=d.buzzer_after_s))
 
     async def test_ring(self, row: AlarmRow | None = None, *, source: str | None = None, label: str = "Test", volume: int = 60, ramp_seconds: int = 0) -> None:
         d = self.ctx.config.alarm_defaults
@@ -747,6 +796,7 @@ class AlarmService(Service):
     async def set_leave(self, until: str | None) -> None:
         if until:
             date.fromisoformat(until)
+        self._invalidate()
         self.ctx.db.set("alarms.leave_until", until)
         self.ctx.store.state.alarms.on_leave_until = until
         self.ctx.db.log_event("leave", until=until)

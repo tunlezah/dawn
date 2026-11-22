@@ -46,6 +46,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     events = await asyncio.to_thread(ctx.db.events_since, ctx.store.now() - timedelta(hours=24), ["ring_fallback", "alarm_missed", "ring_restored"])
     return {
         "units": units,
+        "task_failures": list(st.system.task_failures),
         "supervisor": {
             "enabled": cfg.system.supervisor.enabled, "checked_at": supervisor.checked_at if supervisor else None,
             "repairs_24h": supervisor.recent(24) if supervisor else [], "user_units": supervisor.user_states if supervisor else None,
@@ -266,6 +267,12 @@ def checks(f: dict[str, Any]) -> list[Check]:
                     "Something keeps breaking; the journal around those times says why (System → Logs). Repairs of the same thing wait longer each time it comes back.")
             else:
                 add("system", "supervisor", "Self-repair", "ok", "Nothing needed restarting in the last 24 hours." + (f" Started late: {', '.join(sorted(rec))}." if rec else ""))
+    tf = [t for t in f.get("task_failures") or [] if time.time() - float(t.get("at") or 0) < 24 * 3600]
+    if tf:
+        names = sorted({t["name"] for t in tf})
+        add("system", "tasks", "Background tasks", "warn",
+            f"{len(tf)} background task{'s' if len(tf) > 1 else ''} failed in the last 24 hours ({', '.join(names)}); last: {tf[-1]['error']}.",
+            "Each was logged with its traceback (System → Logs). Alarms are not affected by these.")
     for name, err in s["failed_services"].items():
         add("system", f"svc.{name}", f"Service {name}", "fail", f"Failed to start: {err}", "See System → Logs.")
     th = s["throttled"]

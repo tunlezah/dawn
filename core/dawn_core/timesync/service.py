@@ -18,6 +18,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import GpsInfo
+from ..tasks import spawn
 from .chrony import active_kind, parse_sources, parse_tracking, to_time_sources
 from .gps import GpsdClient, GpsFix, SerialNmeaClient
 from .presence import PresenceInputs, gps_presence
@@ -51,7 +52,7 @@ class TimeSourceService(Service):
         await self._start_gps()
         with suppress(Exception):
             await self.check_presence()
-        self._task = asyncio.create_task(self._loop(), name="chrony-poll")
+        self._task = spawn(self._loop(), name="chrony-poll")
 
     async def stop(self) -> None:
         if self._task:
@@ -105,7 +106,7 @@ class TimeSourceService(Service):
     # ---- is a receiver fitted? ---------------------------------------------
     def _device_changed(self) -> None:
         if self._presence_task is None or self._presence_task.done():
-            self._presence_task = asyncio.create_task(self.check_presence(), name="gps-presence")
+            self._presence_task = spawn(self.check_presence(), name="gps-presence")
 
     def _host_for_presence(self):  # noqa: ANN202
         if self._host is None:

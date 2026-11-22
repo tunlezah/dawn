@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..context import DawnContext
+from ..tasks import spawn
 from .host import Host
 
 log = logging.getLogger("dawn.diag.actions")
@@ -120,7 +121,7 @@ async def test_tone(ctx: DawnContext, host: Host, _v: Any) -> Result:
         if slot and slot.source.ref == ref:
             await audio.stop_level("user")
 
-    asyncio.create_task(stop_later(), name="test-tone")
+    spawn(stop_later(), name="test-tone", owner="diagnostics")
     return True, f"Playing the {ctx.config.audio.default_chime.replace('_', ' ')} chime for 4 s at volume {audio.volume}."
 
 

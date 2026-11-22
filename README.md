@@ -226,7 +226,10 @@ ringing:
 - **The radio is the alarm's while it rings or is snoozed**: retunes, decoder restarts and gain changes from the
   web wait, and the alarm has mpv players of its own, so nothing that was playing can pause it.
 - **Restarts don't drop it**: a ring or a snooze in progress is saved, and dawn-core carries on with it after a
-  crash, a watchdog restart or an update; a nap timer too. systemd's watchdog is fed only while the alarm engine
+  crash, a watchdog restart or an update; a nap timer too. A nap stays saved until its ring has started, and a ring
+  that will not start is retried and then falls back to the backup tone.
+- **Clock steps don't move it**: naps, snoozes and the sleep timer run on the monotonic clock, so chrony stepping the
+  time at boot neither shortens nor stretches them (a `clock_step` event records each step). systemd's watchdog is fed only while the alarm engine
   ticks, and never gives up restarting dawn-core.
 - **Storage failures don't stop it**: an SD card gone read-only or a full disk cannot keep an alarm from ringing
   (or make it ring twice), and one damaged alarm in the database cannot stop the others; *Diagnostics → System*
@@ -387,6 +390,8 @@ set the tuner gain, poll the time sources, play a test tone):
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
 | Wi-Fi lost | with a saved network the clock waits 15 minutes (`network.hotspot.configured_wait_s`), then starts the setup hotspot behind the clock: the face keeps its clock and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip (tap it for the Setup screen). Every 3 minutes (`retry_every_s`) it looks for the saved network and rejoins it when it is back, never while a phone is on the hotspot (`hotspot_retry` events under *Diagnostics → System*). A box never set up shows the Setup screen after 45 s. *Settings → Wi-Fi* picks another network |
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
+| An alarm or nap seemed to ring at the wrong time | the event list under *Diagnostics → System* (and *Time sync*): a `clock_step` event says the system clock jumped (and by how much) just before; `nap_ring_failed` says a nap's ring had to be retried |
+| *Diagnostics → System → Background tasks* warns | a background task raised; each one is in the journal with its traceback (`journalctl -u dawn-core \| grep "background task"`) |
 | A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 
 Logs: `journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f`, also

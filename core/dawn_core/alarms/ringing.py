@@ -88,6 +88,7 @@ class RingSession:
         self.restarted_dab = False
         self.snooze_count = 0
         self.snoozed_until: datetime | None = None
+        self._snooze_deadline: float | None = None  # monotonic; snoozed_until is derived from it when shown or saved
         self.ring_elapsed = 0.0
         self.active = False
         self.epoch = 0
@@ -139,7 +140,9 @@ class RingSession:
         now = self.ctx.store.now()
         if snoozed_until is not None and snoozed_until > now:
             self.snoozed_until = snoozed_until
-            self._snooze_task = asyncio.create_task(self._wake_from_snooze((snoozed_until - now).total_seconds()), name="ring-snooze")
+            left = (snoozed_until - now).total_seconds()
+            self._snooze_deadline = time.monotonic() + left
+            self._snooze_task = asyncio.create_task(self._wake_from_snooze(left), name="ring-snooze")
             self._started.set()
             self._publish()
             self._persist()
@@ -376,6 +379,7 @@ class RingSession:
             return False
         self.snooze_count += 1
         self.snoozed_until = self.ctx.store.now() + timedelta(minutes=self.req.snooze_minutes)
+        self._snooze_deadline = time.monotonic() + self.req.snooze_minutes * 60
         self.epoch += 1  # a rung still starting stands down; the watchdog and the ramp stop
         self._cancel_watch()
         self.audible = None
@@ -413,6 +417,7 @@ class RingSession:
         if not self.active or self._stopping:
             return
         self.snoozed_until = None
+        self._snooze_deadline = None
         self._ramp_origin = time.monotonic()  # the ramp starts again
         self.ctx.db.log_event("ring_resume", ring_kind=self.req.kind, label=self.req.label, reason=why)
         self._go(self.tier)
@@ -467,8 +472,20 @@ class RingSession:
         self._watch_task = self._ramp_task = None
 
     # ---- state -----------------------------------------------------------
+    def _derive_snooze(self) -> None:
+        """A snooze is a duration and runs on the monotonic clock; the wall-clock time shown and saved follows from it,
+        so a clock step (chrony at boot) cannot make the face show the wrong end."""
+        if self._snooze_deadline is not None and self.snoozed_until is not None:
+            self.snoozed_until = self.ctx.store.now() + timedelta(seconds=max(0.0, self._snooze_deadline - time.monotonic()))
+
+    def on_clock_step(self) -> None:
+        """The wall clock jumped (ClockWatch): show and save the snooze's end as it now is."""
+        self._publish()
+        self._persist()
+
     def snapshot(self) -> dict[str, Any]:
         """What a restart of dawn-core needs to carry on with this ring."""
+        self._derive_snooze()
         return {
             "req": asdict(self.req), "started_at": self.started_at.isoformat(), "snooze_count": self.snooze_count,
             "snoozed_until": self.snoozed_until.isoformat() if self.snoozed_until else None, "tier": self.tier,
@@ -483,6 +500,7 @@ class RingSession:
     def _publish(self) -> None:
         if self._stopping:
             return  # a stopped ring never comes back on the face
+        self._derive_snooze()
         ends = self.started_at + timedelta(minutes=self.req.max_ring_minutes)
         self.ctx.store.state.alarms.ringing = RingingInfo(
             kind="nap" if self.req.kind == "nap" else "alarm",

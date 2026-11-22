@@ -352,6 +352,7 @@ async def test_a_corrupt_row_still_rings_with_the_defaults(svc) -> None:
         s.add(AlarmRow(label="", time="06:30", repeat="daily", source="", volume=0, snooze_minutes=-3, max_ring_minutes=0,
                        enabled=True, last_fired_occurrence=BEFORE.isoformat()))
         s.commit()
+    a._invalidate()  # written behind the service's back: the engine sees it within ROWS_FRESH_S; here, at once
     await a.tick(now=AT)
     req, d = a.ring.req, ctx.config.alarm_defaults
     assert req.label == "Alarm" and req.source == "chime:gentle_bell"

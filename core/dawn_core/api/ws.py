@@ -16,8 +16,8 @@ router = APIRouter()
 class WsHub:
     def __init__(self) -> None:
         self.clients: set[WebSocket] = set()
-        # remote address, connected_at, role ("face" from the kiosk), user agent, and last_seen: time.time() of the
-        # last message the page itself sent (the face pings every 15 s, so a kiosk whose page has frozen can be told
+        # remote address, connected_at, role ("face" from the kiosk), user agent, and last_seen: time.monotonic() of
+        # the last message the page itself sent (monotonic, so a clock step cannot make a live face look absent) (the face pings every 15 s, so a kiosk whose page has frozen can be told
         # from one that is fine: the browser keeps answering protocol pings on a frozen page's behalf)
         self.info: dict[WebSocket, dict] = {}
 
@@ -26,7 +26,7 @@ class WsHub:
 
     def face_seen(self, max_age_s: float = 60.0) -> bool:
         """A face is connected and its page has spoken within `max_age_s`."""
-        now = time.time()
+        now = time.monotonic()
         return any(v.get("role") == "face" and now - v.get("last_seen", 0.0) < max_age_s for v in self.info.values())
 
     async def broadcast(self, payload: dict) -> None:
@@ -51,14 +51,14 @@ async def ws_endpoint(ws: WebSocket) -> None:
     await ws.accept()
     hub.clients.add(ws)
     hub.info[ws] = {"remote": ws.client.host if ws.client else None, "connected_at": ctx.store.iso(), "role": None,
-                    "agent": ws.headers.get("user-agent", "")[:160], "last_seen": time.time()}
+                    "agent": ws.headers.get("user-agent", "")[:160], "last_seen": time.monotonic()}
     try:
         await ws.send_text(json.dumps({"type": "state", "data": ctx.store.snapshot()}, separators=(",", ":")))
         while True:
             raw = await ws.receive_text()
             info = hub.info.get(ws)
             if info is not None:
-                info["last_seen"] = time.time()
+                info["last_seen"] = time.monotonic()
             try:
                 msg = json.loads(raw)
             except json.JSONDecodeError:

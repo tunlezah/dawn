@@ -385,6 +385,7 @@ class SystemState(BaseModel):
     booted_at: str | None = None
     config_error: str | None = None
     services: dict[str, str] = Field(default_factory=dict)
+    task_failures: list[dict] = Field(default_factory=list)  # background tasks that raised: last 20 (name, at, error)
 
 
 class BtDevice(BaseModel):

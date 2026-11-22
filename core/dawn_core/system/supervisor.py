@@ -34,6 +34,7 @@ from typing import Any
 from ..context import DawnContext
 from ..diagnostics.host import Host, make_host
 from ..services import Service
+from ..tasks import spawn
 
 log = logging.getLogger("dawn.supervisor")
 
@@ -75,6 +76,8 @@ class SupervisorService(Service):
         self.user_states: dict[str, str] | None = None
         self.repairs: deque[Repair] = deque(maxlen=REPAIRS_KEPT)
         self.checked_at: float | None = None  # time.time()
+        self._timed_value: str | None = None  # dawn-timed's last updated_at, and when (monotonic) it last changed
+        self._timed_changed = 0.0
         self._bad_since: dict[str, float] = {}  # key -> monotonic time the problem was first seen
         self._good_since: dict[str, float] = {}
         self._backoff: dict[str, float] = {}  # key -> the wait after its last repair
@@ -86,7 +89,7 @@ class SupervisorService(Service):
     async def start(self) -> None:
         self._started = time.monotonic()
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="supervisor")
+            self._task = spawn(self._loop(), name="supervisor")
 
     async def stop(self) -> None:
         if self._task:
@@ -212,7 +215,7 @@ class SupervisorService(Service):
         if not self.cfg.enabled or self.unit_states.get("dawn-timed") != "active":
             self._bad_for("timed", False, now)
             return
-        age = self._status_age(self.ctx.config.diagnostics.timed_status_file)
+        age = self._status_age(self.ctx.config.diagnostics.timed_status_file, now)
         stale = age is not None and age > self.cfg.timed_stale_s
         self._bad_for("timed", stale, now)
         if stale:
@@ -273,13 +276,16 @@ class SupervisorService(Service):
         except Exception:  # noqa: BLE001
             log.exception("audio could not be set up again after the PipeWire restart")
 
-    @staticmethod
-    def _status_age(path: str) -> float | None:
+    def _status_age(self, path: str, now: float) -> float | None:
+        """How long dawn-timed's `updated_at` has stayed the same, on the supervisor's own monotonic clock. Comparing the
+        stamp with the wall clock made a clock step (chrony at boot, by an hour) look like a hung daemon."""
         try:
-            d = json.loads(Path(path).read_text())
-            return time.time() - datetime.fromisoformat(d["updated_at"]).timestamp()
+            value = json.loads(Path(path).read_text())["updated_at"]
         except (OSError, ValueError, KeyError, TypeError):
             return None  # no file (an older dawn-timed), or not readable: nothing to judge by
+        if value != self._timed_value:
+            self._timed_value, self._timed_changed = value, now
+        return now - self._timed_changed
 
     # ---- state -----------------------------------------------------------
     def recent(self, hours: float = 24.0) -> list[dict[str, Any]]:

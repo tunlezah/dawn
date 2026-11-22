@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ..tasks import spawn
 from .ui import UIState
 
 log = logging.getLogger("dawn.state")
@@ -36,7 +37,7 @@ class StateStore:
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
         if self._task is None:
-            self._task = asyncio.create_task(self._pump(), name="state-pump")
+            self._task = spawn(self._pump(), name="state-pump")
 
     async def stop(self) -> None:
         if self._task:

@@ -15,6 +15,7 @@ from ..context import DawnContext
 from ..db.models import PresetRow
 from ..services import Service
 from ..state.ui import EqState, NowPlaying, Preset, SinkInfo
+from ..tasks import spawn
 from .arbiter import LEVELS, Arbiter, Slot
 from .backend import AudioBackend, PipeWireBackend, Sink, make_backend
 from .player import MpvPlayer, Player, SimPlayer
@@ -60,7 +61,7 @@ class AudioService(Service):
         await self.backend.set_volume(self.hw_volume(self.volume))
         await self.backend.set_mute(self.muted)
         await self.apply_eq()
-        self._task = asyncio.create_task(self._loop(), name="audio-loop")
+        self._task = spawn(self._loop(), name="audio-loop")
         self.publish()
 
     async def stop(self) -> None:

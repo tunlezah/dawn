@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import FaceMessage, UIState
+from ..tasks import spawn
 
 log = logging.getLogger("dawn.face")
 
@@ -29,7 +30,7 @@ class FaceService(Service):
     async def start(self) -> None:
         if self._task is None or self._task.done():  # start() may be tried again after a failure
             self.ctx.store.subscribe(self._on_state)
-            self._task = asyncio.create_task(self._tick(), name="face-tick")
+            self._task = spawn(self._tick(), name="face-tick")
         self.recompute()
 
     async def stop(self) -> None:

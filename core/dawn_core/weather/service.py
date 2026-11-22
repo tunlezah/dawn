@@ -16,6 +16,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import WeatherHour, WeatherState
+from ..tasks import spawn
 from .wmo import describe
 
 log = logging.getLogger("dawn.weather")
@@ -71,7 +72,7 @@ class WeatherService(Service):
     async def start(self) -> None:
         self._load_cache()
         self.publish()
-        self._task = asyncio.create_task(self._loop(), name="weather")
+        self._task = spawn(self._loop(), name="weather")
 
     async def stop(self) -> None:
         if self._task:
@@ -81,7 +82,7 @@ class WeatherService(Service):
     async def on_config(self, old: DawnConfig, new: DawnConfig) -> None:
         if old.weather != new.weather or old.location != new.location:
             self._last_pos = None
-            asyncio.create_task(self.refresh())
+            spawn(self.refresh(), name="weather-refresh", owner="weather")
 
     def _load_cache(self) -> None:
         try:

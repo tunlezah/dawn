@@ -19,6 +19,7 @@ from ..db.models import DabEnsembleRow, DabServiceRow
 from ..services import Service
 from ..state.ui import DabService as DabServiceState
 from ..state.ui import NowPlaying, ScanProgress
+from ..tasks import spawn
 from .logos import LogoCache, monogram_svg
 from .scanner import scan, scan_order, scanned_at
 from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid, welle_args
@@ -189,7 +190,7 @@ class DabService(Service):
         self.ctx.svc(AudioService).register_factory("dab", self.make_source)
         self.channel = self.ctx.db.get("dab.last_channel") or self.ctx.config.dab.default_channel
         self._write_env()
-        self._task = asyncio.create_task(self._loop(), name="dab-loop")
+        self._task = spawn(self._loop(), name="dab-loop")
         self.publish()
 
     async def stop(self) -> None:
@@ -541,7 +542,7 @@ class DabService(Service):
         if alarm_slot and alarm_slot.source.kind == "dab":
             raise RuntimeError("cannot scan while a DAB alarm is ringing")
         self._scan_stop.clear()
-        self._scan_task = asyncio.create_task(self._run_scan(), name="dab-scan")
+        self._scan_task = spawn(self._run_scan(), name="dab-scan")
         return True
 
     async def cancel_scan(self) -> None:

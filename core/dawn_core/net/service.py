@@ -14,6 +14,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import SetupInfo
+from ..tasks import spawn
 from .nmcli import (
     parse_active,
     parse_ssids,
@@ -50,7 +51,7 @@ class NetworkService(Service):
         self._sleep = asyncio.sleep  # tests replace it
 
     async def start(self) -> None:
-        self._task = asyncio.create_task(self._loop(), name="network")
+        self._task = spawn(self._loop(), name="network")
 
     async def stop(self) -> None:
         if self._task:

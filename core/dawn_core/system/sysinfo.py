@@ -10,9 +10,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, tasks
 from ..context import DawnContext
 from ..services import Service
+from ..tasks import spawn
 from . import hw as hwmod
 
 log = logging.getLogger("dawn.sysinfo")
@@ -83,7 +84,7 @@ class SysInfoService(Service):
         self.ctx.store.state.display.low_cpu = (self.hw.low_power if low == "auto" else low == "on")
         self.ctx.refresh_settings_summary()
         sd_notify("READY=1")
-        self._task = asyncio.create_task(self._loop(), name="sysinfo")
+        self._task = spawn(self._loop(), name="sysinfo")
 
     async def stop(self) -> None:
         if self._task:
@@ -134,6 +135,7 @@ class SysInfoService(Service):
             st.throttled = th
             st.throttle_flags = hwmod.throttle_flags(th)
         st.heartbeat_at = self.ctx.store.iso()
+        st.task_failures = tasks.failures()
         # heartbeat file + systemd watchdog. The watchdog is only fed while the alarm engine ticks: an engine stuck
         # on something is a reason for systemd to restart dawn-core (a ring in progress carries on afterwards).
         try:

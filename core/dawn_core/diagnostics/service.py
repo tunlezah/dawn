@@ -15,6 +15,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import DiagnosticsSummary, DiagProblem
+from ..tasks import spawn
 from . import dab, gps, network, system, timepath
 from .checks import AREAS, Check, summarise
 from .history import History
@@ -48,7 +49,7 @@ class DiagnosticsService(Service):
 
     async def start(self) -> None:
         await self._prune()
-        self._tasks = [asyncio.create_task(self._sample_loop(), name="diag-sample"), asyncio.create_task(self._check_loop(), name="diag-checks")]
+        self._tasks = [spawn(self._sample_loop(), name="diag-sample"), spawn(self._check_loop(), name="diag-checks")]
 
     async def stop(self) -> None:
         for t in self._tasks:

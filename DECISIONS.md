@@ -275,6 +275,29 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **PipeWire not answering at start is retried.** The ALSA fallback (or no backend) used to stay for the whole
   run, leaving the alarm's volume ramp and the speaker filter out of reach; every 30 s core tries PipeWire again
   and switches when it answers.
+- **Durations run on the monotonic clock, alarms on the wall clock.** A nap, a snooze and the sleep timer are "in N
+  minutes", so they are monotonic deadlines; `ends_at` and `snoozed_until` are derived from them (wall now + time
+  left) whenever they are shown or saved. An alarm is "at 06:30" and stays a wall-clock time. Across a restart the
+  monotonic clock is gone, so restoring a saved nap still uses the saved wall-clock end. A clock watch on the
+  timers' 1 s tick compares how far each clock moved; a jump of more than 2 s is a `clock_step` event (it also
+  explains "the alarm rang late" from the event log) and republishes the timers and the ring, and the saved nap is
+  re-saved with its new wall-clock end (not on every publish: that would be a database write a second).
+- **A nap is not forgotten until it rings.** It used to clear its saved state before asking for the ring. Now it
+  stays saved until `ring_nap()` returns a session; a failure is retried every 5 s, three times, and then the backup
+  tone is started directly with `face_beep`, the same last resort as a ring whose arbiter fails. Stop and snooze end
+  that tone, and it ends by itself after `max_ring_minutes`.
+- **A sleep fade always ends with the source stopped.** Each volume step is its own `try` (logged once), and stopping
+  the sleep source and restoring the volume are in a `finally`, each best effort and bounded to 10 s. A cancel
+  (the user ended the timer) is left to `cancel_sleep`, which keeps the music playing.
+- **Encoder detents are coalesced and never hold up a press.** The input pump adds up consecutive detents and hands the
+  net change to a volume worker of its own; other events are handled in order straight away, each bounded to 10 s.
+  A snooze must not wait for twenty volume steps on a hung `wpctl`, and volume and snooze do not depend on each
+  other's order.
+- **The alarm table and the leave date are read from memory.** Measured first, as planned: with 12 alarms the engine
+  spent 6 ms of event-loop time per second on SQLite (most of it the leave date, read once per alarm per pass). Every
+  write path bumps a generation, so an edit is seen by the very next pass; otherwise both are re-read every 30 s, so
+  an edit to `dawn.db` from outside is still seen. The reads stay on the event loop: in `memory` mode the connection
+  pool would give another thread a different, empty database.
 - **Sleep timer promotes the playing slot** from `user` to `sleep` (arbiter
   `move`) instead of restarting the stream; cancelling demotes it back and keeps
   playing. Nothing playing: the last-played source starts at the sleep level.
@@ -500,6 +523,14 @@ each section. Every entry says what was decided and why, so it can be revisited.
   user, no sudo), after which the sink, volume and filter chain are applied again. Every repair is a
   `supervisor_repair` event and a *Diagnostics → System → Self-repair* line, so a clock that keeps
   healing itself is still seen to be unwell.
+- **Every fire-and-forget task goes through `tasks.spawn`.** `asyncio.create_task` keeps only a weak reference, so a
+  task nobody holds can be garbage-collected mid-flight, and its exception is never logged. `spawn` holds it until it
+  ends, logs a failure with the task's name, and keeps the last 20 for *Diagnostics → System*. The long-lived service
+  loops use it too; ruff's RUF006 fails a new dangling task in CI.
+- **Staleness is measured on the monotonic clock.** dawn-timed's status was "old" when `now - updated_at` was large,
+  and the face's heartbeat when `time.time() - last_seen` was; a clock step (chrony at boot, an hour after a power
+  cut) made a healthy daemon or kiosk look hung. The supervisor now times how long dawn-timed's `updated_at` value
+  has stayed the same, and the WebSocket hub stamps the face's messages with `time.monotonic()`.
 - **A service inside dawn-core that fails to start is started again** (`ServiceRegistry.retry_failed`,
   asked by the supervisor): PipeWire's tools not answering within the 30 s start timeout left the audio
   service without its loop (no sink refresh, no PipeWire retry) until the next restart of dawn-core;
