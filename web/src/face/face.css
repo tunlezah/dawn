@@ -86,6 +86,10 @@
 .f-bar .cell .label .bottom { font-size: 3.3vmin; color: var(--fg-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .f-bar .cell > .f-icon { width: 6vmin; height: 6vmin; color: var(--fg-muted); }
 .f-bar .cell .dot { flex: none; }
+/* the "No Wi-Fi" notice takes the time-source dots' place in the standby strip; a tap opens the Setup screen */
+.f-bar .f-setup-chip { justify-content: flex-start; min-width: 0; flex: 1 1 auto; color: var(--fg); }
+.f-bar .f-setup-chip .f-icon { width: 6vmin; height: 6vmin; color: var(--f-warn, var(--warn)); }
+.f-bar .f-setup-chip .label { text-align: left; }
 
 /* ---- ambient clock (standby, idle while playing) ------------------------- */
 .f-ambient { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 6vmin var(--f-pad-x) var(--f-pad-y); box-sizing: border-box; text-align: center; gap: 0; }
@@ -146,6 +150,9 @@
 .f-sleep-clock .a .f-icon { width: 4.2vmin; height: 4.2vmin; }
 .f-sleep-clock .a .f-icon.w { width: 5.6vmin; height: 5.6vmin; margin-left: 2vmin; }
 .f-sleep-clock .a .f-icon.w:first-child { margin-left: 0; }
+.f-sleep-clock .n { appearance: none; background: transparent; border: 0; color: inherit; font: inherit; font-size: 3.2vmin; font-weight: 500; opacity: 0.8;
+  display: flex; align-items: center; gap: 1.2vmin; padding: 1vmin 1.6vmin; cursor: inherit; }
+.f-sleep-clock .n .f-icon { width: 3.6vmin; height: 3.6vmin; }
 .round .f-sleep { border-radius: 50%; }
 .round .f-sleep-clock .t { font-size: 12vmin; }
 @media (prefers-reduced-motion: reduce) { .f-sleep-clock { transition: none; } }

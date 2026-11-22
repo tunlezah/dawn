@@ -499,6 +499,19 @@ each section. Every entry says what was decided and why, so it can be revisited.
   `wait_for_network_s` without a network; the face shows the SSID, password and
   a Wi-Fi QR code, and the control UI at `http://10.42.0.1:8080/` can join a network.
   The hotspot stops by itself when connectivity returns.
+- **The setup hotspot tells "never set up" from "set up but out of reach".** While wlan0 is the access point there is
+  no upstream, so a hotspot started because the router rebooted for a minute could never notice the router was back:
+  the clock latched off its own network, and the face put a white QR code on the bedside all night. A box with a saved
+  Wi-Fi profile (`nmcli con show`, any 802-11-wireless profile but `dawn-hotspot`; the SSID read from the profile,
+  since Raspberry Pi Imager names its profile "preconfigured") waits 15 minutes before starting the hotspot, and then
+  every 3 minutes drops it, rescans and joins the saved network if it is in view, putting the hotspot back otherwise.
+  It never drops the hotspot while `iw station dump` lists a client (someone is setting the clock up); if `iw` cannot
+  answer, no client is assumed, because a clock that never looks for its network again is the worse failure. A box
+  with no saved network behaves as before: 45 s, then the full Setup screen.
+- **On a box with a saved network the hotspot is a chip, not a screen.** `face.mode` stays Standby or sleep, and a
+  small "No Wi-Fi · setup: Dawn-XXXX" notice sits in the standby strip and under the sleep clock. Tapping it opens the
+  Setup screen for the menu timeout; at night its QR code is dark on a dim amber card rather than black on white
+  (phone cameras read it at that contrast).
 - **Backups are one JSON document** (config + alarms, presets, DAB scan results,
   KV settings, minus auth secrets). Restore replaces the tables and the config
   atomically enough for a bedside clock and republishes state.

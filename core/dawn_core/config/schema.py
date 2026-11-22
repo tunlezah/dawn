@@ -412,7 +412,15 @@ class HotspotConfig(StrictModel):
     enabled: bool = True
     ssid: str | None = Field(None, description="Hotspot SSID (null = <name>-<serial4>).")
     password: str = Field("dawnsetup", min_length=8, max_length=63)
-    wait_for_network_s: int = Field(45, ge=5, le=600, description="Seconds without a network before the hotspot starts.")
+    wait_for_network_s: int = Field(45, ge=5, le=600, description="Seconds without a network before the hotspot starts, on a box with no saved Wi-Fi network.")
+    configured_wait_s: int = Field(
+        900, ge=10, le=86400,
+        description="Seconds without a network before the hotspot starts when a Wi-Fi network is saved (a router rebooting at night is not a reason to go into setup).",
+    )
+    retry_every_s: int = Field(
+        180, ge=10, le=3600,
+        description="With a saved Wi-Fi network and the hotspot up: how often to drop the hotspot briefly and look for that network (never while a phone is connected to the hotspot).",
+    )
     interface: str = "wlan0"
 
 

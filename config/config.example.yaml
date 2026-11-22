@@ -380,8 +380,12 @@ network:
     # Hotspot SSID (null = <name>-<serial4>).
     ssid: null
     password: dawnsetup
-    # Seconds without a network before the hotspot starts.
+    # Seconds without a network before the hotspot starts, on a box with no saved Wi-Fi network.
     wait_for_network_s: 45
+    # Seconds without a network before the hotspot starts when a Wi-Fi network is saved (a router rebooting at night is not a reason to go into setup).
+    configured_wait_s: 900
+    # With a saved Wi-Fi network and the hotspot up: how often to drop the hotspot briefly and look for that network (never while a phone is connected to the hotspot).
+    retry_every_s: 180
     interface: wlan0
   online_check_host: 1.1.1.1
   online_check_interval_s: 30

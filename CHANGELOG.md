@@ -5,6 +5,33 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.5] - 2026-11-22
+
+The first of the robustness work packages planned from the review of 0.2.4: a Wi-Fi drop no longer latches the
+setup hotspot.
+
+### Fixed
+- A Wi-Fi drop of 45 s (a router rebooting at 3 am) started the setup hotspot, and while wlan0 was the access point
+  the clock could never see its network again: it stayed off the home Wi-Fi (no NTP, weather, AirPlay or control UI)
+  until someone stepped in, and the bedside face showed a full-screen "Connect to set up" page with a white QR code
+  all night. A box with a saved Wi-Fi network now waits `network.hotspot.configured_wait_s` (15 minutes) before
+  starting the hotspot, and while it is up looks for the saved network every `network.hotspot.retry_every_s`
+  (3 minutes): it drops the hotspot, rescans, joins the network if it is in view and puts the hotspot back if not,
+  never while a phone is connected to the hotspot. Each look is a `hotspot_retry` event. A box that was never set up
+  behaves as before (hotspot after 45 s, full Setup screen).
+- On a box with a saved network the hotspot is a notice, not a takeover: the face keeps Standby or the sleep clock
+  and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip in the standby strip and under the sleep clock. Tapping the
+  chip opens the Setup screen for `inputs.touch_menu_timeout_s`; at night its QR code is drawn on a dim amber card
+  instead of white.
+- A wired network with its cable plugged in counts as a network, so it never starts the hotspot.
+
+### Added
+- `network.hotspot.configured_wait_s` and `network.hotspot.retry_every_s`; `system.network.wifi_configured` and
+  `face.setup_open` in the state; `POST /api/face/setup`.
+- The installer adds `iw` (to see whether a phone is on the hotspot).
+- Simulator: *Wi-Fi saved* and *Phone on hotspot* toggles; while the simulated hotspot is up the network reads as
+  offline, as it does on the Pi.
+
 ## [0.2.4] - 2026-10-25
 
 Fixes from the second reliability assessment in `docs/RELIABILITY-ASSESSMENT.md`; the tests and soak tools behind it

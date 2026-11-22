@@ -282,3 +282,26 @@ test('sleep mode with the screen off: black until a tap shows the clock', async 
     await config({ display: { sleep: SLEEP_DEFAULTS } });
   }
 });
+
+test('a saved Wi-Fi network that drops: the clock stays, the hotspot is a chip, and it rejoins by itself', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/face');
+  await hub({ wifi_configured: true, network_online: false });
+  // the simulator's configured_wait_s is 20 s; on a Pi it is 15 minutes
+  await waitFor((s) => s.system.network.hotspot_active, 60_000);
+  const s = await waitFor((x) => x.face.mode === 'standby');
+  expect(s.system.network.wifi_configured).toBe(true);
+  await expect(page.getByTestId('setup-chip')).toBeVisible();
+  await expect(page.getByTestId('setup-chip')).toContainText('No Wi-Fi');
+  await expect(page.locator('.face-screen', { hasText: 'Connect to set up' })).toHaveCount(0);
+  // the chip opens the full Setup screen; a tap puts the clock back
+  await page.getByTestId('setup-chip').tap();
+  await waitFor((x) => x.face.mode === 'setup');
+  await expect(page.locator('.face-screen')).toContainText('Connect to set up');
+  await page.locator('.face-root').tap();
+  await waitFor((x) => x.face.mode === 'standby');
+  // the router comes back: the retry finds the saved network and drops the hotspot
+  await hub({ network_online: true });
+  await waitFor((x) => !x.system.network.hotspot_active && x.system.network.online, 60_000);
+  await expect(page.getByTestId('setup-chip')).toHaveCount(0);
+});

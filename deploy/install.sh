@@ -109,7 +109,7 @@ PKGS=(
   libpopt-dev libconfig-dev libavahi-client-dev libssl-dev libsoxr-dev libplist-dev libsodium-dev
   libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev libglib2.0-dev libplist-utils libswresample-dev systemd-dev
   mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth alsa-utils
-  bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
+  bluez gpsd gpsd-clients chrony avahi-daemon network-manager iw i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
 )
 apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"

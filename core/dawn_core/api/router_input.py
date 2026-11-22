@@ -31,6 +31,10 @@ class DemoBody(BaseModel):
     mode: str | None = None
 
 
+class SetupBody(BaseModel):
+    open: bool = True
+
+
 @router.post("/input")
 async def inject(body: InputBody, ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
     if body.event not in EVENTS:
@@ -49,6 +53,13 @@ async def face_touch(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
 async def face_menu(body: MenuBody, ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
     ctx.svc(FaceService).set_menu(body.open, body.page)
     return {"ok": True}
+
+
+@router.post("/face/setup")
+async def face_setup(body: SetupBody, ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
+    """The face's "No Wi-Fi" chip: show the full Setup screen (SSID, password, QR code) for a while."""
+    ok = ctx.svc(FaceService).open_setup(body.open)
+    return {"ok": ok, "face": ctx.store.state.face.mode}
 
 
 @router.post("/face/menu/activity")

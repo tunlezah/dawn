@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { fmtDate, fmtDayTime, fmtTime, useNow } from '../../shared/time';
 import { WeatherIcon } from '../../shared/icons/weather';
-import { IconAlarm } from './icons';
+import { IconAlarm, IconWifiOff } from './icons';
+import { actions } from '../../shared/api';
 import { SOURCE_LABEL } from './Header';
 import { VolumeCell } from './ControlBar';
 import { Scene } from './Scene';
@@ -31,8 +32,9 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   // burn-in: in Standby the strip fades after a while without a touch; a touch, or a change worth seeing
   // (a time source lost or back, the network, the next alarm), brings it back
   const autohide = !compact && s.display.strip_autohide_s > 0;
+  const noWifi = noWifiChip(s);
   const attention = [live('gps') || s.time_sources.gps.fix >= 2, live('dab') || s.dab.sync, live('ntp'), s.system.network.online,
-    s.time_sources.synced, next?.at ?? '', s.face.menu_open, s.face.wake_until ?? ''].join('|');
+    s.time_sources.synced, next?.at ?? '', s.face.menu_open, s.face.wake_until ?? '', noWifi ?? ''].join('|');
   const [stripFaded, setStripFaded] = useReactState(false);
   useEffect(() => {
     setStripFaded(false);
@@ -75,6 +77,8 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
                 <div className="bottom">{[np.title || np.station, np.artist || (np.title ? np.station : np.dls)].filter(Boolean).join('  •  ')}</div>
               </div>
             </>
+          ) : noWifi ? (
+            <SetupChip ssid={noWifi} />
           ) : (
             <div className="face-dots" title="time sources: green = live">
               <span className={`dot ${live('gps') || s.time_sources.gps.fix >= 2 ? 'dot-live' : 'dot-off'}`} />GPS
@@ -96,5 +100,27 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
         <VolumeCell readOnly />
       </div>
     </div>
+  );
+}
+
+/** The setup hotspot is up on a box that has a saved Wi-Fi network (it lost it, most likely a router restarting):
+ *  a notice, never a takeover. Returns the hotspot's SSID when the chip should show. */
+export function noWifiChip(s: { system: { network: { hotspot_active: boolean; hotspot_ssid: string | null; wifi_configured: boolean | null } } }): string | null {
+  const n = s.system.network;
+  return n.hotspot_active && n.wifi_configured ? (n.hotspot_ssid || 'hotspot') : null;
+}
+
+/** Tapping it opens the full Setup screen (QR code, password) for a while; nothing else on the face reacts. */
+export function SetupChip({ ssid, inline = false }: { ssid: string; inline?: boolean }) {
+  const open = (e: { stopPropagation(): void }) => { e.stopPropagation(); actions.faceSetup(true).catch(() => {}); };
+  if (inline) return <button type="button" className="n f-setup-chip" data-testid="setup-chip" onPointerDown={open}><IconWifiOff className="f-icon" />No Wi-Fi · setup: {ssid}</button>;
+  return (
+    <button type="button" className="f-setup-chip" data-testid="setup-chip" onPointerDown={open}>
+      <IconWifiOff className="f-icon" />
+      <div className="label">
+        <div className="top">No Wi-Fi</div>
+        <div className="bottom">setup: {ssid}</div>
+      </div>
+    </button>
   );
 }

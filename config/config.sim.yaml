@@ -176,6 +176,7 @@ dab:
   - 10A
   - 10B
   scan_dwell_s: 2.5
+  scan_signal_wait_s: 40.0
   sync_timeout_s: 5.0
   audio_timeout_s: 15.0
   gain: null
@@ -235,6 +236,8 @@ network:
     ssid: null
     password: dawnsetup
     wait_for_network_s: 45
+    configured_wait_s: 20
+    retry_every_s: 20
     interface: wlan0
   online_check_host: 1.1.1.1
   online_check_interval_s: 30
@@ -250,6 +253,14 @@ web:
 system:
   heartbeat_interval_s: 5
   watchdog: false
+  supervisor:
+    enabled: true
+    check_interval_s: 15
+    face_absent_s: 150
+    welle_dead_s: 45
+    timed_stale_s: 300
+    min_backoff_s: 60
+    max_backoff_s: 1800
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
   vcgencmd_binary: vcgencmd
   update_repo_dir: .
@@ -259,6 +270,7 @@ system:
   log_tail_lines: 200
 diagnostics:
   history_days: 7
+  events_days: 90
   check_interval_s: 60
   timed_status_file: ./var/run/dawn-timed/status.json
 sim:

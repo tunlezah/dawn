@@ -143,7 +143,8 @@ SDR antenna lead: the SHIM's output is unfiltered ~300 kHz PWM.
    calibration matrix (`/etc/udev/rules.d/98-dawn-touch.rules`), then reboot.
 3. The face reaches standby within about 40 s. Without a network it starts a
    setup hotspot and shows its SSID, password and a Wi-Fi QR code; join it and
-   open `http://10.42.0.1:8080/` to pick a Wi-Fi network.
+   open `http://10.42.0.1:8080/` to pick a Wi-Fi network. (Once a Wi-Fi network is saved, losing it later does not
+   take over the face; see *Wi-Fi lost* under [Troubleshooting](#troubleshooting).)
 4. Open `http://dawn.local:8080/` (core listens on port 8080; nothing answers on 80):
    - **Radio → Scan** to find DAB+ ensembles (Australian capital channels first),
      star stations as presets.
@@ -253,6 +254,7 @@ broken** (`system.supervisor`):
 | The PipeWire session (`pipewire`, `wireplumber`, `pipewire-pulse`, user units) | `failed`, or wireplumber `inactive`; then the sink, volume and filter chain are set up again |
 | `dawn-timed` | its status file is older than `timed_stale_s` (5 min) while the unit says active |
 | Any unit left `failed` (`shairport-sync`, `nqptp`, `gpsd`, `chrony`, `bluetooth`, `avahi-daemon`, `NetworkManager`, Dawn's own) and Dawn's own units seen `inactive` for 30 s | only units that are enabled on this box; a failed unit means systemd gave up on it |
+| The setup hotspot (`network.hotspot`) | on a box with a saved Wi-Fi network: taken down every 3 minutes to look for that network, and the network joined when it is in view; never while a phone is connected to the hotspot |
 | A part of dawn-core that could not start at boot (PipeWire tools not answering yet, bluetoothd late, a busy GPIO chip) | its `start()` is tried again after 1, 2, 4… minutes (15 at most) until it works |
 
 Every restart waits until the problem has been seen for a while, is held back by a backoff that doubles while the
@@ -291,7 +293,7 @@ make sim       # simulators + core + dawn-timed; web UI on http://localhost:8080
 ```
 
 - Face: http://localhost:8080/face · Control UI: http://localhost:8080/
-- Sim hub (lux slider, GPS/DAB/SDR/network toggles, phone buttons for AirPlay and
+- Sim hub (lux slider, GPS/DAB/SDR/network/saved Wi-Fi/phone-on-hotspot toggles, phone buttons for AirPlay and
   Bluetooth, encoder/button/touch, and faults for *Diagnostics*: DAB SNR, GPS signal,
   GPS unplugged, Wi-Fi level, failed services): http://localhost:8099/
 - Sleep mode is off in the simulator's config so the tests do not depend on the hour;
@@ -382,7 +384,7 @@ set the tuner gain, poll the time sources, play a test tone):
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
-| Wi-Fi lost | the setup hotspot appears after 45 s; *Settings → Wi-Fi* |
+| Wi-Fi lost | with a saved network the clock waits 15 minutes (`network.hotspot.configured_wait_s`), then starts the setup hotspot behind the clock: the face keeps its clock and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip (tap it for the Setup screen). Every 3 minutes (`retry_every_s`) it looks for the saved network and rejoins it when it is back, never while a phone is on the hotspot (`hotspot_retry` events under *Diagnostics → System*). A box never set up shows the Setup screen after 45 s. *Settings → Wi-Fi* picks another network |
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
 | A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 

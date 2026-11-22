@@ -24,6 +24,8 @@ class SimState:
     dab_snr: float = 14.5  # dB; below ~8 errors start, below ~3 the ensemble is lost
     sdr_present: bool = True  # fake welle up at all
     network_online: bool = True
+    wifi_configured: bool = True  # a Wi-Fi network is saved (False = a box never set up)
+    hotspot_client: bool = False  # a phone is connected to the setup hotspot
     audio_flowing: bool = True  # fake PipeWire stream activity
     chrony_active: str = "GPS"  # which fake source chrony prefers
     channel: str = "9A"
@@ -64,6 +66,8 @@ class SimState:
             "units_down": self.units_down,
             "sdr_present": self.sdr_present,
             "network_online": self.network_online,
+            "wifi_configured": self.wifi_configured,
+            "hotspot_client": self.hotspot_client,
             "audio_flowing": self.audio_flowing,
             "chrony_active": self.chrony_active,
             "channel": self.channel,

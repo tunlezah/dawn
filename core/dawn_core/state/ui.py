@@ -32,6 +32,9 @@ class FaceState(BaseModel):
     peek_until: str | None = None  # screen-off sleep: a tap shows the sleep clock until then
     shutdown_countdown: int | None = None
     setup: SetupInfo | None = None
+    # the full Setup screen on a box that has a saved Wi-Fi network: only when someone taps the "No Wi-Fi" chip
+    # (it closes again after inputs.touch_menu_timeout_s); a box never set up shows it whenever the hotspot is up
+    setup_open: bool = False
 
 
 class SetupInfo(BaseModel):
@@ -348,6 +351,7 @@ class NetworkInfo(BaseModel):
     interface: str | None = None
     hotspot_active: bool = False
     hotspot_ssid: str | None = None
+    wifi_configured: bool | None = None  # a Wi-Fi network is saved (None = not looked yet: only asked when offline)
     mdns_name: str | None = None
 
 

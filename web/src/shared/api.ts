@@ -60,4 +60,5 @@ export const actions = {
   faceMenu: (open: boolean, page?: string) => api.post('/api/face/menu', { open, page: page ?? null }),
   menuActivity: () => api.post('/api/face/menu/activity'),
   dismissMessage: () => api.post('/api/face/dismiss'),
+  faceSetup: (open: boolean) => api.post('/api/face/setup', { open }),
 };

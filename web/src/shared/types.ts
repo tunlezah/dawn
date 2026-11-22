@@ -9,7 +9,7 @@ export interface FaceMessage { title: string; body: string; level: 'info' | 'war
 export interface SetupInfo { ssid: string; password: string | null; url: string; qr_payload: string }
 export interface FaceState {
   mode: FaceMode; message: FaceMessage | null; hint: string | null; menu_open: boolean; menu_page: string | null;
-  wake_until: string | null; peek_until: string | null; shutdown_countdown: number | null; setup: SetupInfo | null;
+  wake_until: string | null; peek_until: string | null; shutdown_countdown: number | null; setup: SetupInfo | null; setup_open: boolean;
 }
 export interface DisplayState {
   brightness: number; target: number; mode: 'auto' | 'manual'; manual_until: string | null; night: boolean;
@@ -88,7 +88,7 @@ export interface WeatherState {
   is_day: boolean; t_min: number | null; t_max: number | null; sunrise: string | null; sunset: string | null; fetched_at: string | null;
   units: string; location_label: string | null; hours: WeatherHour[];
 }
-export interface NetworkInfo { online: boolean; ip: string | null; ssid: string | null; interface: string | null; hotspot_active: boolean; hotspot_ssid: string | null; mdns_name: string | null }
+export interface NetworkInfo { online: boolean; ip: string | null; ssid: string | null; interface: string | null; hotspot_active: boolean; hotspot_ssid: string | null; wifi_configured: boolean | null; mdns_name: string | null }
 export interface SystemState {
   model: string; hostname: string; cpu_temp_c: number | null; uptime_s: number; load1: number | null; mem_used_percent: number | null;
   throttled: number | null; throttle_flags: string[];
@@ -113,7 +113,7 @@ export interface UIState {
 
 export const EMPTY_STATE: UIState = {
   version: 0, now: '', tz: 'Australia/Sydney',
-  face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, peek_until: null, shutdown_countdown: null, setup: null },
+  face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, peek_until: null, shutdown_countdown: null, setup: null, setup_open: false },
   display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true,
     sleep: false, sleep_reason: null, sleep_enabled: true, sleep_next_start: null, sleep_next_end: null, sleep_screen_off: false, sleep_jump_s: 120, sleep_level: 72, room: null,
     orbit: true, strip_autohide_s: 120, scene_daily: true },
@@ -125,7 +125,7 @@ export const EMPTY_STATE: UIState = {
   presets: [],
   time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null, hours: [] },
-  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
+  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },
