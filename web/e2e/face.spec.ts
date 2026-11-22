@@ -305,3 +305,17 @@ test('a saved Wi-Fi network that drops: the clock stays, the hotspot is a chip, 
   await waitFor((x) => !x.system.network.hotspot_active && x.system.network.online, 60_000);
   await expect(page.getByTestId('setup-chip')).toHaveCount(0);
 });
+
+test('no GPS module: the face shows a hollow "not fitted" ring, not a fault', async ({ page }) => {
+  test.setTimeout(60_000);
+  try {
+    await hub({ gps_present: false });
+    await post('/api/diag/action/gps.forget');
+    await waitFor((s) => s.time_sources.gps.presence === 'absent', 20_000);
+    await page.goto('/face');
+    await expect(page.locator('.face-dots .dot-absent')).toHaveAttribute('title', 'no GPS module');
+  } finally {
+    await hub({ gps_present: true });
+  }
+  await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
+});

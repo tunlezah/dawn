@@ -284,8 +284,15 @@ class TimeSource(BaseModel):
     live: bool = False
 
 
+GpsPresence = Literal["present", "missing", "absent", "off"]
+
+
 class GpsInfo(BaseModel):
-    available: bool = False
+    # present: a receiver is fitted and seen; missing: one was seen within time_sources.gps.forget_after_days and is
+    # gone now (a warning); absent: none fitted (or forgotten), which is fine: GPS is optional; off: disabled
+    presence: GpsPresence = "absent"
+    last_seen_at: str | None = None
+    available: bool = False  # connected to gpsd (true with no receiver too: gpsd is socket-activated)
     fix: int = 0  # 0 none, 2 2D, 3 3D
     lat: float | None = None
     lon: float | None = None

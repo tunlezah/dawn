@@ -51,6 +51,8 @@
 .dot.dot-live { width: 2.6vmin; height: 2.6vmin; background: var(--f-live); box-shadow: 0 0 8px var(--f-live); }
 .face-dots { display: flex; gap: 2.4vmin; font-size: 3.3vmin; color: var(--fg-muted); align-items: center; letter-spacing: 0.08em; font-weight: 600; }
 .face-dots .dot { width: 2.2vmin; height: 2.2vmin; }
+/* no GPS module fitted: a hollow ring in the "not fitted" yellow, never a grey or amber dot that reads as a fault */
+.face-dots .dot.dot-absent { background: transparent; box-shadow: inset 0 0 0 0.45vmin var(--absent); }
 
 /* ---- content -------------------------------------------------------------- */
 .f-body { flex: 1; display: flex; align-items: center; gap: 6vmin; min-height: 0; }

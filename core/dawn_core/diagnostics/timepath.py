@@ -96,7 +96,8 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
         "activity": asdict(a) if (a := parse_activity(act or "")) else None,
         "shm": [asdict(s) for s in shm if s.unit is not None], "servers": servers, "dns": dns, "online": online,
         "timed": timed, "timed_age_s": round(timed_age, 1) if timed_age is not None else None, "timed_error": timed_err,
-        "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"]},
+        "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"],
+                "presence": gps.get("presence", "present"), "required": gps.get("required", False)},
         "dab": {"enabled": dab["enabled"], "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
                 "ensemble": (dab["mux"] or {}).get("ensemble")},
     }
@@ -159,7 +160,15 @@ def checks(f: dict[str, Any]) -> list[Check]:
         by_kind.setdefault(s["kind"], []).append(s)
     shm = {s["unit"]: s for s in f["shm"]}
 
-    if f["gps"]["enabled"]:
+    presence = f["gps"].get("presence", "present") if f["gps"]["enabled"] else "off"
+    if presence in ("absent", "off") and not (presence == "absent" and f["gps"].get("required")):
+        # no module (or GPS switched off): one quiet row, no "No GPS fix" or shared-memory warnings; the GPS tab says why
+        c.append(Check("time.gps.source", "time", "chrony uses GPS", "off",
+                       "Not in use: no GPS module." if presence == "absent" else "Not in use: GPS is switched off.", None, [], "GPS → chrony"))
+    elif presence in ("missing", "absent"):
+        c.append(Check("time.gps.source", "time", "chrony uses GPS", "fail" if f["gps"].get("required") else "warn",
+                       "GPS module not found (see GPS).", None, [], "GPS → chrony"))
+    else:
         g = "GPS → chrony"
         fix = f["gps"]["has_fix"]
         add("gps.fix", g, "GPS fix", "ok" if fix else "fail", "Receiver has a fix." if fix else "No GPS fix (see GPS).")
@@ -174,7 +183,7 @@ def checks(f: dict[str, Any]) -> list[Check]:
                 "chrony creates it at start ('refclock SHM 0'), and gpsd (running as root) writes it. Restart chrony, then gpsd.",
                 ["time.restart_chrony", "gps.restart"])
         _source_step(c, "time.gps.source", g, "chrony uses GPS", (by_kind.get("gps") or [None])[0], fix,
-                     "Add 'refclock SHM 0 refid GPS prefer trust' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
+                     "Add 'refclock SHM 0 refid GPS prefer' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
                      "gpsd has a fix but chrony gets no samples from SHM 0: restart gpsd, then chrony.", ["gps.restart", "time.restart_chrony"])
 
     if f["dab"]["enabled"]:

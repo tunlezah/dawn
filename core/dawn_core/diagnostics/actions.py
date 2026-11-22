@@ -77,6 +77,13 @@ async def gps_restart(ctx: DawnContext, host: Host, _v: Any) -> Result:
     return await _unit(host, "gpsd")
 
 
+async def gps_forget(ctx: DawnContext, host: Host, _v: Any) -> Result:
+    from ..timesync.service import TimeSourceService
+
+    ctx.svc(TimeSourceService).forget_gps()
+    return True, "Forgotten. With no receiver plugged in, GPS now shows as not fitted."
+
+
 async def chrony_restart(ctx: DawnContext, host: Host, _v: Any) -> Result:
     return await _unit(host, "chrony")
 
@@ -123,6 +130,7 @@ ACTIONS: dict[str, tuple[str, Fn]] = {
     "dab.retune": ("Tune to a channel", dab_retune),
     "dab.gain": ("Set tuner gain", dab_gain),
     "gps.restart": ("Restart gpsd", gps_restart),
+    "gps.forget": ("Forget the GPS module", gps_forget),
     "time.restart_chrony": ("Restart chrony", chrony_restart),
     "time.burst": ("Poll all time sources now", chrony_burst),
     "time.restart_timed": ("Restart dawn-timed", timed_restart),

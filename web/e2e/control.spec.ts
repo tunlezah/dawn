@@ -93,22 +93,45 @@ test('diagnostics: from More; the overview, DAB live signal and plots, and the t
   await expect(page.locator('figure', { hasText: 'Where they are' }).locator('svg')).toBeVisible();
 });
 
-test('diagnostics: an unplugged GPS shows as a problem with its fix, and clears', async ({ page }) => {
+test('diagnostics: no GPS module is "not fitted", never a problem; plugged in, unplugged (missing) and forgotten', async ({ page }) => {
+  test.setTimeout(90_000);
+  const gpsProblem = (s: any) => s.diagnostics.problems.some((p: any) => p.id.startsWith('gps.') || p.id.startsWith('time.gps'));
   try {
+    // no module, and none remembered: "not fitted"
     await hub({ gps_present: false });
+    await post('/api/diag/action/gps.forget');
+    await waitFor((s) => s.time_sources.gps.presence === 'absent', 20_000);
     await post('/api/diag/run');
+    expect(gpsProblem(await state())).toBe(false);
     await page.goto('/diagnostics');
-    await expect(page.getByRole('heading', { name: 'Needs attention' })).toBeVisible();
-    await expect(page.locator('[data-check="gps.receiver"]').first()).toContainText('GPS receiver');
     await page.getByRole('tab', { name: /GPS/ }).click();
-    await page.getByRole('button', { name: 'Restart gpsd' }).first().click();
-    await expect(page.getByRole('status').first()).toContainText('gpsd');
+    await expect(page.getByText('No GPS module fitted').first()).toBeVisible();
+    await expect(page.locator('[data-check="gps.receiver"]').getByRole('img', { name: 'Not fitted' })).toBeVisible();
+    await page.goto('/settings');
+    await expect(page.getByTestId('settings-gps-chip')).toHaveText('No GPS module');
+    await expect(page.getByText('No GPS module detected. Plug one in and it appears here.')).toBeVisible();
+    // plugged in: present, and the switches appear
+    await hub({ gps_present: true });
+    await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
+    await expect(page.getByText('Use GPS for time and location')).toBeVisible();
+    // unplugged: a module that was there and has gone is a warning, with Forget
+    await hub({ gps_present: false });
+    await waitFor((s) => s.time_sources.gps.presence === 'missing', 20_000);
+    await expect(page.getByTestId('settings-gps-chip')).toHaveText('Missing');
+    await post('/api/diag/run');
+    const s = await state();
+    expect(s.diagnostics.problems.some((p: any) => p.id === 'gps.receiver')).toBe(true);
+    await page.goto('/diagnostics');
+    await page.getByRole('tab', { name: /GPS/ }).click();
+    await expect(page.locator('[data-check="gps.receiver"]').getByRole('img', { name: 'Warning' })).toBeVisible();
+    await page.getByRole('button', { name: 'Forget the GPS module' }).first().click();
+    await waitFor((x) => x.time_sources.gps.presence === 'absent', 10_000);
   } finally {
     await hub({ gps_present: true });
   }
+  await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
   await post('/api/diag/run');
-  const s = await state();
-  expect(s.diagnostics.problems.some((p: any) => p.id === 'gps.receiver')).toBe(false);
+  expect(gpsProblem(await state())).toBe(false);
 });
 
 test('display: sleep mode can be turned on, sent to sleep and woken from the web', async ({ page }) => {

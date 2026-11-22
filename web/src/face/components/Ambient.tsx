@@ -9,6 +9,7 @@ import { VolumeCell } from './ControlBar';
 import { Scene } from './Scene';
 import { sceneWeather, type SceneWeather } from '../forecast';
 import { DEMO_WEATHER } from '../../shared/demo';
+import { gpsLook } from '../../shared/gps';
 
 /** Ambient clock: standby, and the idle view while something plays. Huge clock, date, place + weather, next alarm,
  *  and a status strip along the bottom (what is playing / time sources, alarm, volume). */
@@ -33,7 +34,8 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   // (a time source lost or back, the network, the next alarm), brings it back
   const autohide = !compact && s.display.strip_autohide_s > 0;
   const noWifi = noWifiChip(s);
-  const attention = [live('gps') || s.time_sources.gps.fix >= 2, live('dab') || s.dab.sync, live('ntp'), s.system.network.online,
+  const gps = gpsLook(s.time_sources.gps, live('gps'));
+  const attention = [s.time_sources.gps.presence, live('gps') || s.time_sources.gps.fix >= 2, live('dab') || s.dab.sync, live('ntp'), s.system.network.online,
     s.time_sources.synced, next?.at ?? '', s.face.menu_open, s.face.wake_until ?? '', noWifi ?? ''].join('|');
   const [stripFaded, setStripFaded] = useReactState(false);
   useEffect(() => {
@@ -81,7 +83,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
             <SetupChip ssid={noWifi} />
           ) : (
             <div className="face-dots" title="time sources: green = live">
-              <span className={`dot ${live('gps') || s.time_sources.gps.fix >= 2 ? 'dot-live' : 'dot-off'}`} />GPS
+              {gps && <><span className={`dot ${gps.dot === 'ok' ? 'dot-live' : `dot-${gps.dot}`}`} title={gps.title} />GPS</>}
               <span className={`dot ${live('dab') || s.dab.sync ? 'dot-live' : 'dot-off'}`} />DAB
               <span className={`dot ${live('ntp') ? 'dot-live' : 'dot-off'}`} />NTP
               <span className={`dot ${s.system.network.online ? 'dot-live' : 'dot-off'}`} />NET

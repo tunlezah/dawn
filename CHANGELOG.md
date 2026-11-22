@@ -5,6 +5,35 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.6] - 2026-11-22
+
+GPS is optional now: a box without a module never shows GPS as a problem.
+
+### Changed
+- GPS presence is tracked as `time_sources.gps.presence`: **present** (a u-blox receiver on USB, `/dev/gps0`, a
+  device gpsd has activated, or NMEA the serial reader parsed in the last 30 s), **missing** (seen within
+  `time_sources.gps.forget_after_days`, 14, and gone now), **absent** (none fitted, or forgotten) or **off**. A bare
+  `/dev/ttyACM0` is not evidence, and neither is a connection to gpsd (it is socket-activated, so it answers with no
+  receiver). It is looked at every 30 s and at once when gpsd reports a device change; a change is a `gps_presence`
+  event.
+- Without a module, Diagnostics shows one *GPS receiver* check with the new status **not fitted** (a hollow yellow
+  ring and the word, its own colour well clear of the warning amber) instead of a red ✕, the Time sync tab shows
+  "Not in use: no GPS module" instead of "No GPS fix" and a shared-memory warning, and nothing about GPS reaches the
+  Home card or *Needs attention*. The face's GPS dot is a hollow yellow ring (`title="no GPS module"`); with GPS
+  switched off it is hidden. A receiver that was there and has gone is **missing**: an amber warning with *Restart
+  gpsd* and the new *Forget the GPS module* fix (`gps.forget`). `time_sources.gps.required: true` makes either a
+  fault.
+- Settings → Location shows the GPS state; its switches (*Use GPS for time and location*, *Prefer GPS position*)
+  appear once a module has been seen. Status reads "No GPS module", "Missing", "No fix", "2D fix" or "3D fix".
+- chrony: the GPS refclock is `prefer` without `trust`, so a NMEA-only receiver with a bad week or date cannot override
+  NTP and DAB. Re-run the installer (or `dawn-update`) to install the new `chrony.conf`.
+- `time_sources.gps.source: auto` is re-checked every 5 minutes while on the serial reader, and moves to gpsd when it
+  answers, so two readers never share one tty.
+
+### Added
+- `time_sources.gps.required`, `time_sources.gps.forget_after_days`; `presence` and `last_seen_at` in the GPS state.
+- Simulator: the fake gpsd sends gpsd's hot-plug `DEVICE` messages when the receiver is plugged in or pulled out.
+
 ## [0.2.5] - 2026-11-22
 
 The first of the robustness work packages planned from the review of 0.2.4: a Wi-Fi drop no longer latches the

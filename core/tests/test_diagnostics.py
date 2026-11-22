@@ -91,11 +91,12 @@ def test_gps_healthy() -> None:
 
 
 def test_gps_unplugged_reports_the_cause_only() -> None:
-    f = gps_facts(usb=[], paths={"/dev/gps0": False}, last_msg_age_s=40.0)
+    # a receiver that was there and has gone is "missing": one warning with its fixes, not a chain of red
+    f = gps_facts(usb=[], paths={"/dev/gps0": False}, last_msg_age_s=40.0, presence="missing", last_seen_age_s=120.0)
     f["detail"] = {**f["detail"], "driver": None, "has_fix": False, "mode": 0, "satellites": []}
     c = by_id(gps.checks(f))
-    assert c["gps.receiver"].status == "fail" and c["gps.data"].status == "fail"
-    assert "gps.signal" not in c and "gps.fix" not in c  # consequences, not causes
+    assert c["gps.receiver"].status == "warn" and c["gps.receiver"].actions == ["gps.restart", "gps.forget"]
+    assert list(c) == ["gps.receiver"]  # consequences, not causes
 
 
 def test_gps_weak_sky() -> None:
@@ -285,7 +286,7 @@ async def test_diag_api_degrades_without_hardware(client: AsyncClient) -> None:
     r = await client.post("/api/diag/run")
     assert r.status_code == 200
     rep = r.json()
-    assert rep["checks"] and set(rep["counts"]) == {"fail", "warn", "info", "ok", "off"}
+    assert rep["checks"] and set(rep["counts"]) == {"fail", "warn", "absent", "info", "ok", "off"}
     assert {c["area"] for c in rep["checks"]} >= {"dab", "gps", "time", "network", "system"}
     s = (await client.get("/api/state")).json()
     assert s["diagnostics"]["updated_at"] and s["diagnostics"]["fail"] + s["diagnostics"]["warn"] >= 1

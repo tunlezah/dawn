@@ -394,9 +394,25 @@ each section. Every entry says what was decided and why, so it can be revisited.
   can run unprivileged as user `dawn`; the segment layout follows ntpd's
   `struct shmTime`, with the `time_t` width chosen for the platform (64-bit, or
   32-bit builds older than Debian 13) and overridable with `--time-t-bytes`.
-- **GPS SHM 0 is `prefer trust` with `delay 0.2`**: NMEA-only receivers deliver
-  the sentence tens of ms after the second; the fixed delay bounds the error and
-  chrony still steps the clock with `makestep 1 3` on boot.
+- **GPS SHM 0 is `prefer` with `delay 0.2`, not `trust`**: NMEA-only receivers deliver the sentence tens of ms after
+  the second; the fixed delay bounds the error and chrony still steps the clock with `makestep 1 3` on boot. `trust`
+  was dropped once GPS became optional: on a box that has NTP and DAB too, a receiver reporting a bad week or date
+  (week-number rollover, a cold start) must be outvoted, not believed. The `refclock SHM 0` line stays, harmless
+  without a receiver.
+- **GPS is optional, and "not fitted" is a state, not a fault.** `presence` is present / missing / absent / off,
+  worked out by a pure function (`timesync/presence.py`) from a u-blox vendor id on USB, `/dev/gps0`, a device gpsd
+  has activated, or NMEA the serial reader parsed in the last 30 s. A bare `/dev/ttyACM0` is not counted (any CDC
+  device makes one), and neither is `GpsInfo.available`, which means "connected to gpsd" and is true with no receiver
+  because gpsd is socket-activated. A receiver seen within `forget_after_days` (14) and gone is *missing*, an amber
+  warning (it was there, so its loss is news); after that, or after *Forget the GPS module*, it is *absent*. The last
+  sighting is a KV row written at most once a minute. `required: true` turns both into faults for builds that need
+  GPS.
+- **"Not fitted" has its own status, colour and shape.** Diagnostics gains `absent`, ranked between `warn` and
+  `info`; `summarise` still counts only `fail` and `warn` as problems, so it never reaches the Home card. It is a
+  hollow ring in a yellow (`--absent`: `#eadb5a` dark, `#8a7300` light, `#a8952e` night) chosen at least 3:1 against
+  the backgrounds and at least 19 CIEDE2000 from each palette's amber `--warn`, so it is never read as a warning, and
+  never colour alone (the ring shape, the ○ icon and the words "Not fitted"). The time chain collapses to one quiet
+  `off` row ("Not in use: no GPS module"), so only the GPS tab shows the yellow.
 
 ## Weather and control UI
 

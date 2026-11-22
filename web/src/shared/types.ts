@@ -71,7 +71,9 @@ export interface DabState {
 }
 export interface Preset { id: number; label: string; source: string; logo_url: string | null; position: number }
 export interface TimeSource { name: string; kind: 'gps' | 'dab' | 'ntp' | 'other'; state: string; selected: boolean; reach: number; last_rx_s: number | null; offset_ms: number | null; live: boolean }
+export type GpsPresence = 'present' | 'missing' | 'absent' | 'off';
 export interface GpsInfo {
+  presence: GpsPresence; last_seen_at: string | null;
   available: boolean; fix: number; lat: number | null; lon: number | null; sats_used: number; sats_seen: number; time: string | null; device: string | null;
   source: string; hdop: number | null; snr_avg: number | null;
 }
@@ -123,7 +125,7 @@ export const EMPTY_STATE: UIState = {
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
   dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown' },
   presets: [],
-  time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
+  time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { presence: 'absent', last_seen_at: null, available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null, hours: [] },
   system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {} },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },

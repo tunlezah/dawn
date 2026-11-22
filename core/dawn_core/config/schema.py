@@ -384,12 +384,17 @@ class TimersConfig(StrictModel):
 # Time sources, GPS, weather, network, system, web
 # --------------------------------------------------------------------------- #
 class GpsConfig(StrictModel):
-    enabled: bool = True
+    enabled: bool = Field(True, description="Use a GPS receiver for time and location when one is fitted (it is optional).")
     source: Literal["auto", "gpsd", "serial", "sim", "none"] = "auto"
     gpsd_host: str = "127.0.0.1"
     gpsd_port: int = Field(2947, ge=1, le=65535)
     serial_device: str = "/dev/ttyACM0"
     serial_baud: int = 9600
+    required: bool = Field(False, description="This build must have a GPS receiver: a missing one is a fault (red) instead of 'not fitted'.")
+    forget_after_days: int = Field(
+        14, ge=1, le=3650,
+        description="A receiver seen within this many days and now gone is 'missing' (a warning); after that it is 'not fitted'.",
+    )
 
 
 class TimeSourcesConfig(StrictModel):

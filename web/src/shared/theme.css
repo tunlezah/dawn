@@ -14,6 +14,9 @@
   --ok: #3ecf8e;
   --warn: #f5a524;
   --err: #ff5d5d;
+  /* "not fitted" (an optional part that is not there, e.g. no GPS module): a yellow kept well clear of --warn's amber
+     (CIEDE2000 >= 19 in every palette) and >= 3:1 against --bg and --bg-elev; always with its own hollow-ring shape */
+  --absent: #eadb5a;
   --border: #242a38;
   --ring: #f5a52466;
   --radius: 16px;
@@ -28,6 +31,7 @@
   --fg-faint: #a3abbb;
   --accent: #d97706;
   --accent-fg: #ffffff;
+  --absent: #8a7300;
   --border: #dfe3ea;
   --ring: #d9770666;
   color-scheme: light;
@@ -44,6 +48,7 @@
   --ok: #c2541f;
   --warn: #ffb347;
   --err: #ff5d5d;
+  --absent: #a8952e;
   --border: #2a0f08;
   --ring: #ff7a3d66;
 }
@@ -66,6 +71,7 @@
   --color-ok: var(--ok);
   --color-warn: var(--warn);
   --color-err: var(--err);
+  --color-absent: var(--absent);
   --color-border: var(--border);
   --font-sans: 'Inter Variable', 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
   --radius-card: var(--radius);
@@ -109,6 +115,7 @@ body.face { overflow: hidden; user-select: none; cursor: none; touch-action: non
   .dot-off { background: var(--fg-faint); }
   .dot-warn { background: var(--warn); }
   .dot-err { background: var(--err); }
+  .dot-absent { background: transparent; box-shadow: inset 0 0 0 2px var(--absent); }
   .switch { @apply relative inline-flex h-7 w-12 items-center rounded-full transition; background: var(--fg-faint); }
   .switch[data-on='true'] { background: var(--accent); }
   .switch > span { @apply inline-block h-5 w-5 rounded-full bg-white transition; transform: translateX(4px); }

@@ -117,6 +117,18 @@ def _sdr_vidpid() -> str | None:
     return None
 
 
+UBLOX_VID = "1546"
+
+
+def gps_on_usb(root: str = "/sys/bus/usb/devices") -> bool:
+    """A u-blox receiver on USB (vendor 1546), from sysfs alone. A bare /dev/ttyACM0 proves nothing: any CDC device
+    makes one."""
+    for dev in glob.glob(os.path.join(root, "*")):
+        if (_read(os.path.join(dev, "idVendor")) or "").strip() == UBLOX_VID:
+            return True
+    return False
+
+
 def sdr_on_usb() -> tuple[bool, str | None]:
     """(present, generic name) from the USB ids alone, without opening the stick."""
     vidpid = _sdr_vidpid()

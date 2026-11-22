@@ -9,11 +9,13 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from typing import Literal
 
-Status = Literal["ok", "warn", "fail", "info", "off"]
+# "absent": an optional part that is not fitted (no GPS module). Not a problem: it never counts as one, and it has
+# its own colour and shape (a hollow yellow ring) so it is not read as the amber of a warning.
+Status = Literal["ok", "warn", "fail", "absent", "info", "off"]
 AREAS = ["dab", "gps", "time", "network", "audio", "airplay", "bluetooth", "display", "inputs", "weather", "system"]
 AREA_TITLES = {"dab": "DAB radio", "gps": "GPS", "time": "Time sync", "network": "Network", "audio": "Audio", "airplay": "AirPlay",
                "bluetooth": "Bluetooth", "display": "Display", "inputs": "Inputs", "weather": "Weather", "system": "System"}
-RANK = {"fail": 0, "warn": 1, "info": 2, "ok": 3, "off": 4}
+RANK = {"fail": 0, "warn": 1, "absent": 2, "info": 3, "ok": 4, "off": 5}
 
 
 @dataclass

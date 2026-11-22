@@ -58,7 +58,7 @@ auto-detected at boot and the fallbacks stay supported:
 | Board | Raspberry Pi 4 B, Raspberry Pi OS Lite 64-bit (Oct 2026); passive heatsink, no fan | Pi 5 (22-pin DSI cable, 27 W PSU), Pi 3B+, Pi Zero 2 W (HyperPixel/HDMI only, low-CPU face) |
 | Power | 5 V 3 A USB-C (KSA-15E-052300HA); ~7–8 W typical, ~13 W worst case | — |
 | DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork), on a short USB extension | any RTL2832U/R820T2 stick (tuner type logged) |
-| GPS | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS | none (DAB and NTP time) |
+| GPS (optional) | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS; picked up whenever it is plugged in | none: DAB and NTP time, the location from *Settings*; shown as "not fitted" (a hollow yellow ring), never as a fault |
 | Display | Waveshare 4.3" DSI 43H-800480-IPS-CT, 800×480, Goodix touch over the ribbon, sysfs backlight 0–255 (`dtoverlay=vc4-kms-dsi-7inch`) | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
 | Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10, behind a window facing the room | VEML7700, BH1750; none (sunrise/sunset schedule) |
 | Audio | Pimoroni Audio Amp SHIM (MAX98357A, I2S, mono ~2.5 W into 4 Ω; the installer default) → Dayton PC68-4 2.5" 4 Ω full-range in a ~0.5 L sealed box | USB DAC; HiFiBerry DAC/MiniAmp; 3.5 mm jack; HDMI |
@@ -323,7 +323,7 @@ deploy/      install.sh, systemd units, udev, chrony, gpsd, PipeWire/WirePlumber
 config/      config.example.yaml (generated from the schema), config.sim.yaml
 ```
 
-Time: gpsd → `SHM 0` (prefer, trust), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
+Time: gpsd → `SHM 0` (prefer; optional), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
 chrony `makestep 1 3`. The face shows a dot per source (green live, grey stale).
 Alarms are evaluated against the system clock only and remember the last
 occurrence they handled, so a clock step never double-fires or skips one.
@@ -381,6 +381,7 @@ set the tuner gain, poll the time sources, play a test tone):
 | Random resets, SD errors, *Status → Hardware → Power and throttling* warns | `vcgencmd get_throttled`: bit 0x10000 = under-voltage since boot; use the 5 V 3 A supply directly, no hub |
 | Time not synced | *Diagnostics → Time sync* (the first failing step in each chain); `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
 | No GPS fix | *Diagnostics → GPS*: satellites heard and their signal (four or more above 30 dBHz for a reliable fix), the sky plot shows what the window or walls block |
+| GPS shows "Not fitted" (hollow yellow ring) | no GPS module is plugged in, which is fine: GPS is optional. Plug a u-blox USB receiver in and it is picked up within 30 s. "Missing" (amber) means one was there and has gone: plug it back in, or *Forget the GPS module* if it was removed on purpose |
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |

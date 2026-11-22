@@ -359,12 +359,17 @@ time_sources:
   # Source considered stale after this long without samples.
   stale_after_s: 600
   gps:
+    # Use a GPS receiver for time and location when one is fitted (it is optional).
     enabled: true
     source: auto
     gpsd_host: 127.0.0.1
     gpsd_port: 2947
     serial_device: /dev/ttyACM0
     serial_baud: 9600
+    # This build must have a GPS receiver: a missing one is a fault (red) instead of 'not fitted'.
+    required: false
+    # A receiver seen within this many days and now gone is 'missing' (a warning); after that it is 'not fitted'.
+    forget_after_days: 14
 
 weather:
   enabled: true

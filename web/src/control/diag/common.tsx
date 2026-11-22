@@ -9,6 +9,7 @@ const STATUS: Record<CheckStatus, { icon: string; word: string; cls: string }> =
   ok: { icon: '✓', word: 'OK', cls: 'text-ok' },
   warn: { icon: '!', word: 'Warning', cls: 'text-warn' },
   fail: { icon: '✕', word: 'Problem', cls: 'text-err' },
+  absent: { icon: '○', word: 'Not fitted', cls: 'text-absent' },
   info: { icon: 'i', word: 'Info', cls: 'text-muted' },
   off: { icon: '–', word: 'Off', cls: 'text-faint' },
 };
@@ -106,7 +107,7 @@ export function CheckList({ checks, onChanged, onGo, empty = 'Nothing to check h
   );
 }
 
-const ORDER: CheckStatus[] = ['fail', 'warn', 'info', 'ok', 'off'];
+const ORDER: CheckStatus[] = ['fail', 'warn', 'absent', 'info', 'ok', 'off'];
 export function worst(checks: Check[]): CheckStatus {
   return ORDER.find((s) => checks.some((c) => c.status === s && s !== 'info')) ?? (checks.some((c) => c.status === 'info') ? 'info' : 'ok');
 }

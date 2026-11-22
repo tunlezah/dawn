@@ -223,6 +223,8 @@ time_sources:
     gpsd_port: 2947
     serial_device: /dev/ttyACM0
     serial_baud: 9600
+    required: false
+    forget_after_days: 14
 weather:
   enabled: true
   provider: open-meteo

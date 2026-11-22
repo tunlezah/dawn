@@ -28,6 +28,21 @@ export function GpsPanel({ tz, h24, hours, onHours }: { tz: string; h24: boolean
   const fixTone: Tone = !d ? 'off' : d.has_fix && d.mode >= 3 ? 'ok' : d.has_fix ? 'warn' : 'err';
   const st = (t: Tone) => (t === 'ok' ? 'ok' : t === 'warn' ? 'warn' : t === 'err' ? 'fail' : 'off') as 'ok' | 'warn' | 'fail' | 'off';
 
+  // GPS is optional: with no module fitted there is no sky and no signal to chart, just what that means
+  if (f?.presence === 'absent' && !f.required) {
+    return (
+      <div className="space-y-4">
+        <Card title="No GPS module fitted" action={<StatusWord status="absent" />}>
+          <p className="text-sm text-muted">GPS is optional. Without it, time comes from DAB (the ensemble's broadcast time) and the internet,
+            and sunrise, sunset and the weather use the location set under Settings → Location.</p>
+          <p className="text-sm text-muted mt-2">Plug in a u-blox USB receiver at any time: it is picked up automatically within about 30 seconds,
+            and the live readings, sky plot and history appear here.</p>
+        </Card>
+        <Card title="Checks"><CheckList checks={live.data?.checks ?? []} onChanged={live.reload} /></Card>
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-4">
       <Card title="Live" action={<span className="text-xs text-muted">{live.error ? `⚠ ${live.error}` : 'updates every second'}</span>}>

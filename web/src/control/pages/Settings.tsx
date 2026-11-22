@@ -3,6 +3,8 @@ import { useState } from '../../shared/store';
 import { Card, Row, Switch, Spinner, Empty } from '../../shared/components';
 import { api, ApiError } from '../../shared/api';
 import { ConfigEditor } from '../components/ConfigEditor';
+import { gpsChipClass, gpsLook } from '../../shared/gps';
+import { runAction } from '../diag/api';
 
 const STATES = ['ACT', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'];
 const ZONES = ['Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Adelaide', 'Australia/Perth', 'Australia/Hobart', 'Australia/Darwin', 'Australia/Canberra', 'Australia/Broken_Hill', 'Australia/Lord_Howe', 'Pacific/Auckland', 'UTC'];
@@ -13,6 +15,7 @@ interface Cfg {
   holidays: { region: string; scope: string };
   web: { auth: { pin: string | null } };
   display: { clock_24h: boolean };
+  time_sources: { gps: { enabled: boolean } };
 }
 interface WifiNet { ssid: string; signal: number; security: string; active: boolean }
 
@@ -34,6 +37,8 @@ export function Settings() {
 
   if (!cfg) return <div className="p-6"><Spinner /></div>;
   const loc = { ...cfg.location, ...draft };
+  const gps = gpsLook(s.time_sources.gps);
+  const gpsPresence = s.time_sources.gps.presence;
 
   return (
     <div className="space-y-4">
@@ -51,7 +56,16 @@ export function Settings() {
       </Card>
 
       <Card title="Location" action={<span className="chip">{s.settings.location_source === 'gps' ? 'using GPS fix' : 'using these values'}</span>}>
-        <Row label="Prefer GPS position" hint="Falls back to the values below without a fix"><Switch on={cfg.location.prefer_gps} onChange={(v) => patch({ location: { prefer_gps: v } })} /></Row>
+        {/* GPS is optional: its switches only appear once a module has been seen; with none, one quiet line */}
+        <Row label="GPS" hint={gpsPresence === 'missing' && s.time_sources.gps.last_seen_at ? `last seen ${fmtSeen(s.time_sources.gps.last_seen_at, s.tz)}` : gpsPresence === 'off' ? 'switched off' : undefined}>
+          <span className={gpsChipClass(gps)} data-testid="settings-gps-chip">{gps ? gps.chip : 'Off'}</span>
+        </Row>
+        {gpsPresence === 'absent' && <div className="text-sm text-muted py-1">No GPS module detected. Plug one in and it appears here.</div>}
+        {gpsPresence !== 'absent' && <Row label="Use GPS for time and location"><Switch on={cfg.time_sources.gps.enabled} onChange={(v) => patch({ time_sources: { gps: { enabled: v } } })} /></Row>}
+        {(gpsPresence === 'present' || gpsPresence === 'missing') && <Row label="Prefer GPS position" hint="Falls back to the values below without a fix"><Switch on={cfg.location.prefer_gps} onChange={(v) => patch({ location: { prefer_gps: v } })} /></Row>}
+        {gpsPresence === 'missing' && (
+          <div className="py-1"><button className="btn btn-sm" onClick={async () => { const r = await runAction('gps.forget'); setMsg(r.message); setTimeout(() => setMsg(null), 3000); }}>Forget GPS module</button></div>
+        )}
         <div className="grid grid-cols-2 gap-2 py-2">
           <label className="text-sm text-muted">Latitude<input type="number" step="0.0001" value={loc.latitude} onChange={(e) => setDraft({ ...draft, latitude: Number(e.target.value) })} /></label>
           <label className="text-sm text-muted">Longitude<input type="number" step="0.0001" value={loc.longitude} onChange={(e) => setDraft({ ...draft, longitude: Number(e.target.value) })} /></label>
@@ -107,4 +121,8 @@ export function Settings() {
       </Card>
     </div>
   );
+}
+
+function fmtSeen(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat('en-AU', { timeZone: tz, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 }

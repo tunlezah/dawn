@@ -1,6 +1,7 @@
 import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { Card, Dot, Slider } from '../../shared/components';
+import { gpsLook } from '../../shared/gps';
 import { fmtDate, fmtTime, useNow, fmtDayTime, fmtIn, fmtDuration } from '../../shared/time';
 import { actions } from '../../shared/api';
 import { navigate } from '../../shared/router';
@@ -15,6 +16,7 @@ export function Home() {
   const np = s.now_playing;
   const playing = s.audio.active_source !== 'none';
   const art = np.artwork_url || np.slide_url || np.logo_url;
+  const gps = gpsLook(s.time_sources.gps);
 
   return (
     <div className="space-y-4">
@@ -25,7 +27,7 @@ export function Home() {
             <div className="text-muted mt-1">{fmtDate(now, s.tz)}</div>
           </div>
           <div className="flex gap-3 text-xs text-muted">
-            <span className="flex items-center gap-1"><Dot state={s.time_sources.gps.fix >= 2 ? 'ok' : 'off'} />GPS</span>
+            {gps && <span className="flex items-center gap-1"><Dot state={gps.dot} title={gps.title} />GPS</span>}
             <span className="flex items-center gap-1"><Dot state={s.dab.sync ? 'ok' : 'off'} />DAB</span>
             <span className="flex items-center gap-1"><Dot state={s.system.network.online ? 'ok' : 'off'} />Net</span>
           </div>

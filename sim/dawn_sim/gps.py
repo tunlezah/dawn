@@ -73,9 +73,7 @@ class GpsSim:
                     flat = txt.replace(" ", "")
                     enable = '"enable":true' in flat
                     pps = '"pps":true' in flat
-                    dev = {"class": "DEVICE", "path": "/dev/gps0", "driver": "u-blox", "subtype": "SW 1.00 (59842),HW 00070000",
-                           "activated": ACTIVATED, "flags": 1, "native": 0, "bps": 9600, "parity": "N", "stopbits": 1, "cycle": 1.00}
-                    writer.write(json.dumps({"class": "DEVICES", "devices": [dev] if STATE.gps_present else []}).encode() + b"\n")
+                    writer.write(json.dumps({"class": "DEVICES", "devices": [_device()] if STATE.gps_present else []}).encode() + b"\n")
                     writer.write(json.dumps({"class": "WATCH", "enable": enable, "json": True, "nmea": False, "raw": 0, "scaled": False, "timing": False, "split24": False, "pps": pps}).encode() + b"\n")
                     await writer.drain()
                     if enable:
@@ -117,8 +115,18 @@ class GpsSim:
                 "clock_nsec": int((clock % 1) * 1e9), "precision": -1, "shm": "NTP0", "qErr": 0}
 
     async def _tick(self) -> None:
+        plugged = STATE.gps_present
         while True:
             now = datetime.now(UTC)
+            if STATE.gps_present != plugged:
+                # as gpsd does on a hot-plug: a DEVICE message, activated or (unplugged) with activated 0
+                plugged = STATE.gps_present
+                msg = _device() if plugged else {"class": "DEVICE", "path": "/dev/gps0", "activated": 0}
+                for w in list(self._clients):
+                    try:
+                        w.write(json.dumps(msg).encode() + b"\n")
+                    except (ConnectionResetError, OSError):
+                        pass
             if self._master_fd is not None:
                 data = nmea.burst(now, STATE.gps_lat, STATE.gps_lon, STATE.gps_fix, STATE.gps_sats)
                 try:
@@ -141,6 +149,11 @@ class GpsSim:
             for w in dead:
                 self._clients.pop(w, None)
             await asyncio.sleep(1.0)
+
+
+def _device() -> dict:
+    return {"class": "DEVICE", "path": "/dev/gps0", "driver": "u-blox", "subtype": "SW 1.00 (59842),HW 00070000",
+            "activated": ACTIVATED, "flags": 1, "native": 0, "bps": 9600, "parity": "N", "stopbits": 1, "cycle": 1.00}
 
 
 def _iso() -> str:
