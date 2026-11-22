@@ -1,0 +1,16 @@
+[Unit]
+Description=Dawn software update (fast-forward, install, ordered restarts, rollback if dawn-core is not healthy)
+Documentation=https://github.com/tunlezah/dawn
+# Started by dawn-core (`systemctl start --no-block dawn-update.service`, the one sudo rule for it). As a unit of its
+# own it runs in its own cgroup: restarting dawn-core no longer kills the update part way through.
+
+[Service]
+Type=oneshot
+# written by dawn-core: DAWN_UPDATE_BRANCH=main
+EnvironmentFile=-/var/lib/dawn/update.env
+Environment=DAWN_UPDATE_LOG_BY_SYSTEMD=1
+ExecStart=/bin/sh -c 'exec /usr/local/bin/dawn-update "${DAWN_UPDATE_BRANCH:-main}"'
+StandardOutput=append:/var/log/dawn-update.log
+StandardError=append:/var/log/dawn-update.log
+# a web build on a Zero 2 W is slow; a hung step is still ended
+TimeoutStartSec=45min

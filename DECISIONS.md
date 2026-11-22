@@ -612,6 +612,21 @@ each section. Every entry says what was decided and why, so it can be revisited.
   small "No Wi-Fi · setup: Dawn-XXXX" notice sits in the standby strip and under the sleep clock. Tapping it opens the
   Setup screen for the menu timeout; at night its QR code is dark on a dim amber card rather than black on white
   (phone cameras read it at that contrast).
+- **The updater is a unit of its own, and it checks what it installed.** Started from dawn-core it shared dawn-core's
+  cgroup, and restarting dawn-core killed it. `dawn-update.service` (oneshot) is started with
+  `systemctl start --no-block`, the only sudo rule the update needs, with the branch passed through a file dawn-core
+  writes (nothing from the browser reaches the command line). It restarts in a fixed order: the decoder side, then
+  dawn-core, which must answer `/api/health` with the new version and `alarms_alive` within 120 s, then the face, so
+  the kiosk only loads a bundle from a dawn-core known to be healthy. Any failure after the merge rolls back the
+  commit, the web bundle (only when this run swapped one in: `dist.old` is cleared first) and the Python packages,
+  and leaves `update-result.json` for dawn-core to report.
+- **The web bundle is built beside the one in use.** `vite build --outDir dist.new`, swapped in only when
+  `index.html` and `face/index.html` both exist: a failed build leaves the face (and its backup alarm) as it was.
+- **No update into an alarm.** An update restarts dawn-core and the radio; it is refused (409) during a ring, a snooze
+  or a nap and within `update_quiet_minutes` (60) of the next alarm or its light wake.
+- **apt only when the package list changed.** `install.sh --update` hashes the list and skips `apt-get update/install`
+  when it matches the last install: the step needs the network, and failing there after the code moved would only
+  cost a rollback.
 - **Backups are one JSON document** (config + alarms, presets, DAB scan results,
   KV settings, minus auth secrets). Restore replaces the tables and the config
   atomically enough for a bedside clock and republishes state.

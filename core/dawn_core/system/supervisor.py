@@ -143,6 +143,11 @@ class SupervisorService(Service):
         self.ctx.liveness.register("supervisor", max_age_s=4 * self.cfg.check_interval_s + 120, restart=self.restart_loop)
         self.ctx.liveness.task("supervisor", self._task)
         self.ctx.liveness.on_restart = self.note_loop_restart
+        if not getattr(self, "_update_resumed", False):
+            self._update_resumed = True
+            from . import update
+
+            update.resume(self.ctx)  # an update that restarted us is followed again; a finished one's result is shown
 
     async def stop(self) -> None:
         if self._task:

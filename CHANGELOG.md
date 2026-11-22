@@ -5,6 +5,35 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.10] - 2026-11-22
+
+Safe software updates (robustness plan WP-F).
+
+### Fixed
+- **An update from the UI no longer kills itself part way through.** `dawn-update` ran as a child of dawn-core, in its
+  cgroup, so `install.sh` restarting dawn-core killed the update too: the kiosk was never restarted onto the new
+  bundle and the log never said "done". It now runs as its own unit, `dawn-update.service`; dawn-core writes the
+  branch to `/var/lib/dawn/update.env`, starts it with `systemctl start --no-block dawn-update.service` (the one sudo
+  rule for it; the direct `dawn-update` rule is gone) and follows `/var/log/dawn-update.log`, picking it up again
+  after the update restarts it.
+- **A web build that fails no longer leaves the face blank.** Vite emptied `web/dist` before writing, so a failed or
+  OOM-killed build (likely on a Zero 2 W) left no face at the next kiosk restart, and no face backup alarm with it.
+  The build goes to `web/dist.new` (`deploy/build-web.sh`) and is swapped in only when both pages are there; the old
+  bundle is kept as `web/dist.old`.
+- **A bad update is rolled back.** After restarting dawn-core, `dawn-update` waits up to 120 s for `/api/health` to
+  report the new version with its alarm engine alive; if it does not, or anything fails after the merge, it puts back
+  the old commit, the old web bundle and the old Python packages, restarts dawn-core and the face, logs
+  "ROLLED BACK" and writes `/var/lib/dawn/update-result.json`. dawn-core shows the result at its next start (a face
+  toast, *Settings → Software update*, *Diagnostics → System → Software update*).
+
+### Changed
+- Restart order: `dawn-timed` and `dawn-dab`, then `dawn-core` (healthy first), then `dawn-face` last so the kiosk
+  loads the new bundle. `install.sh --no-restart` installs without restarting anything.
+- **No updates near an alarm**: `POST /api/system/update` answers 409 while a ring, snooze or nap is on, or when the
+  next alarm (or its light wake) is within `system.update_quiet_minutes` (60); Settings says why.
+- `install.sh --update` skips apt when the package list is the one installed last time
+  (`/var/lib/dawn/apt-pkgs.sha256`), so a network-dependent step cannot fail an update after the code has moved.
+
 ## [0.2.9] - 2026-11-22
 
 DAB and the RTL-SDR Blog V4 (robustness plan WP-E).

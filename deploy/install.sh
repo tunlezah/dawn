@@ -16,6 +16,7 @@
 #   sudo ./deploy/install.sh --no-build      skip source builds (use whatever is installed)
 #   sudo ./deploy/install.sh --rebuild       force rebuilding rtl-sdr / welle / shairport-sync
 #   sudo ./deploy/install.sh --no-web        skip the web build (e.g. when `make deploy` ships web/dist)
+#   sudo ./deploy/install.sh --no-restart    install everything but restart nothing (dawn-update restarts in order)
 #
 # Everything it writes is marked or in its own file, so re-running is safe.
 set -euo pipefail
@@ -24,7 +25,7 @@ DAWN_DIR=/opt/dawn
 DAWN_USER=dawn
 LOG=/var/log/dawn-install.log
 SRC_DIR=/usr/local/src
-UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0
+UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0 NO_RESTART=0
 DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO="" PANEL=auto
 RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
@@ -45,12 +46,13 @@ while [ $# -gt 0 ]; do
     --rebuild) REBUILD=1;;
     --no-build) NO_BUILD=1;;
     --no-web) NO_WEB=1;;
+    --no-restart) NO_RESTART=1;;
     --readonly) READONLY=1;;
     --audio) AUDIO="$2"; shift;;
     --display) PANEL="$2"; shift;;
     --data-device) DATA_DEVICE="$2"; shift;;
     --data-image-mb) DATA_IMAGE_MB="$2"; shift;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0;;
     *) echo "unknown option $1"; exit 2;;
   esac
   shift
@@ -105,7 +107,6 @@ echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTE
 # ---------------------------------------------------------------------------
 step "apt packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
 CHROMIUM=chromium; apt-cache show chromium >/dev/null 2>&1 || CHROMIUM=chromium-browser
 PKGS=(
   git curl rsync build-essential cmake pkg-config autoconf automake libtool xxd
@@ -117,10 +118,20 @@ PKGS=(
   bluez gpsd gpsd-clients chrony avahi-daemon network-manager iw i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
 )
-apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"
-apt-cache show python3-lgpio >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-lgpio liblgpio-dev || true
-apt-cache show python3-gpiozero >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-gpiozero || true
-apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && apt-get install -y --no-install-recommends nodejs npm || true
+# An update skips apt when the package list is the one installed last time: apt needs the network, and failing there
+# after dawn-update has moved the code would only end in a rollback for nothing
+APT_STAMP=/var/lib/dawn/apt-pkgs.sha256
+PKGS_HASH="$(printf '%s\n' "${PKGS[@]}" "web=$NO_WEB" | sha256sum | cut -d' ' -f1)"
+if [ "$UPDATE" -eq 1 ] && [ -f "$APT_STAMP" ] && [ "$(cat "$APT_STAMP" 2>/dev/null)" = "$PKGS_HASH" ]; then
+  echo "apt packages unchanged since the last install; skipping apt"
+else
+  apt-get update -qq
+  apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"
+  apt-cache show python3-lgpio >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-lgpio liblgpio-dev || true
+  apt-cache show python3-gpiozero >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-gpiozero || true
+  apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && apt-get install -y --no-install-recommends nodejs npm || true
+  mkdir -p "$(dirname "$APT_STAMP")" && echo "$PKGS_HASH" >"$APT_STAMP"
+fi
 
 # ---------------------------------------------------------------------------
 # User, directories, repository
@@ -183,7 +194,8 @@ if [ "$NO_WEB" -eq 0 ]; then
   if command -v npm >/dev/null 2>&1; then
     if [ ! -f "$DAWN_DIR/web/dist/index.html" ] || [ -n "$(find "$DAWN_DIR/web/src" "$DAWN_DIR/web/face" -newer "$DAWN_DIR/web/dist/index.html" -print -quit 2>/dev/null)" ]; then
       NPM=(sudo -u "$DAWN_USER" env npm_config_cache="$NPM_CACHE" npm)
-      (cd "$DAWN_DIR/web" && "${NPM[@]}" ci --no-audit --no-fund && "${NPM[@]}" run build)
+      # into web/dist.new, swapped in only when complete: a failed build never leaves the face without a UI
+      "$DAWN_DIR/deploy/build-web.sh" "$DAWN_DIR/web" "${NPM[@]}" || { echo "ERROR: the web UI did not build; web/dist is unchanged"; exit 1; }
     else
       echo "web/dist up to date"
     fi
@@ -399,6 +411,8 @@ install -m 0755 "$D/bin/dawn-update" /usr/local/bin/dawn-update
 install -m 0755 "$D/bin/dawn-airplay-name" /usr/local/bin/dawn-airplay-name
 install -m 0755 "$D/bin/dawn-set-hostname" /usr/local/bin/dawn-set-hostname
 install -m 0755 "$D/bin/dawn-usb-reset" /usr/local/bin/dawn-usb-reset
+# the update log: written by dawn-update.service (root), read by dawn-core for the UI
+[ -f /var/log/dawn-update.log ] || install -m 0644 /dev/null /var/log/dawn-update.log
 install -m 0440 "$D/sudoers/dawn" /etc/sudoers.d/dawn && visudo -cf /etc/sudoers.d/dawn >/dev/null
 sed -i -E 's/^(\s*name\s*=\s*)"[^"]*"/\1"'"$(grep -E '^\s*name:' /etc/dawn/config.yaml | head -1 | sed -E 's/.*name:\s*//; s/^"//; s/"$//' || echo Dawn)"'"/' /etc/shairport-sync.conf || true
 udevadm control --reload-rules && udevadm trigger || true
@@ -413,7 +427,7 @@ echo i2c-dev >/etc/modules-load.d/dawn-i2c.conf; modprobe i2c-dev || true
 # systemd units (uid substituted)
 # ---------------------------------------------------------------------------
 step "systemd units"
-for u in dawn-core dawn-dab dawn-timed dawn-face; do
+for u in dawn-core dawn-dab dawn-timed dawn-face dawn-update; do
   sed "s|@UID@|$DAWN_UID|g; s|@DAWN_DIR@|$DAWN_DIR|g" "$D/systemd/$u.service" >"/etc/systemd/system/$u.service"
 done
 mkdir -p /etc/systemd/system/shairport-sync.service.d
@@ -432,10 +446,17 @@ command -v shairport-sync >/dev/null 2>&1 && systemctl enable shairport-sync >/d
 systemctl enable dawn-core dawn-dab dawn-timed >/dev/null
 # reenable: moves an older install's graphical.target symlink to multi-user.target
 systemctl reenable dawn-face >/dev/null 2>&1
-systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
-systemctl restart dawn-core dawn-dab dawn-timed || true
-systemctl restart dawn-face >/dev/null 2>&1 || true
-command -v shairport-sync >/dev/null 2>&1 && systemctl restart nqptp shairport-sync >/dev/null 2>&1 || true
+if [ "$NO_RESTART" -eq 0 ]; then
+  systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
+  systemctl restart dawn-core dawn-dab dawn-timed || true
+  systemctl restart dawn-face >/dev/null 2>&1 || true
+  command -v shairport-sync >/dev/null 2>&1 && systemctl restart nqptp shairport-sync >/dev/null 2>&1 || true
+else
+  # dawn-update restarts dawn-timed and dawn-dab, then dawn-core (checking it is healthy), then the face; the
+  # supporting daemons pick up their new config here (none of them carries the alarms)
+  systemctl try-restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
+  command -v shairport-sync >/dev/null 2>&1 && systemctl try-restart nqptp shairport-sync >/dev/null 2>&1 || true
+fi
 
 # hostname from config
 WANT_HOST="$(grep -E '^\s*hostname:' /etc/dawn/config.yaml | head -1 | sed -E 's/.*hostname:\s*//; s/"//g' || true)"

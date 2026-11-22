@@ -13,7 +13,9 @@ Cmnd_Alias DAWN_SERVICES = /usr/bin/systemctl restart dawn-dab, /usr/bin/systemc
 Cmnd_Alias DAWN_TIME = /usr/bin/chronyc -n -c selectdata, /usr/bin/chronyc -n -c ntpdata, /usr/bin/chronyc burst 4/4
 Cmnd_Alias DAWN_POWER = /usr/bin/systemctl poweroff, /usr/bin/systemctl reboot
 # dawn-usb-reset: no arguments; it re-enumerates only RTL2832U sticks (0bda:2838, 0bda:2832)
-Cmnd_Alias DAWN_TOOLS = /usr/local/bin/dawn-update, /usr/local/bin/dawn-airplay-name *, /usr/local/bin/dawn-set-hostname *, \
+# the software update runs as its own unit (dawn-update.service), outside dawn-core's cgroup; dawn-core only starts it
+Cmnd_Alias DAWN_UPDATE = /usr/bin/systemctl start --no-block dawn-update.service
+Cmnd_Alias DAWN_TOOLS = /usr/local/bin/dawn-airplay-name *, /usr/local/bin/dawn-set-hostname *, \
     /usr/local/bin/dawn-usb-reset ""
-dawn ALL=(root) NOPASSWD: DAWN_SERVICES, DAWN_TIME, DAWN_POWER, DAWN_TOOLS
+dawn ALL=(root) NOPASSWD: DAWN_SERVICES, DAWN_TIME, DAWN_POWER, DAWN_UPDATE, DAWN_TOOLS
 Defaults:dawn !requiretty

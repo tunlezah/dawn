@@ -47,6 +47,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     return {
         "units": units,
         "task_failures": list(st.system.task_failures),
+        "update_result": st.system.update_result,
         "loops": {"dead": {n: ctx.liveness.why(n) for n in ctx.liveness.check()}, "watched": len(ctx.liveness.names())},
         "supervisor": {
             "enabled": cfg.system.supervisor.enabled, "checked_at": supervisor.checked_at if supervisor else None,
@@ -274,6 +275,13 @@ def checks(f: dict[str, Any]) -> list[Check]:
                 add("network", "wifi_driver", "Wi-Fi adapter", "fail",
                     "The Wi-Fi adapter stayed missing or unavailable after NetworkManager was restarted twice.",
                     "Reboot the clock (Settings → Reboot). If it keeps happening, check the power supply: under-voltage can drop the Wi-Fi chip.")
+    ur = f.get("update_result")
+    if ur and ur.get("status") == "rolled_back":
+        add("system", "update", "Software update", "warn",
+            f"The update at {str(ur.get('at', ''))[:16].replace('T', ' ')} was rolled back to {ur.get('from', '?')}: {ur.get('message', '?')}.",
+            "Dawn runs the version it had before. /var/log/dawn-update.log says what went wrong; try again later or report it.")
+    elif ur and ur.get("status") == "ok" and ur.get("version"):
+        add("system", "update", "Software update", "ok", f"Updated to {ur['version']} ({ur.get('to', '?')}) at {str(ur.get('at', ''))[:16].replace('T', ' ')}.")
     lp = f.get("loops")
     if lp is not None:
         if lp["dead"]:

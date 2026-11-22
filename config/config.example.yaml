@@ -438,6 +438,8 @@ system:
   # Git checkout used by the software updater.
   update_repo_dir: /opt/dawn
   update_branch: main
+  # No software update while an alarm, a snooze or a nap is on, or when the next alarm (or its light wake) is due within this many minutes.
+  update_quiet_minutes: 60
   sudo_binary: sudo
   allow_shutdown: true
   log_tail_lines: 200

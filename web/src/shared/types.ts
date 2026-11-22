@@ -96,7 +96,7 @@ export interface SystemState {
   throttled: number | null; throttle_flags: string[];
   sdr_present: boolean; sdr_tuner: string | null; panel: string; network: NetworkInfo; update_available: boolean; update_running: boolean;
   update_log: string | null; heartbeat_at: string | null; sim: boolean; version: string; git_rev: string | null; booted_at: string | null;
-  config_error: string | null; services: Record<string, string>; task_failures: { name: string; owner: string | null; at: number; error: string }[];
+  config_error: string | null; services: Record<string, string>; task_failures: { name: string; owner: string | null; at: number; error: string }[]; loops_dead: string[]; update_result: { status: string; message?: string; from?: string; to?: string; version?: string; at?: string } | null;
 }
 export interface BtDevice { address: string; name: string; paired: boolean; connected: boolean; trusted: boolean; icon: string | null; rssi: number | null }
 export interface BluetoothState { available: boolean; powered: boolean; discoverable: boolean; discoverable_until: string | null; scanning: boolean; name: string; devices: BtDevice[]; connected: string | null; playing: boolean }
@@ -127,7 +127,7 @@ export const EMPTY_STATE: UIState = {
   presets: [],
   time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { presence: 'absent', last_seen_at: null, available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null, hours: [] },
-  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {}, task_failures: [] },
+  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {}, task_failures: [], loops_dead: [], update_result: null },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },

@@ -54,7 +54,10 @@ async def set_hostname(body: dict[str, str], ctx: DawnContext = Depends(get_ctx)
 
 @router.post("/update")
 async def start_update(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
-    await update.run_update(ctx)
+    try:
+        await update.run_update(ctx)
+    except update.UpdateRefused as e:
+        raise HTTPException(409, f"Not now: {e}.") from e
     return {"started": True}
 
 

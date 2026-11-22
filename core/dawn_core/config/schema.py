@@ -500,7 +500,11 @@ class SystemConfig(StrictModel):
     cpu_temp_path: str = "/sys/class/thermal/thermal_zone0/temp"
     vcgencmd_binary: str = Field("vcgencmd", description="Reads under-voltage / throttling flags on a Pi.")
     update_repo_dir: str = Field("/opt/dawn", description="Git checkout used by the software updater.")
-    update_branch: str = "main"
+    update_branch: str = Field("main", pattern=r"^[A-Za-z0-9._/-]{1,100}$")
+    update_quiet_minutes: int = Field(
+        60, ge=0, le=720,
+        description="No software update while an alarm, a snooze or a nap is on, or when the next alarm (or its light wake) is due within this many minutes.",
+    )
     sudo_binary: str = "sudo"
     allow_shutdown: bool = True
     log_tail_lines: int = Field(200, ge=20, le=2000)

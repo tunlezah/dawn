@@ -132,8 +132,8 @@ test('diagnostics: no GPS module is "not fitted", never a problem; plugged in, u
     await hub({ gps_present: true });
   }
   await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
-  await post('/api/diag/run');
-  expect(gpsProblem(await state())).toBe(false);
+  // a receiver just plugged in has not sent its first satellite report yet: give it a few seconds
+  await expect.poll(async () => { await post('/api/diag/run'); return gpsProblem(await state()); }, { timeout: 20_000, intervals: [2000] }).toBe(false);
 });
 
 test('diagnostics: a decoder that answers but decodes nothing is restarted by itself', async ({ page }) => {

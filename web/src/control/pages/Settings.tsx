@@ -29,6 +29,7 @@ export function Settings() {
   const [wifiBusy, setWifiBusy] = useReactState(false);
   const [join, setJoin] = useReactState<{ ssid: string; psk: string } | null>(null);
   const [msg, setMsg] = useReactState<string | null>(null);
+  const [updateMsg, setUpdateMsg] = useReactState<string | null>(null);
   const reload = () => api.get<Cfg>('/api/config').then((c) => { setCfg(c); setDraft({}); });
   useEffect(() => { reload(); }, []);
   const patch = async (p: Record<string, unknown>) => { try { await api.patch('/api/config', p); await reload(); setMsg('Saved'); setTimeout(() => setMsg(null), 1500); } catch (e) { setMsg(e instanceof ApiError ? `Error: ${JSON.stringify(e.detail)}` : String(e)); } };
@@ -105,7 +106,15 @@ export function Settings() {
       </Card>
 
       <Card title="Software update" action={<span className="chip">{s.system.update_running ? 'running…' : s.system.update_available ? 'update available' : `v${s.system.version}${s.system.git_rev ? ` · ${s.system.git_rev}` : ''}`}</span>}>
-        <Row label="Update from git" hint="git pull + install.sh, then services restart"><button className="btn btn-sm btn-primary" disabled={s.system.update_running} onClick={() => api.post('/api/system/update').catch((e) => setMsg(String(e.message)))}>Update now</button><button className="btn btn-sm" onClick={() => api.post('/api/system/update/check').catch(() => {})}>Check</button></Row>
+        <Row label="Update from git" hint="git pull + install, then the services restart in turn; rolled back by itself if Dawn does not come up healthy">
+          <button className="btn btn-sm btn-primary" disabled={s.system.update_running} onClick={() => api.post('/api/system/update').then(() => setUpdateMsg(null)).catch((e) => setUpdateMsg(e instanceof ApiError && e.status === 409 ? String(e.message) : `Could not start: ${String(e.message)}`))}>Update now</button>
+          <button className="btn btn-sm" onClick={() => api.post('/api/system/update/check').catch(() => {})}>Check</button>
+        </Row>
+        {/* an update restarts dawn-core and the radio: it waits for a quiet moment away from the alarms (409) */}
+        {updateMsg && <div className="text-sm text-warn py-1" data-testid="update-refused">{updateMsg}</div>}
+        {s.system.update_result && s.system.update_result.status === 'rolled_back' && (
+          <div className="text-sm text-warn py-1">The last update was rolled back: {String(s.system.update_result.message ?? '')}.</div>
+        )}
         {s.system.update_log && <pre className="text-[11px] bg-black/40 rounded-xl p-3 max-h-48 overflow-auto whitespace-pre-wrap mt-2">{s.system.update_log}</pre>}
       </Card>
 

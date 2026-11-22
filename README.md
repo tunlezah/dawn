@@ -164,9 +164,14 @@ the 0–100 scale itself.
 
 ## Updating
 
-- From the UI: *Settings → Software update → Check for updates*, then *Update now* (`dawn-update`: fast-forwards
-  `/opt/dawn` to GitHub `main`, runs `install.sh --update`, restarts the services; log in `/var/log/dawn-update.log`).
-  The version shown there goes up with every merged PR.
+- From the UI: *Settings → Software update → Check for updates*, then *Update now*. It runs `dawn-update.service`
+  (its own unit, so restarting dawn-core cannot cut it short): fast-forwards `/opt/dawn` to GitHub `main`, runs
+  `install.sh --update --no-restart` (the web UI is built beside the one in use and swapped in only when complete),
+  restarts dawn-timed and the decoder, then dawn-core, waits for it to report the new version healthy, and restarts
+  the face last. If dawn-core does not come up healthy within two minutes, or any step fails, it rolls back to the
+  previous commit, web UI and Python packages and says so (*Settings*, *Diagnostics → System*, a toast on the face).
+  It will not start during an alarm, a snooze or a nap, or within `system.update_quiet_minutes` (60) of the next
+  alarm. Log in `/var/log/dawn-update.log`. The version shown there goes up with every merged PR.
 - From a laptop: `make deploy HOST=dawn.local` builds the web UI and rsyncs the repo. The files then differ from
   `/opt/dawn`'s git commit, so the UI update refuses to fast-forward until they match `main` again.
 - On the Pi: `cd /opt/dawn && sudo -u dawn git pull --ff-only && sudo ./deploy/install.sh --update`.
@@ -400,6 +405,8 @@ set the tuner gain, poll the time sources, play a test tone):
 | Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
 | An alarm or nap seemed to ring at the wrong time | the event list under *Diagnostics → System* (and *Time sync*): a `clock_step` event says the system clock jumped (and by how much) just before; `nap_ring_failed` says a nap's ring had to be retried |
 | *Diagnostics → System → Background tasks* warns | a background task raised; each one is in the journal with its traceback (`journalctl -u dawn-core \| grep "background task"`) |
+| *Update now* says "Not now" | an alarm, snooze or nap is on, or the next alarm is within `system.update_quiet_minutes` (60): try after it |
+| An update was rolled back | `/var/log/dawn-update.log` ends with `ROLLED BACK` and the reason (install failed, or dawn-core did not report the new version healthy in 120 s); Dawn runs the previous version; `systemctl status dawn-update` |
 | A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 
 Logs: `journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f`, also
