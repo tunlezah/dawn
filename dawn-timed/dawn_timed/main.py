@@ -36,6 +36,7 @@ log = logging.getLogger("dawn-timed")
 # FIG 0/0 with CIF count low part 0 (welle's time_last_fct0_frame) arrives every ~12 s in mode I
 FCT0_STALE_MS = 30_000
 WATCHDOG_EVERY_S = 5.0  # WATCHDOG=1 at most this often (the unit's WatchdogSec is 60)
+BACKOFF_MIN_S, BACKOFF_MAX_S = 2.0, 30.0  # welle-cli not answering: wait this long, doubling, until it answers again
 
 
 def sd_notify(msg: str) -> None:
@@ -122,6 +123,7 @@ class Timed:
         self._attach_tried = 0.0
         self._ready_sent = False
         self._watchdog_at = 0.0
+        self._backoff = BACKOFF_MIN_S
 
     async def run(self) -> None:
         self._attach()
@@ -142,6 +144,12 @@ class Timed:
             self._status()
             self._write_status()
             self._notify()
+
+    async def _unreachable_wait(self) -> None:
+        """welle-cli is not answering (stopped on purpose by cool mode, restarting, or the stick is gone): back off from
+        2 s to 30 s instead of asking every 2 s for ever; the first answer puts it back to 2 s."""
+        await asyncio.sleep(self._backoff)
+        self._backoff = min(BACKOFF_MAX_S, self._backoff * 2)
 
     def _notify(self) -> None:
         """systemd: READY=1 after the first pass, then WATCHDOG=1 while passes keep coming (a hung daemon stops)."""
@@ -187,8 +195,9 @@ class Timed:
         now = datetime.now(UTC)
         if j is None:
             self.synced = False
-            await asyncio.sleep(2)
+            await self._unreachable_wait()
             return
+        self._backoff = BACKOFF_MIN_S
         self.synced = mux_synced(j)
         if not self.synced:
             self.last_value = None
@@ -214,6 +223,8 @@ class Timed:
         try:
             async with self.client.stream("GET", f"{self.args.welle_url}/fic", timeout=httpx.Timeout(10.0, read=10.0)) as r:
                 self.welle_reachable = r.status_code == 200
+                if self.welle_reachable:
+                    self._backoff = BACKOFF_MIN_S
                 buf = b""
                 last: datetime | None = None
                 async for chunk in r.aiter_bytes():
@@ -241,7 +252,7 @@ class Timed:
             self.synced = False
             self.welle_reachable = False
             log.debug("fic stream problem: %s", e)
-            await asyncio.sleep(2)
+            await self._unreachable_wait()
 
     def _status(self) -> None:
         if time.monotonic() - self.last_status > 60:

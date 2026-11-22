@@ -166,6 +166,7 @@ const EVENT_LABEL: Record<string, (e: DiagEvent) => string> = {
   gps_presence: (e) => `GPS module ${e.presence === 'present' ? 'found' : e.presence === 'missing' ? 'missing' : e.presence === 'absent' ? 'not fitted' : 'off'}`,
   clock_step: (e) => `System clock stepped ${Number(e.step_s) > 0 ? '+' : ''}${String(e.step_s ?? '')} s`,
   nap_ring_failed: (e) => `Nap ring did not start (try ${String(e.attempt ?? '')})`,
+  dab_drop: (e) => `Radio dropped out${e.reason ? `: ${String(e.reason)}` : ''}${typeof e.temp_c === 'number' ? ` (SoC ${Math.round(e.temp_c)} °C)` : ''}`,
 };
 export const eventLabel = (e: DiagEvent) => (EVENT_LABEL[e.kind] ?? ((x: DiagEvent) => x.kind.replace(/_/g, ' ')))(e);
 
@@ -173,7 +174,7 @@ const POWER = ['reboot', 'shutdown'];
 const action = (e: DiagEvent, ...prefixes: string[]) => e.kind === 'diag_action' && prefixes.some((p) => String(e.action ?? '').startsWith(p));
 /** Which events each area's history marks (the rest belong to other areas). */
 export const EVENTS: Record<string, (e: DiagEvent) => boolean> = {
-  dab: (e) => ['dab_restart', 'dab_scan', 'ring_start', 'ring_fallback', ...POWER].includes(e.kind) || action(e, 'dab.'),
+  dab: (e) => ['dab_restart', 'dab_scan', 'dab_drop', 'ring_start', 'ring_fallback', ...POWER].includes(e.kind) || action(e, 'dab.'),
   gps: (e) => ['gps_presence', ...POWER].includes(e.kind) || action(e, 'gps.'),
   time: (e) => ['clock_step', ...POWER].includes(e.kind) || action(e, 'time.', 'gps.'),
   network: (e) => ['hotspot_start', 'hotspot_stop', 'hotspot_retry', 'wifi_connect', ...POWER].includes(e.kind),

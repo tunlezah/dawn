@@ -339,4 +339,4 @@ def test_system_checks_report_self_repair_and_the_database() -> None:
 
 def test_dab_history_tells_an_alarms_restart_from_the_supervisors() -> None:
     c = by_id(dab.checks(dab_facts(supervisor_restarts_24h=["x", "y"])))
-    assert c["dab.history"].detail == "The decoder stopped answering and was restarted 2 times."
+    assert c["dab.history"].detail == "The decoder stopped answering or decoding and was restarted 2 times."

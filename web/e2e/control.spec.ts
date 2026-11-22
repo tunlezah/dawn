@@ -99,6 +99,8 @@ test('diagnostics: no GPS module is "not fitted", never a problem; plugged in, u
   try {
     // no module, and none remembered: "not fitted"
     await hub({ gps_present: false });
+    // Forget is offered once the module shows as gone (as the Settings button is): not while it still reads present
+    await waitFor((s) => s.time_sources.gps.presence !== 'present', 20_000);
     await post('/api/diag/action/gps.forget');
     await waitFor((s) => s.time_sources.gps.presence === 'absent', 20_000);
     await post('/api/diag/run');
@@ -132,6 +134,27 @@ test('diagnostics: no GPS module is "not fitted", never a problem; plugged in, u
   await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
   await post('/api/diag/run');
   expect(gpsProblem(await state())).toBe(false);
+});
+
+test('diagnostics: a decoder that answers but decodes nothing is restarted by itself', async ({ page }) => {
+  test.setTimeout(120_000);
+  const repairs = async () => {
+    const ev = await (await fetch(BASE + '/api/events?limit=500')).json();
+    return ev.filter((e: any) => e.kind === 'supervisor_repair' && String(e.reason).includes('no sync')).length;
+  };
+  const before = await repairs();  // the simulator's database outlives a run
+  try {
+    await hub({ dab_zombie: true });  // welle answers, the stick delivers nothing: no sync
+    // no_sync_restart_s is 20 s in the simulator (180 s on a Pi); the supervisor checks every 15 s
+    await expect.poll(repairs, { timeout: 90_000, intervals: [1000] }).toBeGreaterThan(before);
+    await post('/api/diag/run');
+    await page.goto('/diagnostics');
+    await page.getByRole('tab', { name: /System/ }).click();
+    await expect(page.locator('[data-check="system.supervisor"]')).toContainText('DAB decoder');
+  } finally {
+    await hub({ dab_zombie: false });
+  }
+  await waitFor((s) => s.dab.sync, 30_000);
 });
 
 test('display: sleep mode can be turned on, sent to sleep and woken from the web', async ({ page }) => {

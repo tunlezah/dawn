@@ -36,6 +36,7 @@ MIN_HEARD_S = {"source": 5.0, "chime": 3.0}  # a rung that was slow to start sti
 DROPOUT_S = {"source": 10.0, "chime": 5.0}  # audio that stops for this long has failed (DAB drops out briefly)
 START_EXTRA_S = 10.0  # a rung still starting this long after its deadline is abandoned
 DAB_RESTART_AFTER_S = 3.0
+DAB_NOSYNC_RESTART_S = 20.0  # a decoder that answers but has had no sync this long, on a channel scanned good, is restarted
 BUZZER_RETRY_S = 5.0
 SAVE_EVERY_S = 30.0  # a ringing session is saved this often, so a restart knows it was still going
 
@@ -342,6 +343,9 @@ class RingSession:
             log.warning("%s: %s failed (%s); carrying on", self.req.label, what, e)
 
     async def _restart_dab_if_dead(self) -> None:
+        """Once per ring: restart welle-cli when it does not answer, or when it answers but has had no sync for
+        DAB_NOSYNC_RESTART_S on a channel a scan found good (a stick that stopped delivering samples). In the background
+        and best effort: the ladder climbs to the chime on its own timing whatever happens here."""
         try:
             from ..dab.service import DabService
 
@@ -349,6 +353,15 @@ class RingSession:
             if not await dab.healthy():
                 self.restarted_dab = True
                 log.warning("DAB not healthy during ring; restarting welle-cli once")
+                await dab.restart_welle(reason="alarm")
+                return
+            for _ in range(int(DAB_NOSYNC_RESTART_S - DAB_RESTART_AFTER_S)):
+                if dab.live_sync or not self.active or self.snoozed or self.restarted_dab:
+                    return
+                await asyncio.sleep(1.0)
+            if not dab.live_sync and self.active and not self.restarted_dab and dab.channel_known_good():
+                self.restarted_dab = True
+                log.warning("DAB answers but has had no sync for %.0f s during the ring; restarting welle-cli once", DAB_NOSYNC_RESTART_S)
                 await dab.restart_welle(reason="alarm")
         except Exception:  # noqa: BLE001
             log.exception("dab restart attempt failed")

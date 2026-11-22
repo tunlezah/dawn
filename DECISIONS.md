@@ -152,6 +152,30 @@ each section. Every entry says what was decided and why, so it can be revisited.
 - **The latest MOT slide per service is the station logo** (`/var/lib/dawn/logos/`),
   served from `/api/dab/logo/<sid>`; with no slide the same URL returns an SVG
   monogram tile (two letters, colour hashed from the SID). One URL, no client logic.
+- **The stick is named from sysfs, never by opening it at boot.** `rtl_test -t` opens the stick to read the tuner,
+  and at boot it raced welle-cli starting at the same moment. The USB strings in sysfs (manufacturer `RTLSDRBlog`,
+  product `Blog V4`) already say what it is; welle-cli's own name (`receiver.hardware.name`) replaces it once it
+  answers, and `rtl_test` runs only while dawn-dab is not active.
+- **A decoder that answers but does not sync is a fault of the decoder only on a channel known to be good.** welle-cli
+  exits when the USB transfer fails (systemd restarts it), but when samples simply stop arriving it keeps answering
+  and never syncs. No sync on a channel a scan found at 6 dB or better, with no scan running, is that case; on a
+  channel never scanned (or weak) it is reception, and restarting would not help. The supervisor restarts after
+  `no_sync_restart_s` (180 s) with its usual backoff, and never while an alarm on the radio rings or is snoozed (the
+  ring restarts once by itself after 20 s). Three restarts in a row escalate to re-enumerating the stick
+  (`dawn-usb-reset`: de-authorise and re-authorise only 0bda:2838/2832, no arguments); whole-hub power cycling
+  (`uhubctl`) is ruled out because it drops the GPS and the rest of the bus. Still nothing after three minutes is a
+  Diagnostics failure asking for a replug, with the under-voltage history, since a weak supply is the usual cause.
+- **An alarm's own decoder restart is a step under way, not a failure.** Preparation counts two failed checks as "start
+  on the chime"; a restart it asked for itself (no sync on a good channel, seen on two checks 30 s apart, once per
+  alarm) reports `tuning` for the minute it takes to come back, so the five-minute window is used to recover.
+- **Build pinned releases and check the link.** `RTLSDR_REF`/`WELLE_REF` default to tags, recorded in
+  `/usr/local/share/dawn/versions.json`; an install from before refs were recorded is not rebuilt just for that. After
+  building, `ldd welle-cli` must show librtlsdr from `/usr/local/lib`: welle built before the blog library links the
+  distro one and silently lacks V4 support, so it is rebuilt once, and a warning file shows in Diagnostics if it still
+  does. The DVB blacklist is written on every run.
+- **Dropouts are logged with heat and power.** A stick leaving the bus or sync lost for a minute after it was there is a
+  `dab_drop` event carrying the SoC temperature and `get_throttled` flags, so a night of dropouts can be matched with
+  under-voltage or heat.
 - **Scans stop DAB playback** (retuning kills the stream) and refuse to run while
   a DAB alarm is ringing; afterwards welle is retuned to the channel it was on.
 

@@ -28,7 +28,7 @@ export async function config(patch: Record<string, unknown>) {
 export const SLEEP_DEFAULTS = { enabled: false, jump_every_s: 120, screen_off: false };
 export async function reset() {
   await hub({ lux: 150, gps_fix: true, dab_sync: true, sdr_present: true, network_online: true, audio_flowing: true,
-    gps_present: true, dab_snr: 14.5, gps_signal: 38.0, wifi_dbm: -58.0, units_down: [], wifi_configured: true, hotspot_client: false });
+    gps_present: true, dab_snr: 14.5, gps_signal: 38.0, wifi_dbm: -58.0, units_down: [], wifi_configured: true, hotspot_client: false, dab_zombie: false });
   await post('/api/alarms/stop');
   await post('/api/audio/standby');
   await fetch(BASE + '/api/timers/nap', { method: 'DELETE' });

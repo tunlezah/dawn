@@ -310,6 +310,8 @@ test('no GPS module: the face shows a hollow "not fitted" ring, not a fault', as
   test.setTimeout(60_000);
   try {
     await hub({ gps_present: false });
+    // Forget is offered once the module shows as gone (as the Settings button is): not while it still reads present
+    await waitFor((s) => s.time_sources.gps.presence !== 'present', 20_000);
     await post('/api/diag/action/gps.forget');
     await waitFor((s) => s.time_sources.gps.presence === 'absent', 20_000);
     await page.goto('/face');

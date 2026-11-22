@@ -52,6 +52,8 @@ REPAIRS_KEPT = 50
 Fix = Callable[[], Awaitable[tuple[bool, str]]]
 
 
+NOSYNC_RESTARTS_BEFORE_RESET = 3  # decoder restarts for "no sync" before the stick is re-enumerated on USB
+USB_RESET_GRACE_S = 180.0  # after re-enumerating: no sync by then and Diagnostics asks for a replug
 FRAME_STALE_MS = 60_000  # the face's last animation frame older than this while it still pings: a frozen screen
 CHRONYC_TIMEOUTS = 4  # chronyc polls in a row that timed out (30 s apart): chronyd is hung
 GPSD_QUIET_S = 120.0
@@ -123,6 +125,9 @@ class SupervisorService(Service):
         self._timed_changed = 0.0
         self._recycled_on: date | None = None  # the day the face had its daily refresh (or it was skipped)
         self.wifi_driver_tries = 0
+        self.dab_nosync_restarts = 0  # decoder restarts for "no sync" in a row (heals after ten minutes of sync)
+        self._usb_reset_at: float | None = None  # monotonic: the stick was re-enumerated then
+        self.dab_stuck_since: float | None = None  # monotonic: re-enumerating did not help either
         self._bad_since: dict[str, float] = {}  # key -> monotonic time the problem was first seen
         self._good_since: dict[str, float] = {}
         self._backoff: dict[str, float] = {}  # key -> the wait after its last repair
@@ -308,8 +313,10 @@ class SupervisorService(Service):
         st = self.ctx.store.state
         if not st.dab.sdr_present or st.alarms.ringing is not None or self.unit_states.get("dawn-dab") not in ("active", "unknown"):
             self._bad_for("dab", False, now)
+            self._bad_for("dab-nosync", False, now)
             return
-        dead_for = self._bad_for("dab", not await dab.client.reachable(), now)
+        reachable = await dab.client.reachable()
+        dead_for = self._bad_for("dab", not reachable, now)
         if dead_for >= self.cfg.welle_dead_s:
 
             async def fix() -> tuple[bool, str]:
@@ -317,6 +324,48 @@ class SupervisorService(Service):
                 return ok, "restarting welle-cli" if ok else "restarted moments ago already"
 
             await self._repair("dab", "DAB decoder (welle-cli)", f"not answering for {dead_for:.0f} s", fix, now)
+        if reachable:
+            await self._dab_zombie(dab, now)
+
+    async def _dab_zombie(self, dab: Any, now: float) -> None:
+        """welle-cli answers but no samples arrive (a stick that stopped delivering them: its OFDM thread waits for ever,
+        and burns CPU doing it): no sync for `dab.no_sync_restart_s` on a channel a scan found good, with no scan
+        running. Restart the decoder; after three in a row with the stick still on the bus, re-enumerate it on USB
+        (dawn-usb-reset); if that does not bring sync back within three minutes, Diagnostics says to replug it."""
+        scanning = bool(dab._scan_task and not dab._scan_task.done())
+        zombie = not dab.live_sync and not scanning and dab.channel_known_good()
+        nosync_for = self._bad_for("dab-nosync", zombie, now)
+        if not zombie:
+            if dab.live_sync and now - self._good_since.get("dab-nosync", now) >= HEAL_S:
+                self.dab_nosync_restarts = 0  # ten minutes of sync: the count starts over
+            if dab.live_sync:
+                self.dab_stuck_since = None
+                self._usb_reset_at = None
+            return
+        if self._usb_reset_at is not None and now - self._usb_reset_at >= USB_RESET_GRACE_S and self.dab_stuck_since is None:
+            self.dab_stuck_since = self._usb_reset_at
+            log.error("supervisor: the SDR stick still delivers no samples %.0f s after re-enumerating it", now - self._usb_reset_at)
+        if nosync_for < self.ctx.config.dab.no_sync_restart_s:
+            return
+        if self.dab_nosync_restarts >= NOSYNC_RESTARTS_BEFORE_RESET and self.ctx.store.state.dab.sdr_present:
+            if self._usb_reset_at is None:
+
+                async def reset() -> tuple[bool, str]:
+                    rc, out = await self.host.sudo("/usr/local/bin/dawn-usb-reset", timeout=30)
+                    if rc == 0:
+                        self._usb_reset_at = now
+                    return (rc == 0), (out.strip()[:200] or "re-enumerated the stick") if rc == 0 else f"dawn-usb-reset failed: {out.strip()[:200] or rc}"
+
+                await self._repair("dab-usb", "RTL-SDR stick", f"no samples through {self.dab_nosync_restarts} decoder restarts", reset, now)
+            return
+
+        async def fix() -> tuple[bool, str]:
+            ok = await dab.restart_welle(reason="no sync")
+            if ok:
+                self.dab_nosync_restarts += 1
+            return ok, "restarting welle-cli" if ok else "restarted moments ago already"
+
+        await self._repair("dab-nosync", "DAB decoder (welle-cli)", f"no sync for {nosync_for:.0f} s on {dab.channel}, a channel scanned good", fix, now)
 
     async def _user_audio(self, now: float) -> None:
         """The dawn user's PipeWire session. pipewire and pipewire-pulse are socket-activated (inactive is fine);

@@ -637,7 +637,7 @@ class AlarmService(Service):
         audio = self.ctx.svc(AudioService)
         listening = [s for s in (audio.arbiter.slot("user"), audio.arbiter.slot("sleep"))
                      if s is not None and s.source.kind == "dab" and s.state in ("playing", "starting", "ducked")]
-        status, msg = await dab.prepare_for(sid, may_retune=not listening)
+        status, msg = await dab.prepare_for(sid, may_retune=not listening, occurrence=f"{key[0]}@{key[1]}")
         if status == "ok":
             self._dab_fail.pop(key, None)
             return None, False, False

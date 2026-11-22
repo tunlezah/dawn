@@ -57,7 +57,7 @@ auto-detected at boot and the fallbacks stay supported:
 |---|---|---|
 | Board | Raspberry Pi 4 B, Raspberry Pi OS Lite 64-bit (Oct 2026); passive heatsink, no fan | Pi 5 (22-pin DSI cable, 27 W PSU), Pi 3B+, Pi Zero 2 W (HyperPixel/HDMI only, low-CPU face) |
 | Power | 5 V 3 A USB-C (KSA-15E-052300HA); ~7–8 W typical, ~13 W worst case | — |
-| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork), on a short USB extension | any RTL2832U/R820T2 stick (tuner type logged) |
+| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork, pinned release), on a short USB extension, outside the case | any RTL2832U/R820T2 stick (named from its USB strings) |
 | GPS (optional) | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS; picked up whenever it is plugged in | none: DAB and NTP time, the location from *Settings*; shown as "not fitted" (a hollow yellow ring), never as a fault |
 | Display | Waveshare 4.3" DSI 43H-800480-IPS-CT, 800×480, Goodix touch over the ribbon, sysfs backlight 0–255 (`dtoverlay=vc4-kms-dsi-7inch`) | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
 | Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10, behind a window facing the room | VEML7700, BH1750; none (sunrise/sunset schedule) |
@@ -259,7 +259,8 @@ broken** (`system.supervisor`):
 | The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, the page has stopped sending its 15 s heartbeat, or it still pings but has drawn no frame for a minute, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium. Also once a day at the first quiet moment after `face_recycle_at` (03:30): Standby or the sleep clock, nothing playing, no alarm within the hour |
 | chrony, gpsd when hung | chronyc has timed out on four polls in a row; gpsd is connected with a receiver fitted but has sent no position for two minutes |
 | NetworkManager (optional, `wifi_driver_recovery`) | a saved Wi-Fi network and wlan0 missing or unavailable for 10 minutes; twice at most, then Diagnostics suggests a reboot |
-| The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in, unless an alarm on the radio is ringing or snoozed (its own ladder handles that) |
+| The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in; or answering with no sync for `dab.no_sync_restart_s` (180 s) on a channel a scan found good (a stick that stopped delivering samples), with no scan running. Never while an alarm on the radio is ringing or snoozed (its own ladder handles that) |
+| The RTL-SDR stick | three "no sync" decoder restarts in a row with the stick still on the bus: re-enumerated on USB (`dawn-usb-reset`); still nothing after 3 minutes and *Diagnostics → DAB radio* asks for a replug |
 | The PipeWire session (`pipewire`, `wireplumber`, `pipewire-pulse`, user units) | `failed`, or wireplumber `inactive`; then the sink, volume and filter chain are set up again |
 | `dawn-timed` | its status file is older than `timed_stale_s` (5 min) while the unit says active |
 | Any unit left `failed` (`shairport-sync`, `nqptp`, `gpsd`, `chrony`, `bluetooth`, `avahi-daemon`, `NetworkManager`, Dawn's own) and Dawn's own units seen `inactive` for 30 s | only units that are enabled on this box; a failed unit means systemd gave up on it |
@@ -304,7 +305,7 @@ make sim       # simulators + core + dawn-timed; web UI on http://localhost:8080
 - Face: http://localhost:8080/face · Control UI: http://localhost:8080/
 - Sim hub (lux slider, GPS/DAB/SDR/network/saved Wi-Fi/phone-on-hotspot toggles, phone buttons for AirPlay and
   Bluetooth, encoder/button/touch, and faults for *Diagnostics*: DAB SNR, GPS signal,
-  GPS unplugged, Wi-Fi level, failed services): http://localhost:8099/
+  GPS unplugged, Wi-Fi level, failed services, an SDR that stops delivering samples): http://localhost:8099/
 - Sleep mode is off in the simulator's config so the tests do not depend on the hour;
   turn it on under *Display → Sleep mode*.
 - Keyboard in the `make sim` terminal: `+`/`-` volume, Enter encoder push, `n`
@@ -376,7 +377,8 @@ set the tuner gain, poll the time sources, play a test tone):
 |---|---|
 | Face stays black | after a hostname change: the kiosk clears Chromium's stale lock itself (`~/.config/dawn-face`); `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
 | Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
-| No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR); `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
+| No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR, the library welle-cli links); `sudo systemctl stop dawn-dab; rtl_test -t; sudo systemctl start dawn-dab` (tuner type: `rtl_test` needs the stick to itself), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; `ldd /usr/local/bin/welle-cli \| grep rtlsdr` must show `/usr/local/lib`; the `dvb_usb_rtl28xxu` blacklist is written by the installer; antenna/Band III coverage |
+| DAB "SDR samples" problem in Diagnostics | the stick stopped delivering samples and neither decoder restarts nor re-enumerating it helped: unplug and replug it, use the 5.1 V / 3 A supply directly (the detail says if the Pi has seen under-voltage); *Last 24 hours* lists `dab_drop` events with the SoC temperature and throttling at the time |
 | DAB drops out or bubbles | *Diagnostics → DAB radio*: SNR below ~8 dB, FIC errors, decode errors; the spectrum should be a flat block ~1.5 MHz wide, the impulse response one main peak; try a fixed tuner gain a few steps below the AGC's choice near a strong transmitter, and move the antenna away from the Pi and the panel |
 | Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync), or at once when the preparation minutes before found the station would not play; *Diagnostics → Audio → Alarms* says why, *Diagnostics → DAB radio → Last 24 hours* and the history graphs show the signal at that time |
 | Alarm beeps (backup tone) | neither the source nor the chime reached the speaker: mpv, the output or PipeWire; *Diagnostics → Audio*, play a test tone, `journalctl -u dawn-core \| grep -i "backup tone"` says which player worked |

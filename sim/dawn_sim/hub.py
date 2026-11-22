@@ -62,6 +62,7 @@ button.alt{background:#444}.row{display:flex;flex-wrap:wrap;gap:4px}pre{backgrou
 <button class=alt onclick="tog('gps_fix')">GPS fix: <span id=gps_fix></span></button>
 <button class=alt onclick="tog('dab_sync')">DAB sync: <span id=dab_sync></span></button>
 <button class=alt onclick="tog('sdr_present')">SDR plugged: <span id=sdr_present></span></button>
+<button class=alt onclick="tog('dab_zombie')">SDR zombie (no samples): <span id=dab_zombie></span></button>
 <button class=alt onclick="tog('network_online')">Network: <span id=network_online></span></button>
 <button class=alt onclick="tog('audio_flowing')">Audio flowing: <span id=audio_flowing></span></button>
 <button class=alt onclick="tog('gps_present')">GPS plugged: <span id=gps_present></span></button>
@@ -85,7 +86,7 @@ let S={};async function tog(k){await set({[k]:!S[k]})}
 async function refresh(){S=await (await fetch('/state')).json();
 document.getElementById('luxv').textContent=S.lux+' lx';document.getElementById('lux').value=log2(S.lux);
 document.getElementById('bl').textContent=S.backlight+' %';
-for(const k of ['gps_fix','dab_sync','sdr_present','network_online','audio_flowing','gps_present','wifi_configured','hotspot_client']){const e=document.getElementById(k);e.textContent=S[k]?'on':'off';e.className=S[k]?'on':'off'}
+for(const k of ['gps_fix','dab_sync','sdr_present','network_online','audio_flowing','gps_present','wifi_configured','hotspot_client','dab_zombie']){const e=document.getElementById(k);e.textContent=S[k]?'on':'off';e.className=S[k]?'on':'off'}
 for(const [i,v,k] of [['snr','snrv','dab_snr'],['gpss','gpsv','gps_signal'],['wifi','wifiv','wifi_dbm']]){document.getElementById(v).textContent=S[k];if(document.activeElement.id!==i)document.getElementById(i).value=S[k]}
 if(document.activeElement.id!=='down')document.getElementById('down').value=(S.units_down||[]).join(',');
 document.getElementById('chrony').value=S.chrony_active;

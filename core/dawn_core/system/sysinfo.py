@@ -166,10 +166,10 @@ class SysInfoService(Service):
         if not self.ctx.sim and st.uptime_s % 60 < cfg.system.heartbeat_interval_s:
             # re-check SDR presence once a minute (hot plug), from the USB ids only: rtl_test would open the stick,
             # and a welle-cli starting at that moment (an alarm restarting it) would find it taken
-            present, generic = await asyncio.to_thread(hwmod.sdr_on_usb)
+            present, name = await asyncio.to_thread(hwmod.sdr_on_usb)
             if present != st.sdr_present:
                 log.info("SDR presence changed: %s", present)
-            tuner = (st.sdr_tuner or generic) if present else None
+            tuner = (st.sdr_tuner or name) if present else None
             st.sdr_present, st.sdr_tuner = present, tuner
             self.ctx.store.state.dab.sdr_present = present
             self.ctx.store.state.dab.tuner = tuner

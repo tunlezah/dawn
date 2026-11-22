@@ -313,6 +313,8 @@ dab:
   gain: null
   # How often /mux.json is read for DLS/MOT.
   poll_interval_s: 1.0
+  # Restart the decoder when it answers but has had no sync for this long on a channel a scan found good (a stick that stopped delivering samples). After three such restarts the stick is re-enumerated on USB.
+  no_sync_restart_s: 180
 
 alarm_defaults:
   volume: 70

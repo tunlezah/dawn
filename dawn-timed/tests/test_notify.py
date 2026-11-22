@@ -56,3 +56,30 @@ def test_the_unit_asks_for_notify_and_a_watchdog() -> None:
     lines = {ln.strip() for ln in unit.splitlines()}
     for want in ("Type=notify", "NotifyAccess=main", "WatchdogSec=60", "Restart=always"):
         assert want in lines, want
+
+
+async def test_an_unreachable_decoder_is_asked_less_and_less_often(tmp_path, monkeypatch) -> None:
+    t = timed.Timed(_args(tmp_path))
+    up = {"ok": False}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not up["ok"]:
+            raise httpx.ConnectError("welle-cli is stopped")
+        return httpx.Response(200, json={"ensemble": {}})
+
+    t.client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    waits: list[float] = []
+
+    async def record(s: float) -> None:
+        waits.append(s)
+
+    monkeypatch.setattr(timed.asyncio, "sleep", record)
+    for _ in range(6):
+        await t._poll_mux()
+    assert waits == [2.0, 4.0, 8.0, 16.0, 30.0, 30.0]
+    up["ok"] = True
+    await t._poll_mux()  # answers (no sync): the backoff starts over
+    waits.clear()
+    up["ok"] = False
+    await t._poll_mux()
+    assert waits == [2.0]

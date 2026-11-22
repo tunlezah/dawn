@@ -140,7 +140,7 @@ async def test_a_hung_preparation_is_given_up_on_and_the_next_alarm_is_prepared(
     a, ctx = svc
     dab: DabService = ctx.svc(DabService)
 
-    async def hang(sid: str, *, may_retune: bool):
+    async def hang(sid: str, *, may_retune: bool, occurrence: str | None = None):
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(dab, "prepare_for", hang)

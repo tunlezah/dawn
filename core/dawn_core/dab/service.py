@@ -19,6 +19,7 @@ from ..db.models import DabEnsembleRow, DabServiceRow
 from ..services import Service
 from ..state.ui import DabService as DabServiceState
 from ..state.ui import NowPlaying, ScanProgress
+from ..system.hw import name_from_welle
 from ..tasks import spawn
 from .logos import LogoCache, monogram_svg
 from .scanner import scan, scan_order, scanned_at
@@ -26,7 +27,11 @@ from .welle import MuxInfo, ServiceInfo, WelleClient, norm_sid, welle_args
 
 log = logging.getLogger("dawn.dab")
 
-RESTART_TIMEOUT_S = 90.0  # systemd's own stop timeout; a `systemctl restart` still running after it is given up on
+DROP_AFTER_S = 60.0  # sync lost this long (after it had been there) is a dropout worth an event
+GOOD_SNR_DB = 6.0  # a scanned ensemble at least this strong: a channel where no sync means the decoder is stuck
+PREP_NOSYNC_S = 30.0  # alarm preparation: no sync on a good channel for this long (two checks) restarts the decoder
+PREP_RESTART_SETTLE_S = 60.0  # ...and for this long after the restart "not answering" or "no sync" is a step under way
+RESTART_TIMEOUT_S = 30.0  # dawn-dab.service has TimeoutStopSec=10; a `systemctl restart` still running after this is given up on
 
 
 def snr_to_signal(snr: float | None) -> int | None:
@@ -169,6 +174,15 @@ class DabService(Service):
         self._task: asyncio.Task[None] | None = None
         self._scan_task: asyncio.Task[None] | None = None
         self._scan_stop = asyncio.Event()
+        # alarm preparation, per alarm occurrence: when no sync was first seen, and when the decoder was restarted for it
+        self._prep_nosync: dict[str, float] = {}
+        self._prep_restart_at: dict[str, float] = {}
+        # dropouts worth a `dab_drop` event (with the SoC temperature and the throttling flags, to line them up with heat
+        # and power): the stick leaving the bus, or sync lost for DROP_AFTER_S after it had been there
+        self._drop_present = True
+        self._had_sync = False
+        self._nosync_since: float | None = None
+        self._drop_logged = False
         self._last_restart = 0.0
         self._slide_seen: dict[str, int] = {}
         self._unit_check_at = 0.0
@@ -258,6 +272,11 @@ class DabService(Service):
             st.snr = None
         else:
             self._diag(m)
+            name = name_from_welle(m.hardware)
+            if name and not self.ctx.sim and name != self.ctx.store.state.system.sdr_tuner:
+                # welle-cli has the stick open and names it from its USB strings: better than anything read at boot
+                self.ctx.store.state.system.sdr_tuner = name
+                st.tuner = name
             if not m.channel and (not self._initial_tune_done or time.time() - self._channel_check_at > 10):
                 # upstream mux.json has no channel; welle answers it on GET /channel
                 self._channel_check_at = time.time()
@@ -293,7 +312,33 @@ class DabService(Service):
         st.channel = self.channel
         st.ensemble = self.ensemble if self.live_sync else None
         st.enabled = self.ctx.config.dab.enabled
+        self._watch_drops(time.monotonic())
         self.ctx.store.touch()
+
+    def _watch_drops(self, now: float) -> None:
+        st = self.ctx.store.state
+        present = st.dab.sdr_present
+        if self._drop_present and not present:
+            self._log_drop("the stick left the USB bus")
+        self._drop_present = present
+        scanning = bool(self._scan_task and not self._scan_task.done())
+        if self.live_sync:
+            self._had_sync, self._nosync_since, self._drop_logged = True, None, False
+        elif present and self._had_sync and not scanning:
+            self._nosync_since = self._nosync_since or now
+            if now - self._nosync_since > DROP_AFTER_S and not self._drop_logged:
+                self._drop_logged = True
+                self._log_drop(f"no sync for {DROP_AFTER_S:.0f} s")
+
+    def _log_drop(self, reason: str) -> None:
+        sysst = self.ctx.store.state.system
+        th = sysst.throttled
+        try:
+            self.ctx.db.log_event("dab_drop", reason=reason, channel=self.channel, temp_c=sysst.cpu_temp_c,
+                                  throttled=f"0x{th:x}" if th is not None else None, flags=list(sysst.throttle_flags))
+        except Exception:  # noqa: BLE001
+            log.debug("could not log dab_drop", exc_info=True)
+        log.warning("DAB dropout on %s: %s (SoC %s °C, %s)", self.channel, reason, sysst.cpu_temp_c, ", ".join(sysst.throttle_flags) or "not throttled")
 
     def _diag(self, m: MuxInfo) -> None:
         now = time.time()
@@ -464,11 +509,30 @@ class DabService(Service):
             raise TunerBusy(f"{hold}; retune after it")
         await self.tune(channel)
 
-    async def prepare_for(self, sid: str, *, may_retune: bool) -> tuple[str, str]:
+    def channel_known_good(self, channel: str | None = None, min_snr: float = GOOD_SNR_DB) -> bool:
+        """A scan found an ensemble on `channel` (the current one by default) at `min_snr` dB or better: no sync there
+        is the decoder's fault (a stick that stopped delivering samples), not the reception's."""
+        ch = (channel or self.channel or "").upper()
+        if not ch:
+            return False
+        try:
+            return any((e.get("snr") or 0) >= min_snr for e in self.ensembles() if str(e.get("channel", "")).upper() == ch)
+        except Exception:  # noqa: BLE001
+            return False
+
+    async def prepare_for(self, sid: str, *, may_retune: bool, occurrence: str | None = None) -> tuple[str, str]:
         """Get the tuner ready for an alarm on `sid` minutes ahead. Returns (status, what is wrong): "ok"; "tuning"
-        (just retuned, or a scan is being stopped: sync follows); "busy" (someone is listening on another channel,
-        which the alarm retunes when it rings); "fail"."""
+        (just retuned, a scan is being stopped, or the decoder is being restarted: sync follows); "busy" (someone is
+        listening on another channel, which the alarm retunes when it rings); "fail".
+
+        A decoder that answers on the right channel but has no sync, on a channel a scan found good, is restarted once
+        per alarm (`occurrence`) after two checks 30 s apart, and that is a step under way, not a failure: the
+        preparation window has minutes left for it to come back before the ring would start on the chime."""
         sid = norm_sid(sid)
+        key = occurrence or sid
+        now = time.monotonic()
+        restarted = self._prep_restart_at.get(key)
+        settling = restarted is not None and now - restarted < PREP_RESTART_SETTLE_S
         if not self.ctx.store.state.dab.sdr_present:
             return "fail", "no SDR"
         if self._scan_task and not self._scan_task.done():
@@ -480,6 +544,8 @@ class DabService(Service):
         if want is None and sid not in self.live:
             return "fail", "station unknown"
         if not await self.client.reachable():
+            if settling:
+                return "tuning", "restarting the decoder"
             await self.restart_welle(reason="alarm")
             return "fail", "DAB decoder not answering"
         if want and want != self.channel:
@@ -493,9 +559,20 @@ class DabService(Service):
             return "tuning", f"tuned to {want}"
         m = await self.client.mux()
         if m is None:
-            return "fail", "DAB decoder not answering"
+            return ("tuning", "restarting the decoder") if settling else ("fail", "DAB decoder not answering")
         if not m.sync:
+            if settling:
+                return "tuning", "restarting the decoder"
+            if restarted is None and self.channel_known_good():
+                first = self._prep_nosync.setdefault(key, now)
+                if now - first < PREP_NOSYNC_S:
+                    return "tuning", f"waiting for sync on {self.channel}"
+                self._prep_restart_at[key] = now
+                log.warning("no sync on %s (scanned good) for %.0f s before an alarm; restarting the decoder", self.channel, now - first)
+                await self.restart_welle(reason="alarm")
+                return "tuning", "restarting the decoder"
             return "fail", f"no DAB signal on {self.channel}"
+        self._prep_nosync.pop(key, None)
         self.live_sync = True
         for s in m.services:
             self.live[s.sid] = s

@@ -182,7 +182,8 @@ def render_slide(sid: str, label: str, n: int) -> bytes:
 
 
 def _synced() -> bool:
-    return (STATE.sdr_present and STATE.dab_sync and STATE.channel in ENSEMBLES and STATE.dab_snr >= 3
+    # dab_zombie: welle-cli answers but the stick has stopped delivering samples, so FIG 0/0 goes stale
+    return (STATE.sdr_present and STATE.dab_sync and not STATE.dab_zombie and STATE.channel in ENSEMBLES and STATE.dab_snr >= 3
             and (time.time() - STATE.tuned_at) > TUNE_DELAY_S)
 
 

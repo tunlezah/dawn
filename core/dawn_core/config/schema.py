@@ -327,6 +327,10 @@ class DabConfig(StrictModel):
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
     gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")
     poll_interval_s: float = Field(1.0, ge=0.2, le=10, description="How often /mux.json is read for DLS/MOT.")
+    no_sync_restart_s: int = Field(
+        180, ge=10, le=3600,
+        description="Restart the decoder when it answers but has had no sync for this long on a channel a scan found good (a stick that stopped delivering samples). After three such restarts the stick is re-enumerated on USB.",
+    )
 
     @field_validator("scan_channels", "scan_priority")
     @classmethod

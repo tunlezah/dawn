@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Re-enumerate the RTL-SDR stick, and nothing else: de-authorise and re-authorise its USB device, which is what
+# unplugging and replugging it does. dawn-core's supervisor runs it (as root, via the exact sudoers line) when
+# welle-cli answers but has had no samples through three restarts: the "zombie" stick that a decoder restart
+# cannot bring back. It takes no arguments, so nothing typed in a browser can reach it, and it only ever touches
+# devices whose USB id is an RTL2832U's (0bda:2838 or 0bda:2832). Hub-wide power cycling is deliberately not done:
+# it would also drop the GPS and everything else on the bus.
+set -eu
+if [ "$#" -ne 0 ]; then
+  echo "dawn-usb-reset takes no arguments" >&2
+  exit 2
+fi
+found=0
+for dev in /sys/bus/usb/devices/*; do
+  [ -r "$dev/idVendor" ] && [ -r "$dev/idProduct" ] && [ -w "$dev/authorized" ] || continue
+  id="$(cat "$dev/idVendor"):$(cat "$dev/idProduct")"
+  case "$id" in
+    0bda:2838|0bda:2832) ;;
+    *) continue ;;
+  esac
+  echo "re-enumerating the RTL-SDR stick $id at $(basename "$dev")"
+  echo 0 >"$dev/authorized"
+  sleep 1
+  echo 1 >"$dev/authorized"
+  found=1
+done
+if [ "$found" -eq 0 ]; then
+  echo "no RTL-SDR stick on the USB bus" >&2
+  exit 1
+fi

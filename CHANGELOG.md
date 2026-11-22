@@ -5,6 +5,49 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.9] - 2026-11-22
+
+DAB and the RTL-SDR Blog V4 (robustness plan WP-E).
+
+### Fixed
+- **A decoder that answers but decodes nothing is recovered.** When the stick stops delivering samples, welle-cli
+  keeps answering HTTP but never syncs (and its OFDM thread busy-waits, costing CPU and heat); the supervisor only
+  restarted a welle-cli that stopped answering. Now, with no sync for `dab.no_sync_restart_s` (180 s) on a channel a
+  scan found at 6 dB or better, no scan running and no DAB alarm ringing or snoozed, the decoder is restarted
+  (reason "no sync", with the usual backoff). After three such restarts in a row with the stick still on the bus, the
+  stick is re-enumerated on USB by a new root helper, `dawn-usb-reset` (no arguments, RTL2832U ids only, one exact
+  sudoers line); if that does not bring sync back within three minutes, *Diagnostics → DAB radio* says to replug the
+  stick and check the supply, with the under-voltage history when the Pi has seen any.
+- An alarm's preparation restarts a decoder that answers on the right channel but has no sync (on a channel scanned
+  good) once, after two checks 30 s apart, and treats it as a step under way ("restarting the decoder") rather than a
+  failure, so the preparation window can bring the station back before the ring would start on the chime. A ring
+  restarts the decoder once when it is unreachable, or when it answers but has had no sync for 20 s on such a channel.
+- The boot-time `rtl_test -t` raced welle-cli for the stick. The stick is now named from sysfs alone ("RTL-SDR Blog V4
+  (R828D)" from its USB strings), welle-cli's own name for it is preferred once it answers, and `rtl_test` only runs
+  when the decoder is not.
+- An alarm-time decoder restart could take 90 s (the unit's default stop timeout). `dawn-dab.service` stops in 10 s
+  (`TimeoutStopSec=10`) and dawn-core gives a restart 30 s.
+- The installer wrote the DVB driver blacklist only when it built librtlsdr, so an install that found the library
+  already there never got it; it is written on every run and the modules are unloaded. A welle-cli that links the
+  distro librtlsdr instead of the RTL-SDR Blog one (built before it, so no V4 support) is rebuilt once, and a warning
+  is written for *Diagnostics → DAB radio* if it still does; welle is also rebuilt whenever the library is. A failed
+  `cmake`, `make` or `install` inside the build functions now stops that build (they run under `|| echo WARNING`, which
+  turns `set -e` off inside them).
+
+### Changed
+- rtl-sdr-blog and welle.io are built from pinned releases (`RTLSDR_REF=v1.3.6`, `WELLE_REF=v2.7`, overridable)
+  instead of a moving master; what was built is in `/usr/local/share/dawn/versions.json` and under *Diagnostics → DAB
+  radio → Built from*.
+- `dawn-dab.service`: `RestartSec=2` with `RestartSteps=6`/`RestartMaxDelaySec=60` (backs off to a minute on systemd
+  254+, ignored on Bookworm), `MemoryMax=400M` (measure on the device and adjust), `OOMScoreAdjust=300`.
+- dawn-timed backs off from 2 s to 30 s while welle-cli does not answer, and starts over when it does.
+- The udev hot-plug restart covers `0bda:2832` sticks too.
+
+### Added
+- `dab_drop` events when the stick leaves the bus or sync is lost for more than a minute after it was there, with the
+  SoC temperature, the throttling flags and the channel; *Diagnostics → DAB radio → Last 24 hours* lists them.
+- `dab.no_sync_restart_s`. Simulator: an *SDR zombie* toggle (welle answers, no samples).
+
 ## [0.2.8] - 2026-11-22
 
 Watchdog coverage (robustness plan WP-D).

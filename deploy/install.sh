@@ -28,6 +28,11 @@ UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0
 DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO="" PANEL=auto
 RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
+# known-good releases instead of a moving master (override in the environment to try another)
+RTLSDR_REF="${RTLSDR_REF:-v1.3.6}"
+WELLE_REF="${WELLE_REF:-v2.7}"
+VERSIONS_JSON=/usr/local/share/dawn/versions.json  # what was built, shown under Diagnostics -> DAB radio
+SDR_LIB_WARNING=/var/lib/dawn/sdr-lib-warning
 SPS_REPO=https://github.com/mikebrady/shairport-sync.git
 NQPTP_REPO=https://github.com/mikebrady/nqptp.git
 DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"  # where Settings → Software update pulls from
@@ -190,35 +195,91 @@ fi
 # ---------------------------------------------------------------------------
 # Source builds
 # ---------------------------------------------------------------------------
+# checkout <dir> <repo> <ref>: a shallow clone of exactly that tag or commit
+checkout() {
+  local dir="$1" repo="$2" ref="$3"
+  if [ ! -d "$dir/.git" ]; then
+    rm -rf "$dir"
+    git clone --depth 1 --branch "$ref" "$repo" "$dir" 2>/dev/null || git clone "$repo" "$dir" || return 1
+  fi
+  ( cd "$dir" && { git fetch --depth 1 origin "$ref" 2>/dev/null && git checkout -q --detach FETCH_HEAD; } || git checkout -q --detach "$ref" ) || return 1
+}
+built_ref() {  # built_ref <name>: the ref recorded at the last build ("" when unknown)
+  python3 - "$VERSIONS_JSON" "$1" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get(sys.argv[2], {}).get("ref", ""))
+except Exception:
+    print("")
+PY
+}
+record_build() {  # record_build <name> <ref> <src dir>
+  mkdir -p "$(dirname "$VERSIONS_JSON")"
+  python3 - "$VERSIONS_JSON" "$1" "$2" "$(git -C "$3" rev-parse --short HEAD 2>/dev/null || echo '?')" <<'PY' || true
+import json, sys, time
+path, name, ref, commit = sys.argv[1:5]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data[name] = {"ref": ref, "commit": commit, "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+json.dump(data, open(path, "w"), indent=1)
+PY
+}
+# a rebuild is due with --rebuild, when the binary is missing, or when a different ref than the one built is wanted
+# (an install from before refs were recorded keeps what it has; the link check below still runs)
+want_build() {  # want_build <name> <ref> <present?>
+  [ "$REBUILD" -eq 1 ] && return 0
+  [ "$3" -eq 0 ] && return 0
+  local was; was="$(built_ref "$1")"
+  [ -n "$was" ] && [ "$was" != "$2" ]
+}
+RTLSDR_BUILT=0
 build_rtlsdr() {
-  if [ "$REBUILD" -eq 0 ] && command -v rtl_test >/dev/null 2>&1 && [ -f /usr/local/lib/librtlsdr.so ] ; then echo "rtl-sdr-blog present"; return; fi
-  step "building rtl-sdr-blog (V4 support)"
+  local present=0
+  command -v rtl_test >/dev/null 2>&1 && [ -f /usr/local/lib/librtlsdr.so ] && present=1
+  if ! want_build rtlsdr "$RTLSDR_REF" "$present"; then echo "rtl-sdr-blog present"; return 0; fi
+  step "building rtl-sdr-blog $RTLSDR_REF (V4 support)"
   mkdir -p "$SRC_DIR"; cd "$SRC_DIR"
-  [ -d rtl-sdr-blog ] || git clone --depth 1 "$RTLSDR_REPO" rtl-sdr-blog
-  cd rtl-sdr-blog && git pull --ff-only || true
-  mkdir -p build && cd build
-  cmake .. -DINSTALL_UDEV_RULES=ON -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null
-  make -j"$(nproc)" >/dev/null && make install >/dev/null && ldconfig
-  cat >/etc/modprobe.d/blacklist-rtlsdr.conf <<'BL'
-# Dawn: keep the DVB kernel driver off the RTL-SDR stick
-blacklist dvb_usb_rtl28xxu
-blacklist rtl2832
-blacklist rtl2830
-blacklist rtl2832_sdr
-BL
-  echo "rtl-sdr-blog installed"
+  checkout rtl-sdr-blog "$RTLSDR_REPO" "$RTLSDR_REF" || return 1
+  mkdir -p rtl-sdr-blog/build && cd rtl-sdr-blog/build
+  # each step returns on failure: called as `build_rtlsdr || echo WARNING`, set -e does not apply inside it
+  cmake .. -DINSTALL_UDEV_RULES=ON -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null || return 1
+  make -j"$(nproc)" >/dev/null || return 1
+  make install >/dev/null || return 1
+  ldconfig
+  record_build rtlsdr "$RTLSDR_REF" "$SRC_DIR/rtl-sdr-blog"
+  RTLSDR_BUILT=1
+  echo "rtl-sdr-blog $RTLSDR_REF installed"
 }
 build_welle() {
-  if [ "$REBUILD" -eq 0 ] && command -v welle-cli >/dev/null 2>&1; then echo "welle-cli present"; return; fi
-  step "building welle.io (welle-cli)"
+  local present=0 force="${1:-0}"
+  command -v welle-cli >/dev/null 2>&1 && present=1
+  # a welle-cli built before the blog library was installed links the distro librtlsdr and never gets V4 support
+  if [ "$force" -eq 0 ] && [ "$RTLSDR_BUILT" -eq 0 ] && ! want_build welle "$WELLE_REF" "$present"; then echo "welle-cli present"; return 0; fi
+  step "building welle.io $WELLE_REF (welle-cli)"
   mkdir -p "$SRC_DIR"; cd "$SRC_DIR"
-  [ -d welle.io ] || git clone --depth 1 "$WELLE_REPO" welle.io
-  cd welle.io && git pull --ff-only || true
-  mkdir -p build && cd build
-  cmake .. -DBUILD_WELLE_IO=OFF -DBUILD_WELLE_CLI=ON -DRTLSDR=ON -DAIRSPY=OFF -DSOAPYSDR=OFF -DPROFILING=OFF -DCMAKE_BUILD_TYPE=Release >/dev/null
-  make -j"$( [ "$LOW_POWER" -eq 1 ] && echo 2 || nproc )" welle-cli >/dev/null
-  install -m 0755 welle-cli /usr/local/bin/welle-cli
+  checkout welle.io "$WELLE_REPO" "$WELLE_REF" || return 1
+  rm -rf welle.io/build && mkdir -p welle.io/build && cd welle.io/build
+  cmake .. -DBUILD_WELLE_IO=OFF -DBUILD_WELLE_CLI=ON -DRTLSDR=ON -DAIRSPY=OFF -DSOAPYSDR=OFF -DPROFILING=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/usr/local >/dev/null || return 1
+  make -j"$( [ "$LOW_POWER" -eq 1 ] && echo 2 || nproc )" welle-cli >/dev/null || return 1
+  install -m 0755 welle-cli /usr/local/bin/welle-cli || return 1
+  record_build welle "$WELLE_REF" "$SRC_DIR/welle.io"
   echo "welle-cli installed: $(welle-cli --help 2>&1 | head -1 || true)"
+}
+welle_links_blog_lib() { ldd /usr/local/bin/welle-cli 2>/dev/null | grep -q 'librtlsdr.* => /usr/local/lib/'; }
+check_welle_link() {
+  command -v welle-cli >/dev/null 2>&1 || return 0
+  [ -f /usr/local/lib/librtlsdr.so ] || return 0
+  if welle_links_blog_lib; then rm -f "$SDR_LIB_WARNING"; return 0; fi
+  echo "welle-cli does not use /usr/local/lib/librtlsdr (the RTL-SDR Blog library with V4 support); rebuilding it once"
+  build_welle 1 || true
+  if welle_links_blog_lib; then rm -f "$SDR_LIB_WARNING"; return 0; fi
+  local got; got="$(ldd /usr/local/bin/welle-cli 2>/dev/null | grep librtlsdr | xargs || true)"
+  echo "WARNING: welle-cli still links '${got:-no librtlsdr}', not /usr/local/lib: an RTL-SDR Blog V4 will not tune. Re-run with --rebuild."
+  mkdir -p "$(dirname "$SDR_LIB_WARNING")"
+  echo "welle-cli links ${got:-no librtlsdr} instead of the RTL-SDR Blog library in /usr/local/lib" >"$SDR_LIB_WARNING"
 }
 build_shairport() {
   if [ "$REBUILD" -eq 0 ] && command -v nqptp >/dev/null 2>&1; then echo "nqptp present"; else
@@ -238,9 +299,22 @@ build_shairport() {
   make -j"$(nproc)" >/dev/null && make install >/dev/null || return 1
   echo "shairport-sync installed: $(shairport-sync -V | head -1)"
 }
+# The DVB-T kernel driver must not claim the stick: written on every run (it used to be written only when the library
+# was built, so an install that found librtlsdr already there never got it), and unloaded now if it is loaded
+cat >/etc/modprobe.d/blacklist-rtlsdr.conf <<'BL'
+# Dawn: keep the DVB kernel driver off the RTL-SDR stick
+blacklist dvb_usb_rtl28xxu
+blacklist rtl2832
+blacklist rtl2830
+blacklist rtl2832_sdr
+blacklist r820t
+BL
+modprobe -r dvb_usb_rtl28xxu rtl2832_sdr rtl2832 r820t 2>/dev/null || true
+
 if [ "$NO_BUILD" -eq 0 ]; then
   build_rtlsdr || echo "WARNING: rtl-sdr-blog build failed (DAB will not work until fixed)"
   build_welle || echo "WARNING: welle.io build failed (DAB will not work until fixed)"
+  check_welle_link
   build_shairport || echo "WARNING: shairport-sync build failed (AirPlay unavailable)"
 fi
 
@@ -324,6 +398,7 @@ install -m 0755 "$D/bin/dawn-face" /usr/local/bin/dawn-face
 install -m 0755 "$D/bin/dawn-update" /usr/local/bin/dawn-update
 install -m 0755 "$D/bin/dawn-airplay-name" /usr/local/bin/dawn-airplay-name
 install -m 0755 "$D/bin/dawn-set-hostname" /usr/local/bin/dawn-set-hostname
+install -m 0755 "$D/bin/dawn-usb-reset" /usr/local/bin/dawn-usb-reset
 install -m 0440 "$D/sudoers/dawn" /etc/sudoers.d/dawn && visudo -cf /etc/sudoers.d/dawn >/dev/null
 sed -i -E 's/^(\s*name\s*=\s*)"[^"]*"/\1"'"$(grep -E '^\s*name:' /etc/dawn/config.yaml | head -1 | sed -E 's/.*name:\s*//; s/^"//; s/"$//' || echo Dawn)"'"/' /etc/shairport-sync.conf || true
 udevadm control --reload-rules && udevadm trigger || true
