@@ -11,6 +11,7 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 log = logging.getLogger("dawn.ws")
 router = APIRouter()
+SEND_TIMEOUT_S = 2.0
 
 
 class WsHub:
@@ -35,24 +36,43 @@ class WsHub:
         return any(v.get("role") == "face" and now - v.get("last_seen", 0.0) < max_age_s for v in self.info.values())
 
     async def broadcast(self, payload: dict) -> None:
+        """Send to every client at once, each with its own 2 s budget: one slow phone used to hold the face's copy of a
+        ring back by 2 s per broadcast, as the sends went one after another."""
         if not self.clients:
             return
         msg = json.dumps({"type": "state", "data": payload}, separators=(",", ":"))
-        dead = []
-        for ws in list(self.clients):
+        clients = list(self.clients)
+
+        async def send(ws: WebSocket) -> bool:
             try:
-                await asyncio.wait_for(ws.send_text(msg), timeout=2)
+                await asyncio.wait_for(ws.send_text(msg), timeout=SEND_TIMEOUT_S)
+                return True
             except Exception:  # noqa: BLE001
-                dead.append(ws)
-        for ws in dead:
-            self.clients.discard(ws)
-            self.info.pop(ws, None)
+                return False
+
+        results = await asyncio.gather(*(send(ws) for ws in clients))
+        for ws, ok in zip(clients, results, strict=True):
+            if not ok:
+                self.clients.discard(ws)
+                self.info.pop(ws, None)
 
 
 @router.websocket("/ws")
 async def ws_endpoint(ws: WebSocket) -> None:
     ctx = ws.app.state.ctx
     hub: WsHub = ws.app.state.ws_hub
+    client = ws.client.host if ws.client else ""
+    hosts = getattr(ws.app.state, "host_check", None)
+    if hosts is not None and not ctx.sim and not hosts.ok(ws.headers.get("host")):
+        await ws.close(code=4421)  # DNS rebinding: not a name of this clock
+        return
+    pin = ctx.config.web.auth.pin
+    if pin and client not in ("127.0.0.1", "::1"):
+        from .auth import COOKIE, check_token
+
+        if not check_token(ctx, ws.cookies.get(COOKIE)):
+            await ws.close(code=4401)  # the state carries everything the PIN protects
+            return
     await ws.accept()
     hub.clients.add(ws)
     hub.info[ws] = {"remote": ws.client.host if ws.client else None, "connected_at": ctx.store.iso(), "role": None,

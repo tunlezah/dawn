@@ -185,7 +185,7 @@ test('DAB playback shows station, DLS and slide; the encoder still pops the volu
 test('playing: the control bar stars the station as a preset and cycles presets', async ({ page }) => {
   // make sure there is something to cycle to and that triple j is not a preset yet
   for (const p of await (await fetch(`${BASE}/api/presets`)).json()) {
-    if (p.source === 'dab:1002') await fetch(`${BASE}/api/presets/${p.id}`, { method: 'DELETE' });
+    if (p.source === 'dab:1002') await fetch(`${BASE}/api/presets/${p.id}`, { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
   }
   const presets = await (await fetch(`${BASE}/api/presets`)).json();
   if (!presets.some((p: any) => p.source === 'dab:1005')) await post('/api/presets', { label: 'Double J', source: 'dab:1005' });
@@ -205,10 +205,10 @@ test('playing: the control bar stars the station as a preset and cycles presets'
 });
 
 test('AirPlay: artwork, device, progress and transport; idle switches to the ambient clock', async ({ page }) => {
-  await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { ambient_after_s: 2 } }) });
+  await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ display: { ambient_after_s: 2 } }) });
   try {
     await page.goto('/face');
-    await fetch(`${HUB}/airplay/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Sunrise', artist: 'Norah Jones' }) });
+    await fetch(`${HUB}/airplay/start`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ title: 'Sunrise', artist: 'Norah Jones' }) });
     await waitFor((s) => s.face.mode === 'playing' && s.now_playing.source === 'airplay');
     await expect(page.locator('.f-title')).toHaveText('Sunrise');
     await expect(page.locator('.f-sub')).toHaveText('Norah Jones');
@@ -223,8 +223,8 @@ test('AirPlay: artwork, device, progress and transport; idle switches to the amb
     await expect(page.locator('.f-progress')).toBeVisible();
     await waitFor((s) => !s.face.menu_open);
   } finally {
-    await fetch(`${HUB}/airplay/stop`, { method: 'POST' });
-    await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { ambient_after_s: 20 } }) });
+    await fetch(`${HUB}/airplay/stop`, { method: 'POST', headers: { 'x-dawn-client': '1' } });
+    await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ display: { ambient_after_s: 20 } }) });
   }
 });
 

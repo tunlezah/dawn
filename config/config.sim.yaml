@@ -245,8 +245,7 @@ web:
   host: 0.0.0.0
   port: 8080
   static_dir: null
-  cors_origins:
-  - '*'
+  cors_origins: []
   auth:
     pin: null
     session_hours: 720

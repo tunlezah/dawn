@@ -352,6 +352,16 @@ if [ "$IS_PI" -eq 1 ] && [ -f "$BOOTCFG" ]; then
     hyperpixel4)   OVERLAYS+=$'\ndtoverlay=vc4-kms-dpi-hyperpixel4';;
   esac
   [ "$LOW_POWER" -eq 1 ] && OVERLAYS+=$'\n# low-power board: smaller GPU split is fine for the kiosk\ngpu_mem=96'
+  # A DS3231 real-time clock on I2C bus 1 (0x68; the light sensor at 0x10 does not clash): the right time from the first
+  # second after a power cut, GPS or network or not. Answering on 0x68 (or already held by its driver, "UU", from an
+  # earlier run's overlay) keeps the overlay; fake-hwclock would only set the clock back to its saved time.
+  RTC=0
+  if command -v i2cdetect >/dev/null 2>&1 && [ -e /dev/i2c-1 ] && i2cdetect -y 1 0x68 0x68 2>/dev/null | grep -Eq '^60:.*(68|UU)'; then RTC=1; fi
+  if [ "$RTC" -eq 1 ]; then
+    OVERLAYS+=$'\n# DS3231 real-time clock on I2C bus 1 (0x68)\ndtoverlay=i2c-rtc,ds3231'
+    systemctl disable --now fake-hwclock >/dev/null 2>&1 || true
+    echo "DS3231 real-time clock found: overlay added, fake-hwclock disabled (the package stays)"
+  fi
   sed -i '/^# >>> dawn >>>/,/^# <<< dawn <<</d' "$BOOTCFG"
   printf '\n# >>> dawn >>>  (managed by deploy/install.sh; edit /etc/dawn/config.yaml instead)\n%s\n# <<< dawn <<<\n' "$OVERLAYS" >>"$BOOTCFG"
   grep -q '^dtoverlay=vc4-kms-v3d' "$BOOTCFG" || echo "WARNING: vc4-kms-v3d overlay not found in $BOOTCFG (needed for the DSI/DPI panel)"
@@ -435,9 +445,14 @@ sed "s|@UID@|$DAWN_UID|g" "$D/systemd/shairport-sync.service.d/dawn.conf" >/etc/
 for u in chrony gpsd; do
   install -D -m 0644 "$D/systemd/$u.service.d/dawn.conf" "/etc/systemd/system/$u.service.d/dawn.conf"
 done
+# a journal that survives a reboot, small enough for the SD card
+install -D -m 0644 "$D/journald/dawn.conf" /etc/systemd/journald.conf.d/dawn.conf
+mkdir -p /var/log/journal && systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true
+systemctl restart systemd-journald 2>/dev/null || true
 # cool mode: dawn-core may write the CPU frequency cap (group dawn)
 install -D -m 0644 "$D/tmpfiles.d/dawn-cpufreq.conf" /etc/tmpfiles.d/dawn-cpufreq.conf
-systemd-tmpfiles --create /etc/tmpfiles.d/dawn-cpufreq.conf 2>/dev/null || true
+install -D -m 0644 "$D/tmpfiles.d/dawn-rtc.conf" /etc/tmpfiles.d/dawn-rtc.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/dawn-cpufreq.conf /etc/tmpfiles.d/dawn-rtc.conf 2>/dev/null || true
 systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true

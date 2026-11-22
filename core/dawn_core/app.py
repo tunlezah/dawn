@@ -64,15 +64,14 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
     app = FastAPI(title="Dawn", version=__version__, lifespan=lifespan, docs_url="/api/docs", openapi_url="/api/openapi.json")
     app.state.ctx = ctx
     app.state.ws_hub = hub
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=cfg_mgr.config.web.cors_origins,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # same-origin only, unless origins are listed by name: "*" (the old default, still in some config files) would let
+    # any page on the network pass the X-Dawn-Client check through a preflighted fetch
+    origins = [o for o in cfg_mgr.config.web.cors_origins if o.strip() != "*"]
+    if origins:
+        app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
     from .api.auth import install_auth
+    from .api.guard import install_guard
 
     install_auth(app, ctx)
 
@@ -82,6 +81,9 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
         if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/"):
             ctx.note_activity()
         return await call_next(request)
+
+    # added last, so it runs first: a refused request reaches neither the activity note, auth, nor the routes
+    app.state.host_check = install_guard(app, ctx)
 
     app.include_router(router_state.router)
     app.include_router(router_config.router)

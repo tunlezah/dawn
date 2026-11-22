@@ -402,8 +402,10 @@ web:
   port: 8080
   # Built web assets (null = bundled web/dist).
   static_dir: null
-  cors_origins:
-  - '*'
+  # Other web origins allowed to call the API from a browser (e.g. http://laptop.local:5173 for UI development). '*' is ignored: it would let any page on the network change the clock.
+  cors_origins: []
+  # Extra names the clock may be reached by (a DNS name of your own). localhost, its addresses, <hostname>.local and the setup hotspot's 10.42.0.1 always work; anything else is refused (DNS rebinding).
+  allowed_hosts: []
   auth:
     # Optional PIN for the control UI (null = open on the LAN).
     pin: null
@@ -411,6 +413,8 @@ web:
 
 system:
   heartbeat_interval_s: 5
+  # Optional outside check-in (Healthchecks, Uptime Kuma push): GET every 5 minutes with ?status=ok|fail&msg=... so you are told when the clock is unhealthy or dead. Nothing is sent unless this is set.
+  heartbeat_url: null
   # Send systemd watchdog keepalives.
   watchdog: true
   supervisor:

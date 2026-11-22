@@ -83,3 +83,32 @@ async def test_an_unreachable_decoder_is_asked_less_and_less_often(tmp_path, mon
     up["ok"] = False
     await t._poll_mux()
     assert waits == [2.0]
+
+
+def test_dab_time_is_checked_against_the_last_saved_time(tmp_path) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    fake = tmp_path / "fake-hwclock.data"
+    fake.write_text("2026-11-22 03:00:00\n")
+    ref = timed.reference_time(fake, tmp_path / "no-rtc")
+    assert ref == datetime(2026, 11, 22, 3, 0, tzinfo=UTC)
+    assert timed.implausible(ref + timedelta(minutes=50), ref) is None  # later today: fine
+    assert timed.implausible(ref - timedelta(seconds=30), ref) is None  # within a minute of it
+    assert "before the last saved time" in timed.implausible(ref - timedelta(weeks=1024), ref)  # a GPS-style week rollover
+    assert "two years" in timed.implausible(ref + timedelta(days=800), ref)
+    assert timed.implausible(datetime(2001, 1, 1, tzinfo=UTC), None) is None  # nothing to judge by
+    rtc = tmp_path / "since_epoch"
+    rtc.write_text(str(int(datetime(2026, 11, 23, tzinfo=UTC).timestamp())))
+    assert timed.reference_time(fake, rtc) == datetime(2026, 11, 23, tzinfo=UTC)  # the later of the two
+
+
+def test_a_rejected_sample_is_counted_and_not_written(tmp_path, monkeypatch) -> None:
+    from datetime import UTC, datetime
+
+    t = timed.Timed(_args(tmp_path))
+    monkeypatch.setattr(timed, "reference_time", lambda: datetime(2026, 11, 22, tzinfo=UTC))
+    now = datetime(2026, 11, 22, 1, 0, tzinfo=UTC)
+    t._sample(datetime(2007, 4, 8, tzinfo=UTC), now, precision=-3)
+    assert t.written == 0 and t.rejected == 1 and "before" in t.status()["last_rejected"]
+    t._sample(now, now, precision=-3)
+    assert t.written == 1

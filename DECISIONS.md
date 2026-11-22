@@ -691,6 +691,29 @@ each section. Every entry says what was decided and why, so it can be revisited.
   change of what it shows (a time source, the network, the next alarm). The
   daily scene offsets every random seed by the local date.
 
+## Hardening
+
+- **A shutdown names the alarm it would silence.** A Pi 4 cannot switch itself on, so powering off at night means no
+  alarm. The face's countdown says which; the API wants `confirm` when an alarm or nap is due within a day (409
+  otherwise), and refuses outright while one rings. On a Pi 5 the RTC wake alarm (writable by group dawn through a
+  tmpfiles rule) is set 10 minutes before it.
+- **Changes need Dawn's own header; names need to be the clock's.** With no login by default, CSRF (a form post from
+  any page) and DNS rebinding (a page on an attacker's name resolving to the clock) were both open. `X-Dawn-Client: 1`
+  on every non-GET `/api/*` request is the cheapest defence that a browser enforces: a form cannot set it and a
+  cross-origin fetch with it needs a CORS preflight, so `*` is no longer honoured as an origin. The Host header must
+  be localhost, one of the box's addresses, `<hostname>.local`, the hotspot's 10.42.0.1 or a configured name (421
+  otherwise); `/api/health` from the box itself is always answered. The simulator skips the Host check (a laptop has
+  any name). The kiosk is held to nothing beyond the header.
+- **The RTC is set up when it is there.** A DS3231 answering on I2C 0x68 (or held by its driver) gets the overlay and
+  `fake-hwclock` is disabled, since restoring a saved time would only set a correct clock back. Without one, DAB time
+  is checked against what `fake-hwclock` saved: earlier than that (or two years later) cannot be right. An ensemble an
+  hour off is not caught; the RTC is the fix for that.
+- **The evening check reuses the alarm's preparation, without its side effects.** `prepare_for(may_retune=False)`
+  with its own occurrence key, only when nobody listens to DAB, and not at all while cool mode has the radio paused:
+  it tells the owner tonight what the preparation would find tomorrow, and changes nothing.
+- **An outside heartbeat is opt-in.** A dead clock cannot report itself, so a push monitor that notices the silence is
+  the only alarm for "the alarm clock is down"; nothing leaves the box unless `system.heartbeat_url` is set.
+
 ## Cool mode
 
 - **A pure planner and a thin service, like sleep mode.** `power/cool.py` takes what PowerService saw (SoC

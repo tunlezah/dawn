@@ -17,6 +17,7 @@ from ..tasks import spawn
 from . import hw as hwmod
 
 log = logging.getLogger("dawn.sysinfo")
+HEARTBEAT_URL_EVERY_S = 300.0
 REPO_DIR = str(Path(__file__).resolve().parents[3])
 
 
@@ -65,6 +66,8 @@ class SysInfoService(Service):
         self.booted = time.time()
         self._stall_logged = False
         self._vcgencmd_at = 0.0
+        self._pinged_at: float | None = None
+        self._ping_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         cfg = self.ctx.config
@@ -81,6 +84,9 @@ class SysInfoService(Service):
         st.version = __version__
         st.git_rev = await asyncio.to_thread(lambda: git_rev(cfg.system.update_repo_dir) or git_rev(REPO_DIR))
         st.booted_at = self.ctx.store.iso()
+        from .power import can_wake
+
+        st.can_wake = can_wake(self.ctx)
         self.ctx.store.state.dab.sdr_present = self.hw.sdr_present
         self.ctx.store.state.dab.tuner = self.hw.sdr_tuner
         low = cfg.display.low_cpu
@@ -108,6 +114,36 @@ class SysInfoService(Service):
 
     def _alarms_alive(self) -> bool:
         return alarms_alive(self.ctx)
+
+    def heartbeat_message(self, alive: bool) -> tuple[str, str]:
+        """(status, msg) for the outside check-in: fail when the alarms are not alive or Diagnostics has a problem."""
+        st = self.ctx.store.state
+        nxt = st.alarms.next
+        problems = st.diagnostics.fail
+        msg = f"alarms_alive={'yes' if alive else 'no'}; next={nxt.at[:16] if nxt else 'none'}; problems={problems}; warnings={st.diagnostics.warn}"
+        return ("ok" if alive and not problems else "fail"), msg
+
+    def _heartbeat_url(self, alive: bool, now: float | None = None) -> None:
+        url = self.ctx.config.system.heartbeat_url
+        now = time.monotonic() if now is None else now
+        if not url or (self._pinged_at is not None and now - self._pinged_at < HEARTBEAT_URL_EVERY_S):
+            return
+        if self._ping_task is not None and not self._ping_task.done():
+            return
+        self._pinged_at = now
+        status, msg = self.heartbeat_message(alive)
+        self._ping_task = spawn(self._ping(url, status, msg), name="heartbeat-url", owner="sysinfo")
+
+    async def _ping(self, url: str, status: str, msg: str) -> None:
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                r = await c.get(url, params={"status": status, "msg": msg})
+            if r.status_code >= 400:
+                log.warning("heartbeat URL answered %s", r.status_code)
+        except Exception as e:  # noqa: BLE001
+            log.warning("heartbeat URL not reachable: %s", e)
 
     async def _tick(self) -> None:
         cfg = self.ctx.config
@@ -166,6 +202,7 @@ class SysInfoService(Service):
         st.loops_dead = dead
         alive = self._alarms_alive()
         self.ctx.store.state.alarms.engine_alive = alive  # the face rings by itself when this stays false
+        self._heartbeat_url(alive)
         given_up = lv.exhausted() if repairing else lv.gating_dead()
         feed = not given_up
         if cfg.system.watchdog:

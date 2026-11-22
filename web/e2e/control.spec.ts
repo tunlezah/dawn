@@ -13,7 +13,7 @@ test('home shows the clock and quick actions', async ({ page }) => {
 test('alarms: add, see it listed, skip next, delete', async ({ page }) => {
   // clean leftovers from earlier runs, then use a unique label
   for (const a of await (await fetch(BASE + '/api/alarms')).json()) {
-    if (String(a.label).startsWith('PW ')) await fetch(`${BASE}/api/alarms/${a.id}`, { method: 'DELETE' });
+    if (String(a.label).startsWith('PW ')) await fetch(`${BASE}/api/alarms/${a.id}`, { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
   }
   const label = `PW ${Date.now().toString().slice(-6)}`;
   await page.goto('/alarms');
@@ -28,7 +28,7 @@ test('alarms: add, see it listed, skip next, delete', async ({ page }) => {
   const alarms = await (await fetch(BASE + '/api/alarms')).json();
   const mine = alarms.find((a: any) => a.label === label);
   expect(mine.skip_next).toBe(true);
-  await fetch(`${BASE}/api/alarms/${mine.id}`, { method: 'DELETE' });
+  await fetch(`${BASE}/api/alarms/${mine.id}`, { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
 });
 
 test('radio: stations are listed with logos and play works', async ({ page }) => {
@@ -59,10 +59,10 @@ test('timers: starting a sleep timer while playing promotes it; cancel keeps pla
 test('settings: change the device name through the config API and see it in state', async ({ page }) => {
   await page.goto('/settings');
   await expect(page.getByRole('heading', { name: 'Settings' })).toBeVisible();
-  await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ general: { name: 'Dawn (e2e)' } }) });
+  await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ general: { name: 'Dawn (e2e)' } }) });
   await waitFor((s) => s.settings.name === 'Dawn (e2e)');
   await expect(page.locator('main')).toBeVisible();
-  await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ general: { name: 'Dawn (sim)' } }) });
+  await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ general: { name: 'Dawn (sim)' } }) });
 });
 
 test('status: time sources and logs render', async ({ page }) => {

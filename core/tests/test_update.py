@@ -245,7 +245,7 @@ async def test_an_update_is_refused_near_an_alarm(tmp_config) -> None:
     from dawn_core.state.ui import NextAlarm, RingingInfo, TimerInfo
 
     app = create_app(ConfigManager(tmp_config, poll_s=10))
-    async with app.router.lifespan_context(app), AsyncClient(transport=ASGITransport(app=app), base_url="http://t") as c:
+    async with app.router.lifespan_context(app), AsyncClient(transport=ASGITransport(app=app), base_url="http://t", headers={"X-Dawn-Client": "1"}) as c:
         ctx = app.state.ctx
         st = ctx.store.state
         now = ctx.store.now()

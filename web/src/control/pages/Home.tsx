@@ -2,6 +2,7 @@ import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { Card, Dot, Slider } from '../../shared/components';
 import { gpsLook } from '../../shared/gps';
+import { eveningNote } from '../../shared/evening';
 import { fmtDate, fmtTime, useNow, fmtDayTime, fmtIn, fmtDuration } from '../../shared/time';
 import { actions } from '../../shared/api';
 import { navigate } from '../../shared/router';
@@ -17,6 +18,7 @@ export function Home() {
   const playing = s.audio.active_source !== 'none';
   const art = np.artwork_url || np.slide_url || np.logo_url;
   const gps = gpsLook(s.time_sources.gps);
+  const evening = eveningNote(s);
 
   return (
     <div className="space-y-4">
@@ -92,7 +94,8 @@ export function Home() {
         {s.alarms.next ? (
           <>
             <div className="flex items-center justify-between">
-              <div><div className="text-lg">{s.alarms.next.label}</div><div className="text-muted text-sm">{fmtDayTime(s.alarms.next.at, s.tz, s.settings.clock_24h)}</div></div>
+              <div><div className="text-lg">{s.alarms.next.label}</div><div className="text-muted text-sm">{fmtDayTime(s.alarms.next.at, s.tz, s.settings.clock_24h)}{evening ? (evening.ok ? ' · checked ✓' : '') : ''}</div>
+                {evening && evening.ok === false && <div className="text-sm text-warn" data-testid="home-evening">Checked this evening: {evening.text}</div>}</div>
               <div className="text-muted text-sm">in {fmtIn(s.alarms.next.in_seconds)}</div>
             </div>
             {(() => {

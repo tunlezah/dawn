@@ -400,7 +400,7 @@ async def test_test_ring_during_an_alarm_is_refused_by_the_api(tmp_config) -> No
         a._task.cancel()
         a.create(AlarmIn(label="Real", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0), now=BEFORE)
         await a.tick(now=AT)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
             r = await c.post("/api/alarms/test", json={"source": "chime:birds"})
             assert r.status_code == 409 and "Real" in r.json()["detail"]
         await a.stop_ringing()

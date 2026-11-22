@@ -126,6 +126,8 @@ class AlarmService(Service):
         self._dab_fail: dict[tuple[int, str], int] = {}  # consecutive failed DAB checks per occurrence
         self._next_dab: tuple[str, datetime] | None = None  # the next alarm on DAB: (label, when)
         self.next_dab_wake: datetime | None = None  # ...and when it first needs the radio's attention (its light wake if earlier)
+        self._evening_on: str | None = None  # the day the evening readiness check ran
+        self._evening_task: asyncio.Task[None] | None = None
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -430,7 +432,32 @@ class AlarmService(Service):
                 self.tick_failures = 0
                 self.last_tick = time.monotonic()
                 self.ctx.liveness.beat("alarm-engine")  # only a tick that worked counts
+                self._maybe_evening_check()
             await asyncio.sleep(1.0)
+
+    def _maybe_evening_check(self, now: datetime | None = None) -> None:
+        """Half an hour before bed, check the next alarm without disturbing anything (alarms/evening.py). In the
+        background: the engine's tick never waits for it. The result is dropped once that alarm has passed."""
+        from . import evening
+
+        now = now or self.ctx.store.now()
+        st = self.ctx.store.state.alarms
+        ec = st.evening_check
+        if ec is not None and (datetime.fromisoformat(ec.at) < now or st.next is None or st.next.id != ec.alarm_id or st.next.at != ec.at):
+            st.evening_check = None
+            self.ctx.store.touch()
+        if self._evening_task is not None and not self._evening_task.done():
+            return
+        if not evening.due(self.ctx, now, self._evening_on):
+            return
+        self._evening_on = now.date().isoformat()
+
+        async def go() -> None:
+            res = await evening.run(self.ctx, self, now)
+            self.ctx.store.state.alarms.evening_check = res
+            self.ctx.store.touch()
+
+        self._evening_task = spawn(go(), name="evening-check", owner="alarms")
 
     async def restart_loop(self) -> None:
         """Liveness found the engine dead or stuck: a new engine task (a ring in progress is its own session)."""

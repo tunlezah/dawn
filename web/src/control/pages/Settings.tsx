@@ -30,12 +30,24 @@ export function Settings() {
   const [join, setJoin] = useReactState<{ ssid: string; psk: string } | null>(null);
   const [msg, setMsg] = useReactState<string | null>(null);
   const [updateMsg, setUpdateMsg] = useReactState<string | null>(null);
+  const [offerPin, setOfferPin] = useReactState(false);
   const reload = () => api.get<Cfg>('/api/config').then((c) => { setCfg(c); setDraft({}); });
   useEffect(() => { reload(); }, []);
   const patch = async (p: Record<string, unknown>) => { try { await api.patch('/api/config', p); await reload(); setMsg('Saved'); setTimeout(() => setMsg(null), 1500); } catch (e) { setMsg(e instanceof ApiError ? `Error: ${JSON.stringify(e.detail)}` : String(e)); } };
   const scanWifi = async () => { setWifiBusy(true); setWifiErr(null); try { setWifi(await api.get<WifiNet[]>('/api/wifi/networks')); } catch (e) { setWifiErr(e instanceof ApiError && e.status === 404 ? 'Wi-Fi management is not available in this build.' : String(e)); } finally { setWifiBusy(false); } };
   const restore = async (file: File) => { const text = await file.text(); try { await api.post('/api/system/restore', JSON.parse(text)); setMsg('Restored. Services apply the new settings now.'); reload(); } catch (e) { setMsg(`Restore failed: ${e instanceof ApiError ? e.message : String(e)}`); } };
 
+  // With an alarm due within a day the API answers 409 until it is confirmed: ask, naming the alarm
+  const shutDown = async () => {
+    if (!confirm('Shut down now? Unplug only after the screen goes dark.')) return;
+    try {
+      await api.post('/api/system/shutdown', {});
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && !s.alarms.ringing) {
+        if (confirm(`${e.message}\n\nShut down anyway?`)) await api.post('/api/system/shutdown', { confirm: true }).catch((x) => setMsg(String(x.message)));
+      } else setMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
   if (!cfg) return <div className="p-6"><Spinner /></div>;
   const loc = { ...cfg.location, ...draft };
   const gps = gpsLook(s.time_sources.gps);
@@ -94,9 +106,20 @@ export function Settings() {
           </Row>
         ))}
         {join && (
-          <form className="flex gap-2 mt-3" onSubmit={async (e) => { e.preventDefault(); try { await api.post('/api/wifi/connect', join); setMsg(`Joining ${join.ssid}…`); setJoin(null); } catch (err) { setMsg(String((err as Error).message)); } }}>
+          <form className="flex gap-2 mt-3" onSubmit={async (e) => { e.preventDefault(); try { await api.post('/api/wifi/connect', join); setMsg(`Joining ${join.ssid}…`); setJoin(null); if (!cfg.web.auth.pin) setOfferPin(true); } catch (err) { setMsg(String((err as Error).message)); } }}>
             <span className="self-center text-sm">{join.ssid}</span><input type="password" placeholder="password" value={join.psk} onChange={(e) => setJoin({ ...join, psk: e.target.value })} /><button className="btn btn-sm btn-primary">Connect</button><button type="button" className="btn btn-sm btn-ghost" onClick={() => setJoin(null)}>✕</button>
           </form>
+        )}
+        {offerPin && !cfg.web.auth.pin && (
+          <div className="mt-3 rounded-xl border border-border p-3" data-testid="offer-pin">
+            <div className="text-sm font-medium">Set a PIN for this control page?</div>
+            <div className="text-xs text-muted mt-1">Anyone on your Wi-Fi can open it otherwise. The clock's own face never needs it. You can skip this and set one later under Device.</div>
+            <div className="flex gap-2 mt-2">
+              <input type="password" inputMode="numeric" placeholder="new PIN" className="w-28" value={pin} onChange={(e) => setPin(e.target.value)} />
+              <button className="btn btn-sm btn-primary" disabled={!pin} onClick={() => { patch({ web: { auth: { pin } } }); setPin(''); setOfferPin(false); }}>Set PIN</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setOfferPin(false)}>Skip</button>
+            </div>
+          </div>
         )}
       </Card>
 
@@ -125,7 +148,7 @@ export function Settings() {
       <Card title="Power">
         <div className="flex gap-2">
           <button className="btn" onClick={() => confirm('Reboot now?') && api.post('/api/system/reboot')}>Reboot</button>
-          <button className="btn btn-danger" onClick={() => confirm('Shut down now? Unplug only after the screen goes dark.') && api.post('/api/system/shutdown')}>Shut down</button>
+          <button className="btn btn-danger" onClick={shutDown}>Shut down</button>
         </div>
       </Card>
     </div>

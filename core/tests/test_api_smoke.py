@@ -11,7 +11,7 @@ from dawn_core.config import ConfigManager
 async def client(tmp_config):
     app = create_app(ConfigManager(tmp_config, poll_s=10))
     async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
             yield c
 
 
@@ -61,7 +61,7 @@ def test_the_face_is_known_by_what_its_page_sends(tmp_config) -> None:
     from fastapi.testclient import TestClient
 
     app = create_app(ConfigManager(tmp_config, poll_s=10))
-    with TestClient(app) as c:
+    with TestClient(app, headers={"X-Dawn-Client": "1"}) as c:
         hub = app.state.ws_hub
         with c.websocket_connect("/ws") as ws:
             assert ws.receive_json()["type"] == "state"

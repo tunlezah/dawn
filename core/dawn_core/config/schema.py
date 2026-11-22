@@ -448,7 +448,14 @@ class WebConfig(StrictModel):
     host: str = "0.0.0.0"
     port: int = Field(8080, ge=1, le=65535)
     static_dir: str | None = Field(None, description="Built web assets (null = bundled web/dist).")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = Field(
+        default_factory=list,
+        description="Other web origins allowed to call the API from a browser (e.g. http://laptop.local:5173 for UI development). '*' is ignored: it would let any page on the network change the clock.",
+    )
+    allowed_hosts: list[str] = Field(
+        default_factory=list,
+        description="Extra names the clock may be reached by (a DNS name of your own). localhost, its addresses, <hostname>.local and the setup hotspot's 10.42.0.1 always work; anything else is refused (DNS rebinding).",
+    )
     auth: AuthConfig = AuthConfig()
 
 
@@ -495,6 +502,10 @@ class SupervisorConfig(StrictModel):
 
 class SystemConfig(StrictModel):
     heartbeat_interval_s: int = Field(5, ge=1, le=60)
+    heartbeat_url: str | None = Field(
+        None, pattern=r"^https?://",
+        description="Optional outside check-in (Healthchecks, Uptime Kuma push): GET every 5 minutes with ?status=ok|fail&msg=... so you are told when the clock is unhealthy or dead. Nothing is sent unless this is set.",
+    )
     watchdog: bool = Field(True, description="Send systemd watchdog keepalives.")
     supervisor: SupervisorConfig = SupervisorConfig()
     cpu_temp_path: str = "/sys/class/thermal/thermal_zone0/temp"

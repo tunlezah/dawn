@@ -80,9 +80,12 @@ class _Actions(Actions):
         self._face().set_shutdown_countdown(seconds_left)
 
     async def shutdown(self) -> None:
-        from ..system.power import shutdown
+        from ..system.power import ShutdownRefused, shutdown
 
-        await shutdown(self.ctx)
+        try:
+            await shutdown(self.ctx, confirmed=True, source="button")  # held for 3 s with the warning on screen
+        except ShutdownRefused as e:
+            log.warning("shutdown refused: %s", e)
 
 
 class InputService(Service):

@@ -22,7 +22,7 @@ PLOTS = ("spectrum", "nullspectrum", "impulseresponse", "constellation")
 # events worth marking on the history graphs
 TIMELINE = ["dab_restart", "dab_scan", "ring_start", "ring_fallback", "ring_restored", "alarm_fire", "alarm_missed", "hotspot_start", "hotspot_stop",
             "diag_action", "light_wake", "sleep_mode", "reboot", "shutdown", "restore", "update_start", "wifi_connect",
-            "hotspot_retry", "gps_presence", "clock_step", "nap_ring_failed", "dab_drop", "cool_mode", "dab_pause", "dab_resume"]
+            "hotspot_retry", "gps_presence", "clock_step", "nap_ring_failed", "dab_drop", "cool_mode", "dab_pause", "dab_resume", "evening_check"]
 
 
 def diag(ctx: DawnContext = Depends(get_ctx)) -> DiagnosticsService:

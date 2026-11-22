@@ -5,6 +5,44 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.12] - 2026-11-22
+
+Other hardening (robustness plan WP-H, H1 to H8). Each part stands alone.
+
+### Fixed
+- **Shutting down with an alarm pending** (H1). The hold-to-shutdown countdown on the face says "The 06:30 alarm will
+  not ring while Dawn is off" when an alarm or nap is due within a day; `POST /api/system/shutdown` answers 409 naming
+  the alarm unless the body is `{"confirm": true}` (Settings asks), and is refused while an alarm rings. On a Pi 5 the
+  RTC is set to switch the clock on 10 minutes before that alarm ("Dawn will switch itself on at 06:20").
+- **LAN security** (H5). Any web page opened on the Wi-Fi could shut the clock down or stop an alarm with a plain form
+  post. Every non-GET `/api/*` request now needs `X-Dawn-Client: 1` (Dawn's pages send it; a cross-site form cannot,
+  and a cross-site fetch with it is refused by CORS: `web.cors_origins` no longer honours `*`, now also ignored in
+  older config files). Only Host names of the clock itself are served (localhost, its addresses, `<hostname>.local`,
+  10.42.0.1 and the new `web.allowed_hosts`): anything else is 421, which stops DNS rebinding. At most 5 wrong PINs a
+  minute from one address, then 60 s of 429. With a PIN set, the WebSocket needs the session cookie (except from the
+  box itself). After joining a Wi-Fi network from Settings, Dawn offers to set a PIN.
+- **The WebSocket fan-out** (H8) sends to every client at once, each with its own 2 s budget: one slow phone held the
+  face's copy of a ring back by 2 s per broadcast.
+
+### Added
+- **Real-time clock** (H2): the installer looks for a DS3231 on I2C bus 1 (0x68), adds `dtoverlay=i2c-rtc,ds3231` and
+  disables `fake-hwclock` (the package stays); *Diagnostics → Time sync* reports the RTC, or that after a power cut the
+  time is unknown until DAB, GPS or the internet answers.
+- **A gross-error guard on DAB time** (H3): dawn-timed rejects a sample more than a minute before the time
+  `fake-hwclock` saved (or the RTC holds) or more than two years after it (a week rollover, a broken ensemble), counts
+  them in its status and *Diagnostics → Time sync* shows them.
+- **Logs that survive a reboot** (H4): a journald drop-in keeps the journal on the card (`Storage=persistent`, 64 MB,
+  14 days), so `journalctl -b -1` shows the night that ended in a reboot; chrony logs `tracking` only (it wrote its
+  measurements and statistics to the card all the time).
+- **The evening readiness check** (H6): half an hour before bedtime (21:30 with sleep mode off) the next alarm due within
+  14 hours is checked without disturbing anything (an output, PipeWire answering, its players, and for DAB the station
+  on air, only when nobody is listening and never by retuning). The sleep clock, the standby strip and Home show
+  "06:30 ✓" or "06:30 · will start on the chime: no DAB signal on 9A", so there is time to fix it before sleeping.
+- **An optional outside heartbeat** (H7): `system.heartbeat_url` (off; nothing is sent unless set) is called every 5
+  minutes with `?status=ok|fail&msg=…` (alarms alive, the next alarm, the count of problems), for a Healthchecks or
+  Uptime Kuma push monitor that alerts a phone when the clock is unhealthy or dead.
+- README: hardware recommendations (a GPIO piezo, a DS3231, the SDR outside the case, ventilation, the supply, a UPS).
+
 ## [0.2.11] - 2026-11-22
 
 Cool mode (robustness plan WP-G).

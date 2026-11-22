@@ -49,9 +49,10 @@ export interface AlarmPrep {
   alarm_id: number; label: string; at: string; source: string; ready: boolean; pending: boolean; problems: string[]; start_tier: RingTier;
   checked_at: string | null;
 }
+export interface EveningCheck { alarm_id: number; label: string; at: string; ok: boolean | null; message: string; checked_at: string }
 export interface AlarmsState {
   items: AlarmSummary[]; next: NextAlarm | null; ringing: RingingInfo | null; on_leave_until: string | null; light_wake_active: boolean;
-  prepare: AlarmPrep | null;
+  prepare: AlarmPrep | null; evening_check: EveningCheck | null;
   /** core could not read its alarms, or what it read may miss recent changes (the database is unreadable, or
    *  read-only with a write-ahead log it cannot read): `items` and `next` are not to be trusted */
   degraded: boolean; degraded_reason: string | null;
@@ -99,7 +100,7 @@ export interface SystemState {
   throttled: number | null; throttle_flags: string[];
   sdr_present: boolean; sdr_tuner: string | null; panel: string; network: NetworkInfo; update_available: boolean; update_running: boolean;
   update_log: string | null; heartbeat_at: string | null; sim: boolean; version: string; git_rev: string | null; booted_at: string | null;
-  config_error: string | null; services: Record<string, string>; task_failures: { name: string; owner: string | null; at: number; error: string }[]; loops_dead: string[]; update_result: { status: string; message?: string; from?: string; to?: string; version?: string; at?: string } | null;
+  config_error: string | null; services: Record<string, string>; task_failures: { name: string; owner: string | null; at: number; error: string }[]; loops_dead: string[]; update_result: { status: string; message?: string; from?: string; to?: string; version?: string; at?: string } | null; can_wake: boolean;
 }
 export interface BtDevice { address: string; name: string; paired: boolean; connected: boolean; trusted: boolean; icon: string | null; rssi: number | null }
 export interface BluetoothState { available: boolean; powered: boolean; discoverable: boolean; discoverable_until: string | null; scanning: boolean; name: string; devices: BtDevice[]; connected: string | null; playing: boolean }
@@ -124,13 +125,13 @@ export const EMPTY_STATE: UIState = {
     orbit: true, strip_autohide_s: 120, scene_daily: true, cool: false },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
-  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null, degraded: false, degraded_reason: null, engine_alive: true },
+  alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null, evening_check: null, degraded: false, degraded_reason: null, engine_alive: true },
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
   dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown', paused: null },
   presets: [],
   time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { presence: 'absent', last_seen_at: null, available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null, hours: [] },
-  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {}, task_failures: [], loops_dead: [], update_result: null },
+  system: { model: '', hostname: 'dawn', cpu_temp_c: null, uptime_s: 0, load1: null, mem_used_percent: null, throttled: null, throttle_flags: [], sdr_present: false, sdr_tuner: null, panel: 'none', network: { online: false, ip: null, ssid: null, interface: null, hotspot_active: false, hotspot_ssid: null, wifi_configured: null, mdns_name: null }, update_available: false, update_running: false, update_log: null, heartbeat_at: null, sim: false, version: '', git_rev: null, booted_at: null, config_error: null, services: {}, task_failures: [], loops_dead: [], update_result: null, can_wake: false },
   bluetooth: { available: false, powered: false, discoverable: false, discoverable_until: null, scanning: false, name: 'Dawn', devices: [], connected: null, playing: false },
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },

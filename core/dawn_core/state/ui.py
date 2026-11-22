@@ -195,6 +195,17 @@ class AlarmPrep(BaseModel):
     checked_at: str | None = None
 
 
+class EveningCheck(BaseModel):
+    """The evening readiness check of the next alarm (an hour or so before bed): what the alarm will start on."""
+
+    alarm_id: int
+    label: str
+    at: str
+    ok: bool | None  # True: ready; False: it will start on the chime (or the tone); None: checked again before it rings
+    message: str = ""
+    checked_at: str
+
+
 class AlarmsState(BaseModel):
     items: list[AlarmSummary] = Field(default_factory=list)
     next: NextAlarm | None = None
@@ -209,6 +220,7 @@ class AlarmsState(BaseModel):
     # the engine ticks (sysinfo sets it every heartbeat); false means no alarm is being evaluated, so the face
     # treats core as down for its own backup ring even though core answers
     engine_alive: bool = True
+    evening_check: EveningCheck | None = None
 
 
 class TimerInfo(BaseModel):
@@ -390,6 +402,7 @@ class SystemState(BaseModel):
     task_failures: list[dict] = Field(default_factory=list)  # background tasks that raised: last 20 (name, at, error)
     loops_dead: list[str] = Field(default_factory=list)  # loops inside dawn-core found dead or stale (liveness.py)
     update_result: dict | None = None  # the last software update: status ok | rolled_back | failed, message, from, to, at
+    can_wake: bool = False  # a Pi 5 with its RTC: a shutdown sets it to switch the clock on before the next alarm
 
 
 class BtDevice(BaseModel):

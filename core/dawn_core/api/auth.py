@@ -16,6 +16,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from ..context import DawnContext
+from .guard import LoginLimiter
 
 COOKIE = "dawn_session"
 EXEMPT_PREFIXES = ("/api/auth/", "/api/health", "/assets", "/face", "/static", "/manifest.webmanifest", "/sw.js")
@@ -56,11 +57,21 @@ def install_auth(app: FastAPI, ctx: DawnContext) -> None:
                 return JSONResponse({"detail": "PIN required"}, status_code=401)
         return await call_next(request)
 
+    limiter = LoginLimiter()
+    app.state.login_limiter = limiter
+
     @app.post("/api/auth/login", tags=["auth"])
-    async def login(body: dict) -> JSONResponse:
+    async def login(body: dict, request: Request) -> JSONResponse:
         pin = ctx.config.web.auth.pin
+        addr = request.client.host if request.client else "?"
+        wait = limiter.locked(addr)
+        if wait:
+            return JSONResponse({"ok": False, "detail": f"Too many wrong PINs; try again in {wait:.0f} s."}, status_code=429,
+                                headers={"Retry-After": str(int(wait) + 1)})
         if pin and not hmac.compare_digest(str(body.get("pin", "")), pin):
+            limiter.failed(addr)
             return JSONResponse({"ok": False}, status_code=401)
+        limiter.succeeded(addr)
         resp = JSONResponse({"ok": True})
         resp.set_cookie(COOKIE, make_token(ctx), max_age=ctx.config.web.auth.session_hours * 3600, httponly=True, samesite="lax")
         return resp

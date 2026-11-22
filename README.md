@@ -65,6 +65,23 @@ auto-detected at boot and the fallbacks stay supported:
 | Inputs | touch (everything is on the screen) + Adafruit 377 bare rotary encoder with push switch (internal pull-ups) | optional big arcade button (off by default; GPIO, `gpiozero` + `lgpio`) |
 | Backup buzzer | none: the backup tone plays through the speaker and the face | optional active 3.3 V piezo buzzer on a free GPIO (`alarm_defaults.buzzer.gpio_pin`), sounding even when the speaker path cannot |
 
+### Recommended additions
+
+1. **The optional GPIO piezo buzzer** (`alarm_defaults.buzzer.gpio_pin: 26`). The speaker path (I²S → SHIM → driver)
+   is a single point of failure, and the face's backup beeps go through the same amp: the piezo is the only alarm
+   sound that does not depend on it.
+2. **A DS3231 RTC module** on I²C bus 1 (address 0x68; the light sensor at 0x10 does not clash), or a battery for the
+   Pi 5's RTC: the right time from the first second after a power cut, with or without GPS or a network. The installer
+   finds it and sets it up.
+3. **The RTL-SDR V4 outside the case**, on its short extension, in a USB 2 (black) port, away from the SHIM's speaker
+   leads: it runs warm and adds heat right next to the SoC.
+4. **Ventilation**: slots low and high for a chimney draught, and a heatsink case or a thermal pad to a metal back
+   panel. A fan is not recommended by a bed; if one is fitted, use a 5 V fan switched by a transistor on a free GPIO
+   with `dtoverlay=gpio-fan,gpiopin=<pin>,temp=70000`, so it only runs when hot.
+5. **The specified 5.1 V / 3 A supply, directly**: under-voltage is what drops the SDR off the bus and corrupts SD
+   cards. Use a high-endurance SD card, or the `--data-device` option.
+6. **Optional**: a UPS HAT, if alarms must ring through power cuts.
+
 The SHIM has no hardware volume and one channel, so Dawn does it in software: the
 PipeWire filter chain mixes left and right to mono, high-passes at 110 Hz
 (`audio.eq.highpass_hz`) and allows bass cuts but no boost (`audio.eq.bass_max_db`);
@@ -414,7 +431,11 @@ set the tuner gain, poll the time sources, play a test tone):
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
 | Wi-Fi lost | with a saved network the clock waits 15 minutes (`network.hotspot.configured_wait_s`), then starts the setup hotspot behind the clock: the face keeps its clock and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip (tap it for the Setup screen). Every 3 minutes (`retry_every_s`) it looks for the saved network and rejoins it when it is back, never while a phone is on the hotspot (`hotspot_retry` events under *Diagnostics → System*). A box never set up shows the Setup screen after 45 s. *Settings → Wi-Fi* picks another network |
-| Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
+| Watchdog reboots | `journalctl -b -1 -u dawn-core` (the journal is kept across reboots: `journalctl -b -1` shows the night that ended in one); the heartbeat is `/run/dawn/heartbeat` |
+| "Not shut down: the … alarm at … would not ring" | an alarm or nap is due within a day: Settings asks to confirm; on a Pi 5 the RTC switches the clock on 10 minutes before it |
+| A script or tool gets 403 "needs the X-Dawn-Client header" | changes to the API need `-H 'X-Dawn-Client: 1'` (against cross-site requests); reads do not |
+| The control UI answers 421 "not a name of this clock" | it was opened by a name the clock does not know (DNS rebinding protection): use its address, `<hostname>.local`, or add the name to `web.allowed_hosts` |
+| The face says "06:30 · will start on the chime: …" at night | the evening check found the alarm's source not working (no DAB signal, no output): fix it before sleeping, or the alarm starts on the chime |
 | An alarm or nap seemed to ring at the wrong time | the event list under *Diagnostics → System* (and *Time sync*): a `clock_step` event says the system clock jumped (and by how much) just before; `nap_ring_failed` says a nap's ring had to be retried |
 | *Diagnostics → System → Background tasks* warns | a background task raised; each one is in the journal with its traceback (`journalctl -u dawn-core \| grep "background task"`) |
 | *Update now* says "Not now" | an alarm, snooze or nap is on, or the next alarm is within `system.update_quiet_minutes` (60): try after it |

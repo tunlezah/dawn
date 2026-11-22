@@ -10,6 +10,7 @@ import { Scene } from './Scene';
 import { sceneWeather, type SceneWeather } from '../forecast';
 import { DEMO_WEATHER } from '../../shared/demo';
 import { gpsLook } from '../../shared/gps';
+import { eveningNote } from '../../shared/evening';
 
 /** Ambient clock: standby, and the idle view while something plays. Huge clock, date, place + weather, next alarm,
  *  and a status strip along the bottom (what is playing / time sources, alarm, volume). */
@@ -35,6 +36,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   const autohide = !compact && s.display.strip_autohide_s > 0;
   const noWifi = noWifiChip(s);
   const gps = gpsLook(s.time_sources.gps, live('gps'));
+  const ready = eveningNote(s);
   const attention = [s.time_sources.gps.presence, live('gps') || s.time_sources.gps.fix >= 2, live('dab') || s.dab.sync, live('ntp'), s.system.network.online,
     s.time_sources.synced, next?.at ?? '', s.face.menu_open, s.face.wake_until ?? '', noWifi ?? ''].join('|');
   const [stripFaded, setStripFaded] = useReactState(false);
@@ -95,7 +97,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
           <IconAlarm />
           <div className="label">
             <div className="top">Alarm</div>
-            <div className="bottom">{next ? fmtDayTime(next.at, s.tz, s.settings.clock_24h) : (!s.display.sensor_found && s.display.mode === 'auto' ? 'Off · no light sensor' : 'Off')}</div>
+            <div className="bottom" data-testid="strip-alarm">{next ? fmtDayTime(next.at, s.tz, s.settings.clock_24h) + (ready ? (ready.ok ? ' ✓' : ` · ${ready.text}`) : '') : (!s.display.sensor_found && s.display.mode === 'auto' ? 'Off · no light sensor' : 'Off')}</div>
           </div>
         </div>
         <div className="vsep" />
