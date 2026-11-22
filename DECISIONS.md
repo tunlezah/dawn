@@ -691,6 +691,36 @@ each section. Every entry says what was decided and why, so it can be revisited.
   change of what it shows (a time source, the network, the next alarm). The
   daily scene offsets every random seed by the local date.
 
+## Cool mode
+
+- **A pure planner and a thin service, like sleep mode.** `power/cool.py` takes what PowerService saw (SoC
+  temperature, month and latitude, the forecast maximum, the last activity, what is busy, the next alarm and the next
+  alarm on DAB, scans, a DAB source in any slot, the DAB page, live time sources, dawn-timed's last sample) and returns
+  a plan; the service applies it every 5 s as desired state, so a crash or a restart converges, and the planner is
+  walked minute by minute in the tests.
+- **Idle first, then a reason.** `on` cools whenever idle; `auto` when idle and summer (December to February south of
+  the equator), a hot forecast or a hot SoC (with hysteresis: 65 °C for 5 minutes in, below 55 °C for 15 out). Idle
+  means no touch, controls or write to the API for `idle_after_s`, and nothing going on: playback (AirPlay and
+  Bluetooth too), a ring or snooze, a light wake, a timer, the menu, a woken face or an open control UI (its page
+  pings). Any of them ends cool mode at once.
+- **The decoder is the big lever, so it carries the interlocks.** Stopping dawn-dab closes the stick (librtlsdr puts
+  the tuner in standby) and ends the decoding that runs around the clock. It is wanted back
+  `prepare_minutes + dab_wake_lead_minutes + 1` before an alarm on DAB (or its light wake), for any DAB source in the
+  arbiter, a scan, the DAB diagnostics page, and a DAB time-sync window when neither NTP nor GPS is live. Waking is
+  a step under way for the alarm's preparation ("waking the radio", `tuning`), never a failure that would start the
+  ring on the chime. The supervisor leaves an intentionally stopped decoder alone only while the cool-mode loop is
+  alive by liveness, so a dead controller cannot leave the radio off. `pause()` refuses while an alarm on the radio
+  rings or is snoozed; any restart of the decoder clears the pause.
+- **The CPU cap is a file, not a privilege.** A tmpfiles `z` rule gives group `dawn` write access to policy0's
+  `scaling_max_freq`; the cap never goes below `cpuinfo_min_freq`, comes off when any alarm's preparation starts (not
+  only DAB ones), and `ExecStopPost` puts the full frequency back whatever happened. If it measures as no gain on the
+  device, `cpu_max_mhz: 0` turns it off.
+- **The face freezes, it does not change settings.** `display.cool` makes the face treat its animations as low-CPU
+  (the scene's drift and fall, marquees, the strip's backdrop blur) without touching the user's `low_cpu` choice.
+- **Polling slows, the alarm path does not.** The light sensor at 2 Hz, sinks once a minute, `get_throttled` from
+  sysfs (no process) and the supervisor at half rate outside an alarm's preparation window. Nothing in cool mode
+  touches the alarm engine, the ring, the face's backup alarm, the buzzer or the watchdog.
+
 ## Diagnostics
 
 - **One service, three speeds.** Checks run every `check_interval_s` (60 s) and

@@ -101,6 +101,8 @@ class DabSource(PlayerSource):
 
     async def _tune_and_play(self) -> None:
         try:
+            if self.dab.paused:
+                await self.dab.ensure_running()  # cool mode stopped the decoder: "Radio on" or a preset brings it back
             await self.dab.ensure_tuned_for(self.svc.sid)
             self._channel = self.dab.channel
             if self._started:
@@ -179,6 +181,12 @@ class DabService(Service):
         self._prep_restart_at: dict[str, float] = {}
         # dropouts worth a `dab_drop` event (with the SoC temperature and the throttling flags, to line them up with heat
         # and power): the stick leaving the bus, or sync lost for DROP_AFTER_S after it had been there
+        # cool mode: the decoder stopped on purpose (why), and a wake under way
+        self.paused: str | None = None
+        self._waking: asyncio.Task[bool] | None = None
+        self._waking_from_pause = False
+        self._run_lock = asyncio.Lock()
+        self.page_polled_at: float | None = None  # monotonic: Diagnostics' DAB live page was last polled then
         self._drop_present = True
         self._had_sync = False
         self._nosync_since: float | None = None
@@ -259,8 +267,8 @@ class DabService(Service):
         st = self.ctx.store.state.dab
         m = await self.client.mux()
         st.available = m is not None
-        if self.ctx.sim:
-            # the fake welle answers 503 when the sim hub says the SDR is unplugged
+        if self.ctx.sim and not self.paused:
+            # the fake welle answers 503 when the sim hub says the SDR is unplugged (or when it is stopped on purpose)
             st.sdr_present = m is not None
             st.tuner = "Rafael Micro R828D (sim)" if m is not None else None
             self.ctx.store.state.system.sdr_present = st.sdr_present
@@ -453,6 +461,8 @@ class DabService(Service):
     async def ensure_tuned_for(self, sid: str) -> None:
         cfg = self.ctx.config.dab
         sid = norm_sid(sid)
+        if self.paused:
+            await self.ensure_running()
         if self._scan_task and not self._scan_task.done():
             # a scan retunes every few seconds: the station that is wanted now comes first
             log.warning("stopping the scan to play %s", sid)
@@ -507,7 +517,74 @@ class DabService(Service):
         hold = self._alarm_conflict(ringing_only=True)
         if hold:
             raise TunerBusy(f"{hold}; retune after it")
+        if self.paused:
+            await self.ensure_running()
         await self.tune(channel)
+
+    # ---- cool mode: the decoder stopped on purpose ---------------------------------------------------------------
+    async def pause(self, reason: str) -> bool:
+        """Stop dawn-dab (cool mode). Never while an alarm on the radio rings or is snoozed. True when it is paused."""
+        if self.paused:
+            return True
+        if self._alarm_conflict(ringing_only=True) or (self._waking and not self._waking.done()):
+            return False
+        self.paused = reason
+        self.ctx.store.state.dab.paused = reason
+        self.live_sync = False
+        log.info("pausing the DAB decoder: %s", reason)
+        self.ctx.db.log_event("dab_pause", reason=reason)
+        await self._unit("stop")
+        self.ctx.store.touch()
+        return True
+
+    async def ensure_running(self, timeout_s: float = 15.0, *, force_start: bool = False) -> bool:
+        """The decoder up and answering: started again if cool mode stopped it (or the unit is inactive), then
+        `reachable()` polled every 0.5 s for up to `timeout_s`. True once it answers. `force_start`: start the unit
+        whatever we remember (dawn-core restarted while the decoder was stopped)."""
+        async with self._run_lock:
+            was = self.paused
+            self.paused = None
+            self.ctx.store.state.dab.paused = None
+            if was or (force_start and self.ctx.sim) or (not self.ctx.sim and await self._unit_state() in ("inactive", "failed")):
+                log.info("starting the DAB decoder (%s)", f"was paused: {was}" if was else "it was not running")
+                if was:
+                    self.ctx.db.log_event("dab_resume", was=was)
+                await self._unit("start")
+            self.ctx.store.touch()
+            deadline = time.monotonic() + timeout_s
+            while True:
+                if await self.client.reachable():
+                    return True
+                if time.monotonic() >= deadline:
+                    return False
+                await asyncio.sleep(0.5)
+
+    def wake(self, *, force_start: bool = False) -> asyncio.Task[bool]:
+        """ensure_running() in the background (one at a time): for callers that must not wait for it."""
+        if self._waking is None or self._waking.done():
+            self._waking_from_pause = bool(self.paused)
+            self._waking = spawn(self.ensure_running(force_start=force_start), name="dab-wake", owner="dab")
+        return self._waking
+
+    @property
+    def waking(self) -> bool:
+        """Stopped by cool mode, or coming back from it (not the check at start that it is running at all)."""
+        return bool(self.paused) or (self._waking is not None and not self._waking.done() and self._waking_from_pause)
+
+    async def _unit(self, verb: str) -> None:
+        if self.ctx.sim:
+            try:
+                await self.client._client.post(f"{self.ctx.config.sim.hub_url}/set", json={"dab_stopped": verb == "stop"}, timeout=3)
+            except Exception:  # noqa: BLE001
+                log.debug("sim hub not answering", exc_info=True)
+            return
+        unit = self.ctx.config.dab.service_name
+        try:
+            proc = await asyncio.create_subprocess_exec(self.ctx.config.system.sudo_binary, "-n", "systemctl", verb, unit,
+                                                        stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+            await asyncio.wait_for(proc.wait(), RESTART_TIMEOUT_S)
+        except (OSError, TimeoutError) as e:
+            log.error("systemctl %s %s failed: %s", verb, unit, e)
 
     def channel_known_good(self, channel: str | None = None, min_snr: float = GOOD_SNR_DB) -> bool:
         """A scan found an ensemble on `channel` (the current one by default) at `min_snr` dB or better: no sync there
@@ -529,6 +606,9 @@ class DabService(Service):
         per alarm (`occurrence`) after two checks 30 s apart, and that is a step under way, not a failure: the
         preparation window has minutes left for it to come back before the ring would start on the chime."""
         sid = norm_sid(sid)
+        if self.waking:
+            self.wake()  # cool mode stopped the decoder: it comes back now; a step under way, not a failure
+            return "tuning", "waking the radio"
         key = occurrence or sid
         now = time.monotonic()
         restarted = self._prep_restart_at.get(key)
@@ -591,6 +671,9 @@ class DabService(Service):
         if now - self._last_restart < (5 if force else 30):
             return False
         self._last_restart = now
+        if self.paused:
+            self.paused = None  # a restart starts it: it is no longer paused
+            self.ctx.store.state.dab.paused = None
         self.ctx.db.log_event("dab_restart", channel=self.channel, reason=reason)
         if self.ctx.sim:
             log.warning("sim: would restart %s", self.ctx.config.dab.service_name)
@@ -614,6 +697,8 @@ class DabService(Service):
     async def start_scan(self) -> bool:
         if self._scan_task and not self._scan_task.done():
             return False
+        if self.paused and not await self.ensure_running():
+            raise RuntimeError("the DAB decoder did not start")
         cfg = self.ctx.config.dab
         # a scan holds the tuner for minutes: not into an alarm on the radio, nor its preparation
         hold = self._alarm_conflict(len(scan_order(cfg.scan_channels, cfg.scan_priority)) * cfg.scan_dwell_s + 3 * cfg.scan_signal_wait_s + 30)

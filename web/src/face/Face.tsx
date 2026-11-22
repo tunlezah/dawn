@@ -27,7 +27,9 @@ export function Face() {
   useEffect(() => {
     document.documentElement.dataset.palette = palette;
     document.documentElement.classList.toggle('low-cpu', s.display.low_cpu);
-  }, [palette, s.display.low_cpu]);
+    // cool mode freezes what moves, as low-CPU does, without touching that setting
+    document.documentElement.classList.toggle('cool', s.display.cool);
+  }, [palette, s.display.low_cpu, s.display.cool]);
 
   // pixel orbit (burn-in): the foreground drifts a pixel a minute along a closed path; backgrounds stay put
   const minute = Math.floor(secondsOfDay(useNow(60_000), s.tz) / 60);

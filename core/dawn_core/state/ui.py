@@ -78,6 +78,7 @@ class DisplayState(BaseModel):
     orbit: bool = True
     strip_autohide_s: int = 120
     scene_daily: bool = True
+    cool: bool = False  # cool mode: the face freezes its animations (like low_cpu, without changing that setting)
 
 
 class SinkInfo(BaseModel):
@@ -263,6 +264,7 @@ class DabState(BaseModel):
     scan: ScanProgress = ScanProgress()
     last_scan_at: str | None = None
     service_state: str = "unknown"  # systemd state of dawn-dab
+    paused: str | None = None  # the decoder was stopped on purpose (cool mode): why
 
 
 class Preset(BaseModel):
@@ -450,6 +452,19 @@ class SettingsSummary(BaseModel):
     auth_required: bool = False
 
 
+class PowerState(BaseModel):
+    """Cool mode (power/): what the planner decided and why."""
+
+    mode: Literal["off", "auto", "on"] = "auto"
+    cool: bool = False
+    reason: str = "starting"
+    hot: bool = False  # the SoC has been above power.enter_temp_c long enough
+    dab_paused: bool = False
+    dab_reason: str = ""
+    cpu_cap_mhz: int | None = None
+    cool_today_s: int = 0
+
+
 class UIState(BaseModel):
     version: int = 0
     now: str = ""
@@ -469,3 +484,4 @@ class UIState(BaseModel):
     airplay: AirPlayState = AirPlayState()
     settings: SettingsSummary = SettingsSummary()
     diagnostics: DiagnosticsSummary = DiagnosticsSummary()
+    power: PowerState = PowerState()

@@ -172,8 +172,12 @@ class SupervisorService(Service):
         self.ctx.liveness.task("supervisor", self._task)
 
     async def _loop(self) -> None:
+        from ..power.service import cool_plan
+
         while True:
-            await asyncio.sleep(self.cfg.check_interval_s)
+            plan = cool_plan(self.ctx)
+            # half as often in cool mode (poll_scale is 1 again within an alarm's preparation window)
+            await asyncio.sleep(self.cfg.check_interval_s * (plan.poll_scale if plan else 1.0))
             self.ctx.liveness.beat("supervisor")
             try:
                 await self.check()
@@ -206,9 +210,23 @@ class SupervisorService(Service):
             own = unit in OWN_UNITS
             if state == "unknown" or not await self.host.unit_enabled(unit):
                 continue  # systemd cannot say, or the unit is not meant to run here (AirPlay not built, a kiosk disabled on a headless box)
+            if unit == self.ctx.config.dab.service_name and state == "inactive" and self._dab_paused_on_purpose():
+                self._bad_for(f"unit:{unit}", False, now)
+                continue
             bad_for = self._bad_for(f"unit:{unit}", state == "failed" or (own and state == "inactive"), now)
             if state == "failed" or bad_for >= INACTIVE_FOR_S:
                 await self._repair(f"unit:{unit}", unit, f"{state}" + (f" for {bad_for:.0f} s" if state != "failed" else ""), lambda u=unit: self._restart_unit(u), now)
+
+    def _dab_paused_on_purpose(self) -> bool:
+        """Cool mode stopped the decoder, and the loop that will start it again is alive. With that loop dead the usual
+        policy applies, so a controller that died cannot leave the radio off."""
+        try:
+            from ..dab.service import DabService
+
+            paused = bool(self.ctx.svc(DabService).paused)
+        except (ImportError, KeyError):
+            return False
+        return paused and "power" in self.ctx.liveness.names() and "power" not in self.ctx.liveness.check()
 
     async def _face(self, now: float) -> None:
         """No face on the socket (or one whose page has frozen) while dawn-face is active: Chromium is blank, on an

@@ -98,7 +98,7 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
         "timed": timed, "timed_age_s": round(timed_age, 1) if timed_age is not None else None, "timed_error": timed_err,
         "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"],
                 "presence": gps.get("presence", "present"), "required": gps.get("required", False)},
-        "dab": {"enabled": dab["enabled"], "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
+        "dab": {"enabled": dab["enabled"], "paused": bool(dab.get("paused")), "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
                 "ensemble": (dab["mux"] or {}).get("ensemble")},
     }
 
@@ -186,7 +186,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
                      "Add 'refclock SHM 0 refid GPS prefer' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
                      "gpsd has a fix but chrony gets no samples from SHM 0: restart gpsd, then chrony.", ["gps.restart", "time.restart_chrony"])
 
-    if f["dab"]["enabled"]:
+    if f["dab"]["enabled"] and f["dab"].get("paused"):
+        c.append(Check("time.dab.source", "time", "chrony uses DAB", "off", "Paused by cool mode (the decoder is stopped for now).", None, [], "DAB → chrony"))
+    elif f["dab"]["enabled"]:
         g = "DAB → chrony"
         d = f["dab"]
         add("dab.sync", g, "DAB ensemble", "ok" if d["sync"] else "fail",

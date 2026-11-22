@@ -74,7 +74,9 @@ async def net(tmp_config, monkeypatch):
             return False, None, None, None
 
         n._probe = probe
-        n._booted = 0.0
+        # the loop's first poll may have run (on the real monotonic clock) before it was cancelled: start clean
+        n._booted, n._offline_since, n._profiles, n._last_retry = 0.0, None, None, None
+        n.hotspot_active = False
         yield n, ctx, nm, state
 
 

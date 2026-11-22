@@ -42,7 +42,7 @@ readings, a week of history and one-tap fixes.
 
 - [Hardware](#hardware) · [Wiring](#wiring)
 - [First boot](#first-boot) · [Updating](#updating)
-- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring) · [Keeping itself running](#keeping-itself-running)
+- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring) · [Keeping itself running](#keeping-itself-running) · [Cool mode](#cool-mode)
 - [Laptop simulator](#laptop-simulator)
 - [Architecture](#architecture) · [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -278,6 +278,17 @@ minutes), is logged as a `supervisor_repair` event in the journal, and is listed
 Self-repair* with what, when and why. The privileged restarts are exactly the lines in `deploy/sudoers/dawn`.
 `system.supervisor.enabled: false` turns it all off; *Status → Hardware → Services* still shows every unit's state.
 
+### Cool mode
+
+On hot days, while nothing much is happening, the Pi runs cooler (*Display → Cool mode*, `power`): after five minutes
+without anyone using the clock (no touch, controls, playback, ringing, timers or open control UI), and in *Auto* when
+it is summer, a hot day is forecast or the SoC runs hot, it stops the DAB decoder, caps the CPU, freezes the face's
+moving background and polls less. The alarms are never affected: the radio is running again minutes before any alarm
+on DAB (and whenever you play a station, scan or open the DAB diagnostics), the CPU cap comes off when an alarm's
+preparation starts, and any use of the clock ends cool mode at once. Diagnostics shows a paused decoder as *off*, not
+as a fault. *On* cools whenever idle; *Off* never. Measure it on the device before tuning the defaults (see the
+work-package notes): log `sys.temp` for 45 minutes with cool mode off and then on, at the same room temperature.
+
 ### Sleep mode and burn-in
 
 In Standby at night the face shows the clock alone: small, deep amber on black at the lowest
@@ -398,6 +409,7 @@ set the tuner gain, poll the time sources, play a test tone):
 | Time not synced | *Diagnostics → Time sync* (the first failing step in each chain); `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
 | No GPS fix | *Diagnostics → GPS*: satellites heard and their signal (four or more above 30 dBHz for a reliable fix), the sky plot shows what the window or walls block |
 | GPS shows "Not fitted" (hollow yellow ring) | no GPS module is plugged in, which is fine: GPS is optional. Plug a u-blox USB receiver in and it is picked up within 30 s. "Missing" (amber) means one was there and has gone: plug it back in, or *Forget the GPS module* if it was removed on purpose |
+| The radio takes a few seconds to start, or *Diagnostics → DAB radio* says "Paused by cool mode" | cool mode stopped the decoder while nothing used it (*Display → Cool mode*); it comes back by itself for alarms, playback, scans and the diagnostics page. Set it to *Off* to keep the decoder running |
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |

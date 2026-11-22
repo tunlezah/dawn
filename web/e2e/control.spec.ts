@@ -157,6 +157,32 @@ test('diagnostics: a decoder that answers but decodes nothing is restarted by it
   await waitFor((s) => s.dab.sync, 30_000);
 });
 
+test('cool mode: idle, the radio is paused; Radio on brings it back and plays; nothing is a fault', async ({ page }) => {
+  test.setTimeout(150_000);
+  const svc = await (await fetch(BASE + '/api/dab/services')).json();
+  expect(svc.length).toBeGreaterThan(0);
+  try {
+    // idle_after_s at its minimum (30 s); no page is open meanwhile: an open control UI counts as someone using the clock
+    await config({ power: { cool_mode: 'on', idle_after_s: 30 } });
+    const cool = await waitFor((s) => s.power.cool && s.dab.paused === 'cool mode', 90_000);
+    expect(cool.display.cool).toBe(true);
+    expect(cool.dab.sdr_present).toBe(true);  // a paused decoder is not a missing stick
+    await post('/api/diag/run');
+    const s1 = await state();
+    expect(s1.diagnostics.problems.some((p: any) => p.id.startsWith('dab.') || p.id === 'time.dab.source')).toBe(false);
+    await page.goto('/display');
+    await expect(page.getByTestId('cool-state')).toHaveText('cool');
+    // "Radio on": the station plays, the decoder comes back by itself, cool mode ends (something is playing)
+    await post('/api/audio/play', { source: `dab:${svc[0].sid}` });
+    await waitFor((s) => s.dab.paused === null && !s.power.cool, 20_000);
+    await waitFor((s) => s.now_playing.source === 'dab' && s.dab.sync, 30_000);
+  } finally {
+    await post('/api/audio/standby');
+    await config({ power: { cool_mode: 'off', idle_after_s: 300 } });
+  }
+  await waitFor((s) => s.dab.paused === null, 20_000);
+});
+
 test('display: sleep mode can be turned on, sent to sleep and woken from the web', async ({ page }) => {
   try {
     await page.goto('/display');

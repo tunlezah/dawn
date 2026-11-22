@@ -199,6 +199,21 @@ def throttle_flags(value: int | None) -> list[str]:
     return [label for mask, label, _ in THROTTLE_FLAGS if value & mask]
 
 
+THROTTLED_SYSFS = "/sys/devices/platform/soc/soc:firmware/get_throttled"
+
+
+def read_throttled_sysfs(path: str = THROTTLED_SYSFS) -> int | None:
+    """The firmware's throttling flags straight from sysfs (hex, as vcgencmd prints them), without starting a process
+    every few seconds. None when the file is not there (older kernels)."""
+    raw = _read(path)
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip(), 16)
+    except ValueError:
+        return None
+
+
 def read_throttled(binary: str = "vcgencmd") -> int | None:
     try:
         out = subprocess.run([binary, "get_throttled"], capture_output=True, text=True, timeout=3)

@@ -76,6 +76,13 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
 
     install_auth(app, ctx)
 
+    @app.middleware("http")
+    async def activity_mw(request, call_next):
+        # a change made from the web (not a read, and not the face's own heartbeat) is someone using the clock
+        if request.method not in ("GET", "HEAD", "OPTIONS") and request.url.path.startswith("/api/"):
+            ctx.note_activity()
+        return await call_next(request)
+
     app.include_router(router_state.router)
     app.include_router(router_config.router)
     app.include_router(ws.router)

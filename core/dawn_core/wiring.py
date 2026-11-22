@@ -27,6 +27,8 @@ def build_services(ctx: DawnContext) -> None:
     _optional(ctx, "dawn_core.bluetooth.service", "BluetoothService")
     _optional(ctx, "dawn_core.diagnostics.service", "DiagnosticsService")
     _optional(ctx, "dawn_core.face.service", "FaceService")
+    # cool mode: before the supervisor, which leaves a decoder it paused on purpose alone
+    _optional(ctx, "dawn_core.power.service", "PowerService")
     # last: it looks after everything above (and the programs outside dawn-core)
     _optional(ctx, "dawn_core.system.supervisor", "SupervisorService")
 

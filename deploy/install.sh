@@ -435,6 +435,9 @@ sed "s|@UID@|$DAWN_UID|g" "$D/systemd/shairport-sync.service.d/dawn.conf" >/etc/
 for u in chrony gpsd; do
   install -D -m 0644 "$D/systemd/$u.service.d/dawn.conf" "/etc/systemd/system/$u.service.d/dawn.conf"
 done
+# cool mode: dawn-core may write the CPU frequency cap (group dawn)
+install -D -m 0644 "$D/tmpfiles.d/dawn-cpufreq.conf" /etc/tmpfiles.d/dawn-cpufreq.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/dawn-cpufreq.conf 2>/dev/null || true
 systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true

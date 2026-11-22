@@ -23,6 +23,8 @@ def unit_state(unit: str) -> str:
     unit = unit.removesuffix(".service")
     if unit in STATE.units_down:
         return "failed"
+    if unit == "dawn-dab" and STATE.dab_stopped:
+        return "inactive"  # stopped on purpose (cool mode)
     if unit == "dawn-dab" and not STATE.sdr_present:
         return "activating"  # welle-cli exits without a stick; systemd keeps restarting it
     return "active"

@@ -524,6 +524,46 @@ class SimConfig(StrictModel):
 # --------------------------------------------------------------------------- #
 # Root
 # --------------------------------------------------------------------------- #
+class PowerConfig(StrictModel):
+    """Cool mode: on hot days, while nothing much is happening, the Pi runs cooler (the DAB decoder paused, the CPU
+    capped, the face's animations frozen, less polling). The alarms are never affected: the radio is back minutes
+    before an alarm on DAB, and any activity ends cool mode at once."""
+
+    cool_mode: Literal["off", "auto", "on"] = Field(
+        "auto", description="off: never; on: whenever idle; auto: when idle and it is summer, a hot day is forecast, or the SoC is hot.",
+    )
+    enter_temp_c: float = Field(65.0, ge=40, le=90, description="auto: the SoC at or above this for hold_s counts as hot.")
+    exit_temp_c: float = Field(55.0, ge=30, le=85, description="...and below this for exit_hold_s counts as cool again (hysteresis).")
+    hold_s: int = Field(300, ge=0, le=7200)
+    exit_hold_s: int = Field(900, ge=0, le=7200)
+    summer: Literal["auto"] | list[int] = Field(
+        "auto", description="auto: December to February south of the equator, June to August north (from location.latitude); or a list of months (1-12).",
+    )
+    hot_day_c: float = Field(30.0, ge=10, le=50, description="auto: today's forecast maximum at or above this means cool mode for the day.")
+    idle_after_s: int = Field(300, ge=30, le=7200, description="No activity (touch, controls, playing, the web UI) for this long before cool mode starts.")
+    pause_dab: bool = Field(True, description="Stop the DAB decoder while cool (the stick and its decoding are the largest load); it is back before any alarm on DAB.")
+    dab_wake_lead_minutes: int = Field(3, ge=1, le=30, description="The decoder is running again this long before an alarm's preparation (alarm_defaults.prepare_minutes) starts.")
+    dab_time_sync_every_h: float = Field(6.0, ge=0.5, le=48, description="With no live NTP or GPS time, run the decoder this often for DAB time.")
+    dab_time_sync_minutes: int = Field(10, ge=1, le=120, description="...for this long, or until dawn-timed has written samples.")
+    cpu_max_mhz: int = Field(1000, ge=0, le=4000, description="CPU frequency cap while cool (0 = leave it alone).")
+    freeze_animations: bool = Field(True, description="Stop the face's moving background while cool (it does not change your low-CPU setting).")
+    lux_sample_hz: float = Field(2.0, ge=0.5, le=20, description="Light sensor reads per second while cool.")
+    max_backlight_percent: int | None = Field(None, ge=1, le=100, description="Cap the backlight while cool (null = no cap).")
+
+    @field_validator("summer")
+    @classmethod
+    def _months(cls, v: object) -> object:
+        if isinstance(v, list) and not all(isinstance(m, int) and 1 <= m <= 12 for m in v):
+            raise ValueError("summer months must be 1-12")
+        return v
+
+    @model_validator(mode="after")
+    def _hysteresis(self) -> PowerConfig:
+        if self.exit_temp_c >= self.enter_temp_c:
+            raise ValueError("power.exit_temp_c must be below power.enter_temp_c")
+        return self
+
+
 class DawnConfig(StrictModel):
     """Root of config.yaml."""
 
@@ -545,6 +585,7 @@ class DawnConfig(StrictModel):
     web: WebConfig = WebConfig()
     system: SystemConfig = SystemConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    power: PowerConfig = PowerConfig()
     sim: SimConfig = SimConfig()
 
     @model_validator(mode="after")

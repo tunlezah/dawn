@@ -141,11 +141,13 @@ class InputService(Service):
     def emit(self, event: str) -> None:
         """Thread-safe-ish entry: schedule handling on the loop."""
         self.last_event = (event, time.time(), "gpio")
+        self.ctx.note_activity()
         self._queue.put_nowait(event)
 
     async def inject(self, event: str) -> None:
         """From the API (face touch, sim, tests)."""
         self.last_event = (event, time.time(), "api")
+        self.ctx.note_activity()
         await self.controller.handle(event)
 
     async def _pump(self) -> None:

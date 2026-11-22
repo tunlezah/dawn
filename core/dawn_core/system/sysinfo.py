@@ -64,6 +64,7 @@ class SysInfoService(Service):
         self.hw = hwmod.HardwareInfo()
         self.booted = time.time()
         self._stall_logged = False
+        self._vcgencmd_at = 0.0
 
     async def start(self) -> None:
         cfg = self.ctx.config
@@ -131,7 +132,18 @@ class SysInfoService(Service):
         if self.hw.is_pi:
             # under-voltage (bit 0x10000 since boot) is the first thing to check on a single 5 V supply,
             # and with a passive heatsink thermal throttling has to stay visible too
-            th = await asyncio.to_thread(hwmod.read_throttled, cfg.system.vcgencmd_binary)
+            th = hwmod.read_throttled_sysfs()
+            if th is None:
+                # no sysfs file: vcgencmd, every heartbeat (every 30 s in cool mode: it is a process each time)
+                from ..power.service import cool_plan
+
+                plan = cool_plan(self.ctx)
+                now = time.monotonic()
+                if plan and plan.cool and now - self._vcgencmd_at < 30:
+                    th = st.throttled
+                else:
+                    self._vcgencmd_at = now
+                    th = await asyncio.to_thread(hwmod.read_throttled, cfg.system.vcgencmd_binary)
             if th != st.throttled and th:
                 log.warning("vcgencmd get_throttled=0x%x (%s)", th, ", ".join(hwmod.throttle_flags(th)))
             st.throttled = th

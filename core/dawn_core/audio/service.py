@@ -66,6 +66,12 @@ class AudioService(Service):
         self.ctx.liveness.task("audio-loop", self._task)
         self.publish()
 
+    def _cool(self) -> bool:
+        from ..power.service import cool_plan
+
+        plan = cool_plan(self.ctx)
+        return bool(plan and plan.cool)
+
     async def restart_loop(self) -> None:
         if self._task and not self._task.done():
             self._task.cancel()
@@ -105,7 +111,7 @@ class AudioService(Service):
             try:
                 if n % 15 == 0:
                     await self._retry_pipewire()
-                if n % 5 == 0:
+                if n % (30 if self._cool() else 5) == 0:  # every 10 s, every minute in cool mode
                     await self.refresh_sinks()
                 self.ctx.store.state.audio.audio_flowing = await self.audio_flowing()
                 self.publish()

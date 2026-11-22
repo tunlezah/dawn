@@ -125,6 +125,7 @@ class AlarmService(Service):
         self._prep_at = 0.0  # monotonic time of the last finished check
         self._dab_fail: dict[tuple[int, str], int] = {}  # consecutive failed DAB checks per occurrence
         self._next_dab: tuple[str, datetime] | None = None  # the next alarm on DAB: (label, when)
+        self.next_dab_wake: datetime | None = None  # ...and when it first needs the radio's attention (its light wake if earlier)
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
@@ -446,6 +447,7 @@ class AlarmService(Service):
         light_candidate: tuple[int, datetime] | None = None
         prep_candidate: tuple[AlarmRow, datetime] | None = None
         next_dab: tuple[str, datetime] | None = None
+        next_dab_wake: datetime | None = None
         for row in self.rows_safe():
             if not row.enabled:
                 continue
@@ -465,7 +467,11 @@ class AlarmService(Service):
                 prep_candidate = (row, nxt)
             if self._resolve(row.source).startswith("dab:") and (next_dab is None or nxt < next_dab[1]):
                 next_dab = (row.label, nxt)
+            if self._resolve(row.source).startswith("dab:"):
+                wake = nxt - timedelta(minutes=row.light_wake_minutes) if row.light_wake else nxt
+                next_dab_wake = wake if next_dab_wake is None or wake < next_dab_wake else next_dab_wake
         self._next_dab = next_dab
+        self.next_dab_wake = next_dab_wake
         active = light_candidate is not None
         self._light_wake_alarm = light_candidate[0] if light_candidate else None
         self._light_wake_occurrence = light_candidate[1].isoformat() if light_candidate else None

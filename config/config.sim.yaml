@@ -266,3 +266,5 @@ diagnostics:
   timed_status_file: ./var/run/dawn-timed/status.json
 sim:
   hub_url: http://127.0.0.1:8099
+power:
+  cool_mode: "off"  # the e2e tests turn it on themselves (auto depends on the month)

@@ -48,6 +48,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "units": units,
         "task_failures": list(st.system.task_failures),
         "update_result": st.system.update_result,
+        "power": st.power.model_dump(),
         "loops": {"dead": {n: ctx.liveness.why(n) for n in ctx.liveness.check()}, "watched": len(ctx.liveness.names())},
         "supervisor": {
             "enabled": cfg.system.supervisor.enabled, "checked_at": supervisor.checked_at if supervisor else None,
@@ -275,6 +276,13 @@ def checks(f: dict[str, Any]) -> list[Check]:
                 add("network", "wifi_driver", "Wi-Fi adapter", "fail",
                     "The Wi-Fi adapter stayed missing or unavailable after NetworkManager was restarted twice.",
                     "Reboot the clock (Settings → Reboot). If it keeps happening, check the power supply: under-voltage can drop the Wi-Fi chip.")
+    pw = f.get("power")
+    if pw and pw.get("mode") != "off":
+        mins = (pw.get("cool_today_s") or 0) // 60
+        state = "cool now" if pw.get("cool") else "normal"
+        extra = ", the radio paused" if pw.get("dab_paused") else ""
+        extra += f", the CPU capped at {pw['cpu_cap_mhz']} MHz" if pw.get("cpu_cap_mhz") else ""
+        add("system", "cool", "Cool mode", "info", f"{pw.get('mode', '?').capitalize()}: {state} ({pw.get('reason', '')}{extra}); {mins} min in cool mode today.")
     ur = f.get("update_result")
     if ur and ur.get("status") == "rolled_back":
         add("system", "update", "Software update", "warn",

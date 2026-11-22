@@ -454,6 +454,38 @@ diagnostics:
   # Status file written by dawn-timed (DAB time to chrony).
   timed_status_file: /run/dawn-timed/status.json
 
+power:
+  # off: never; on: whenever idle; auto: when idle and it is summer, a hot day is forecast, or the SoC is hot.
+  cool_mode: auto
+  # auto: the SoC at or above this for hold_s counts as hot.
+  enter_temp_c: 65.0
+  # ...and below this for exit_hold_s counts as cool again (hysteresis).
+  exit_temp_c: 55.0
+  hold_s: 300
+  exit_hold_s: 900
+  # auto: December to February south of the equator, June to August north (from location.latitude); or a list of months (1-12).
+  summer: auto
+  # auto: today's forecast maximum at or above this means cool mode for the day.
+  hot_day_c: 30.0
+  # No activity (touch, controls, playing, the web UI) for this long before cool mode starts.
+  idle_after_s: 300
+  # Stop the DAB decoder while cool (the stick and its decoding are the largest load); it is back before any alarm on DAB.
+  pause_dab: true
+  # The decoder is running again this long before an alarm's preparation (alarm_defaults.prepare_minutes) starts.
+  dab_wake_lead_minutes: 3
+  # With no live NTP or GPS time, run the decoder this often for DAB time.
+  dab_time_sync_every_h: 6.0
+  # ...for this long, or until dawn-timed has written samples.
+  dab_time_sync_minutes: 10
+  # CPU frequency cap while cool (0 = leave it alone).
+  cpu_max_mhz: 1000
+  # Stop the face's moving background while cool (it does not change your low-CPU setting).
+  freeze_animations: true
+  # Light sensor reads per second while cool.
+  lux_sample_hz: 2.0
+  # Cap the backlight while cool (null = no cap).
+  max_backlight_percent: null
+
 sim:
   # Sim hub base URL (used when DAWN_SIM=1).
   hub_url: http://127.0.0.1:8099

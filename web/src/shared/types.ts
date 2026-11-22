@@ -18,7 +18,7 @@ export interface DisplayState {
   sunrise: string | null; sunset: string | null; schedule_night: boolean; show_seconds: boolean; ambient_after_s: number; scene: boolean;
   sleep: boolean; sleep_reason: string | null; sleep_enabled: boolean; sleep_next_start: string | null; sleep_next_end: string | null;
   sleep_screen_off: boolean; sleep_jump_s: number; sleep_level: number; room: 'dark' | 'bright' | 'between' | null;
-  orbit: boolean; strip_autohide_s: number; scene_daily: boolean;
+  orbit: boolean; strip_autohide_s: number; scene_daily: boolean; cool: boolean;
 }
 export interface SinkInfo { id: string; name: string; description: string; kind: 'usb' | 'hifiberry' | 'headphones' | 'hdmi' | 'other'; active: boolean }
 export interface EqState { enabled: boolean; bass_db: number; treble_db: number; bass_max_db: number; highpass_hz: number | null }
@@ -65,9 +65,12 @@ export interface DabService {
   codec: string | null; pty: string | null; logo_url: string; signal: number | null; has_slide: boolean;
 }
 export interface ScanProgress { running: boolean; channel: string | null; index: number; total: number; found_services: number; found_ensembles: number; started_at: string | null }
+export interface PowerState {
+  mode: 'off' | 'auto' | 'on'; cool: boolean; reason: string; hot: boolean; dab_paused: boolean; dab_reason: string; cpu_cap_mhz: number | null; cool_today_s: number;
+}
 export interface DabState {
   enabled: boolean; available: boolean; sdr_present: boolean; tuner: string | null; channel: string | null; ensemble: string | null;
-  sync: boolean; snr: number | null; services: DabService[]; scan: ScanProgress; last_scan_at: string | null; service_state: string;
+  sync: boolean; snr: number | null; services: DabService[]; scan: ScanProgress; last_scan_at: string | null; service_state: string; paused: string | null;
 }
 export interface Preset { id: number; label: string; source: string; logo_url: string | null; position: number }
 export interface TimeSource { name: string; kind: 'gps' | 'dab' | 'ntp' | 'other'; state: string; selected: boolean; reach: number; last_rx_s: number | null; offset_ms: number | null; live: boolean }
@@ -110,7 +113,7 @@ export interface DiagnosticsSummary { updated_at: string | null; fail: number; w
 export interface UIState {
   version: number; now: string; tz: string; face: FaceState; display: DisplayState; audio: AudioState; now_playing: NowPlaying;
   alarms: AlarmsState; timers: TimersState; dab: DabState; presets: Preset[]; time_sources: TimeSourcesState; weather: WeatherState;
-  system: SystemState; bluetooth: BluetoothState; airplay: AirPlayState; settings: SettingsSummary; diagnostics: DiagnosticsSummary;
+  system: SystemState; bluetooth: BluetoothState; airplay: AirPlayState; settings: SettingsSummary; diagnostics: DiagnosticsSummary; power: PowerState;
 }
 
 export const EMPTY_STATE: UIState = {
@@ -118,12 +121,12 @@ export const EMPTY_STATE: UIState = {
   face: { mode: 'standby', message: null, hint: null, menu_open: false, menu_page: null, wake_until: null, peek_until: null, shutdown_countdown: null, setup: null, setup_open: false },
   display: { brightness: 60, target: 60, mode: 'auto', manual_until: null, night: false, palette: 'dark', lux: null, sensor: null, sensor_found: false, layout: 'rect', low_cpu: false, overlay_dim: 0, backlight_driver: 'none', sunrise: null, sunset: null, schedule_night: false, show_seconds: false, ambient_after_s: 20, scene: true,
     sleep: false, sleep_reason: null, sleep_enabled: true, sleep_next_start: null, sleep_next_end: null, sleep_screen_off: false, sleep_jump_s: 120, sleep_level: 72, room: null,
-    orbit: true, strip_autohide_s: 120, scene_daily: true },
+    orbit: true, strip_autohide_s: 120, scene_daily: true, cool: false },
   audio: { volume: 35, muted: false, sink: null, sinks: [], pinned_sink: null, eq: { enabled: true, bass_db: 0, treble_db: 0, bass_max_db: 0, highpass_hz: null }, active_source: 'none', sources: [], volume_overlay_until: null, backend: 'sim', audio_flowing: false },
   now_playing: { source: 'none', title: null, artist: null, album: null, station: null, station_sid: null, logo_url: null, artwork_url: null, dls: null, slide_url: null, signal: null, codec: null, bitrate: null, url: null, started_at: null, position_s: null, duration_s: null, position_at: null },
   alarms: { items: [], next: null, ringing: null, on_leave_until: null, light_wake_active: false, prepare: null, degraded: false, degraded_reason: null, engine_alive: true },
   timers: { sleep: null, nap: null, sleep_choices: [15, 30, 45, 60, 90], nap_choices: [20, 30, 45, 60] },
-  dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown' },
+  dab: { enabled: true, available: false, sdr_present: false, tuner: null, channel: null, ensemble: null, sync: false, snr: null, services: [], scan: { running: false, channel: null, index: 0, total: 0, found_services: 0, found_ensembles: 0, started_at: null }, last_scan_at: null, service_state: 'unknown', paused: null },
   presets: [],
   time_sources: { active: 'none', synced: false, system_offset_ms: null, stratum: null, sources: [], gps: { presence: 'absent', last_seen_at: null, available: false, fix: 0, lat: null, lon: null, sats_used: 0, sats_seen: 0, time: null, device: null, source: 'none', hdop: null, snr_avg: null }, dab_time_live: false, chrony_available: false, updated_at: null },
   weather: { available: false, stale: false, temperature: null, code: null, icon: null, description: null, is_day: true, t_min: null, t_max: null, sunrise: null, sunset: null, fetched_at: null, units: 'celsius', location_label: null, hours: [] },
@@ -132,4 +135,5 @@ export const EMPTY_STATE: UIState = {
   airplay: { available: false, name: 'Dawn', active: false, client: null, playing: false },
   settings: { timezone: 'Australia/Sydney', holiday_region: 'NSW', holiday_scope: 'statewide', latitude: 0, longitude: 0, location_source: 'config', name: 'Dawn', clock_24h: true, theme: 'dark', auth_required: false },
   diagnostics: { updated_at: null, fail: 0, warn: 0, problems: [] },
+  power: { mode: 'auto', cool: false, reason: 'starting', hot: false, dab_paused: false, dab_reason: '', cpu_cap_mhz: null, cool_today_s: 0 },
 };

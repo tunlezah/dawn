@@ -47,7 +47,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
   return (
     <div className={`f-ambient fade-in ${compact ? 'compact' : ''} ${scene ? 'scenic' : ''}`}>
       {scene
-        ? <Scene now={sceneNow} tz={s.tz} wx={wx} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} daily={s.display.scene_daily} />
+        ? <Scene now={sceneNow} tz={s.tz} wx={wx} sunrise={w.sunrise || s.display.sunrise} sunset={w.sunset || s.display.sunset} latitude={s.settings.latitude} lowCpu={s.display.low_cpu} still={s.display.low_cpu || s.display.cool} daily={s.display.scene_daily} />
         : <div className="f-horizon" />}
       <div className="face-time f-ambient-clock">
         {t.hm}
@@ -84,7 +84,7 @@ export function Ambient({ compact = false }: { compact?: boolean }) {
           ) : (
             <div className="face-dots" title="time sources: green = live">
               {gps && <><span className={`dot ${gps.dot === 'ok' ? 'dot-live' : `dot-${gps.dot}`}`} title={gps.title} />GPS</>}
-              <span className={`dot ${live('dab') || s.dab.sync ? 'dot-live' : 'dot-off'}`} />DAB
+              <span className={`dot ${live('dab') || s.dab.sync ? 'dot-live' : 'dot-off'}`} title={s.dab.paused ? 'paused (cool mode)' : undefined} />DAB
               <span className={`dot ${live('ntp') ? 'dot-live' : 'dot-off'}`} />NTP
               <span className={`dot ${s.system.network.online ? 'dot-live' : 'dot-off'}`} />NET
             </div>

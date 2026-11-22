@@ -245,6 +245,7 @@ class DiagnosticsService(Service):
         out["net.online"] = 1.0 if st.system.network.online else 0.0
         w = parse_wireless(await self.host.read("/proc/net/wireless") or "")
         out["net.wifi"] = next(iter(w.values()))["level_dbm"] if w else None
+        out.update({"power.cool": 1.0 if st.power.cool else 0.0})
         out.update({"sys.temp": st.system.cpu_temp_c, "sys.load": st.system.load1, "sys.mem": st.system.mem_used_percent,
                     "display.lux": st.display.lux, "display.backlight": st.display.brightness})
         if st.audio.active_source != "none":

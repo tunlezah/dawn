@@ -79,6 +79,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         builds = None
     th = st.system.throttled or 0
     return {
+        "paused": dab.paused,
         "enabled": cfg.enabled,
         "sdr": {"present": st.system.sdr_present, "tuner": st.system.sdr_tuner, "usb": sticks},
         "dvb_driver_loaded": dvb_loaded,
@@ -110,6 +111,11 @@ def checks(f: dict[str, Any]) -> list[Check]:
 
     if not f["enabled"]:
         add("enabled", "DAB radio", "off", "Disabled in the configuration (dab.enabled).")
+        return c
+    if f.get("paused"):
+        # stopped on purpose: not a fault, and the chain below would only report its consequences
+        add("decoder", "DAB decoder (welle-cli)", "off", "Paused by cool mode: the decoder is stopped to keep the Pi cool while nothing uses the radio.",
+            "It starts again by itself before an alarm on the radio, when you play a station or scan, or when this page is open for a moment.")
         return c
     sdr = f["sdr"]
     if sdr["present"]:

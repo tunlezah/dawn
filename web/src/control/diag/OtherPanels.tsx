@@ -19,6 +19,7 @@ export const DEVICES_HISTORY: ChartSpec[] = [
 ];
 export const SYSTEM_HISTORY: ChartSpec[] = [
   { title: 'CPU temperature', metrics: [{ key: 'sys.temp' }], unit: '°C', digits: 1, refs: [{ y: 80, label: '80 °C the Pi slows down' }] },
+  { title: 'Cool mode', metrics: [{ key: 'power.cool' }], unit: '', yMin: 0, yMax: 1, digits: 1, sub: '1 = cool (radio paused, CPU capped, animations frozen); 0 = normal' },
   { title: 'Load', metrics: [{ key: 'sys.load' }], unit: '', yMin: 0, digits: 2, sub: '1-minute load average' },
   { title: 'Memory used', metrics: [{ key: 'sys.mem' }], unit: '%', yMin: 0, yMax: 100, digits: 0 },
 ];

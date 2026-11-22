@@ -5,6 +5,40 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.11] - 2026-11-22
+
+Cool mode (robustness plan WP-G).
+
+### Added
+- **Cool mode** (`power`, default `auto`): on hot days, while nothing much is happening, the Pi runs cooler. With the
+  box idle for `idle_after_s` (5 minutes: no touch, controls, playback, ring, timer, open menu or open control UI),
+  and in `auto` when it is summer (by hemisphere), a hot day is forecast (`hot_day_c`, 30 °C) or the SoC has been hot
+  (`enter_temp_c` 65 °C for 5 minutes, back below 55 °C for 15), it:
+  - stops the DAB decoder (`pause_dab`): the stick streams and welle-cli demodulates around the clock otherwise.
+    It is running again `dab_wake_lead_minutes` (3) before any alarm on DAB starts its preparation (`last-played`
+    resolving to DAB counts), whenever a station plays, a scan runs or the DAB diagnostics page is open, and, with no
+    live NTP or GPS time, for a time-sync window every `dab_time_sync_every_h`;
+  - caps the CPU at `cpu_max_mhz` (1000; 0 leaves it alone), lifted as soon as any alarm's preparation starts;
+  - freezes the face's moving background and its marquees (`freeze_animations`, without changing the low-CPU
+    setting), and drops the strip's backdrop blur;
+  - reads the light sensor at `lux_sample_hz` (2 Hz), refreshes the audio sinks once a minute, and halves the
+    supervisor's checks outside an alarm's preparation window; and caps the backlight if `max_backlight_percent` is set.
+  Any activity ends it at once. *Display → Cool mode* sets Off / Auto / On and says what it is doing and why;
+  *Diagnostics → System* has a cool-mode history next to the CPU temperature and the minutes in cool mode today.
+- The interlocks: the alarm's preparation treats a paused decoder as "waking the radio" (a step under way, not a
+  failure); "Radio on", a preset, a scan, a retune and the DAB diagnostics wake the decoder first; the supervisor leaves
+  a decoder stopped on purpose alone while the cool-mode loop is alive (and restarts it as usual if that loop has died);
+  Diagnostics reports a paused decoder as *off* ("Paused by cool mode") in the DAB tab and the time chain; the face's
+  DAB dot says "paused (cool mode)". At dawn-core's start the plan is "not cool" and the decoder is started if it is
+  not running. Nothing in cool mode touches the alarm engine, the ring, the face's backup alarm, the buzzer or the
+  watchdog.
+- `deploy/tmpfiles.d/dawn-cpufreq.conf` lets dawn-core write the CPU cap without sudo; `dawn-core.service` puts the
+  full frequency back when it stops. New sudo rules: `systemctl stop dawn-dab` and `systemctl start dawn-dab`.
+
+### Changed
+- The throttling flags are read from `/sys/devices/platform/soc/soc:firmware/get_throttled` when it exists, instead
+  of running `vcgencmd` every 5 s (every 30 s in cool mode when it has to).
+
 ## [0.2.10] - 2026-11-22
 
 Safe software updates (robustness plan WP-F).

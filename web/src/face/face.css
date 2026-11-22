@@ -111,7 +111,7 @@
 .f-ambient.scenic .f-where .f-tiny { opacity: 0.8; }
 .f-ambient.scenic .f-hr { background: rgba(255, 255, 255, 0.22); }
 .f-ambient.scenic .f-bar { background: rgba(6, 8, 14, 0.55); border-color: rgba(255, 255, 255, 0.1); backdrop-filter: blur(10px); }
-.low-cpu .f-ambient.scenic .f-bar { backdrop-filter: none; background: rgba(6, 8, 14, 0.8); }
+.low-cpu .f-ambient.scenic .f-bar, .cool .f-ambient.scenic .f-bar { backdrop-filter: none; background: rgba(6, 8, 14, 0.8); }
 .f-ambient.scenic .f-bar .label .top, .f-ambient.scenic .f-bar .vol { color: #f4f6fa; }
 .f-ambient.scenic .f-bar .label .bottom, .f-ambient.scenic .f-bar .cell > .f-icon, .f-ambient.scenic .face-dots { color: #b9c1cf; }
 .f-ambient.scenic .f-bar .vsep { background: rgba(255, 255, 255, 0.12); }
@@ -173,7 +173,7 @@
 /* ---- menu: a sheet from the bottom; the player stays visible above it -------- */
 .face-scrim { position: absolute; inset: 0; z-index: 9; background: color-mix(in srgb, var(--bg) 45%, transparent); pointer-events: none; }
 .face-menu { position: absolute; left: 0; right: 0; bottom: 0; z-index: 10; max-height: 84%; background: color-mix(in srgb, var(--bg) 94%, transparent); backdrop-filter: blur(10px); border-top: 1px solid var(--f-border); border-radius: var(--f-radius) var(--f-radius) 0 0; box-shadow: 0 -3vmin 9vmin rgba(0, 0, 0, 0.5); display: flex; flex-direction: column; padding: 2.4vmin var(--f-pad-x) var(--f-pad-y); gap: 3vmin; box-sizing: border-box; }
-.low-cpu .face-menu { backdrop-filter: none; background: var(--bg); }
+.low-cpu .face-menu, .cool .face-menu { backdrop-filter: none; background: var(--bg); }
 .face-menu .grab { width: 12vmin; height: 1.2vmin; border-radius: 999px; background: var(--fg-faint); margin: 0 auto; flex: none; }
 .face-menu .f-header { min-height: 9vmin; flex: none; }
 .face-menu .f-header .f-mode { color: var(--fg); font-size: 4vmin; letter-spacing: 0.1em; }
@@ -201,7 +201,7 @@ button.face-chip { appearance: none; font: inherit; font-size: 3.6vmin; font-wei
 button.face-chip.active { color: var(--accent); border-color: var(--accent); }
 @keyframes slide-up { from { transform: translateY(12vmin); opacity: 0; } to { transform: none; opacity: 1; } }
 .slide-up { animation: slide-up 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both; }
-.low-cpu .slide-up { animation: none; }
+.low-cpu .slide-up, .cool .slide-up { animation: none; }
 @media (prefers-reduced-motion: reduce) { .slide-up { animation: none; } }
 
 /* ---- volume rail (in the sheet): mute · slider · level ------------------------ */
