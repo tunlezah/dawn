@@ -245,14 +245,20 @@ ringing:
 
 ### Keeping itself running
 
-systemd restarts whatever exits (`Restart=always`, and never gives up: `StartLimitIntervalSec=0`), the hardware
-watchdog reboots a Pi whose kernel hangs, and dawn-core's watchdog is fed only while its alarm engine ticks. On
+systemd restarts whatever exits (`Restart=always`, and never gives up: `StartLimitIntervalSec=0`; chrony and gpsd get
+the same through drop-ins), the hardware watchdog reboots a Pi whose kernel hangs, dawn-timed has a watchdog of its own,
+and dawn-core's watchdog is fed only while its alarm engine, state pump, display loop and face and timer ticks run.
+Every loop inside dawn-core is watched: one that dies is restarted in place (5 s, 30 s, 120 s apart), and if one the
+alarms or the face depend on stays dead the watchdog is held back so systemd restarts dawn-core (`/api/health` lists
+`loops_dead`; *Diagnostics → System → Background loops*). Memory pressure takes the kiosk first (`OOMScoreAdjust`). On
 top of that dawn-core **checks the programs it depends on every 15 s and restarts what systemd cannot see is
 broken** (`system.supervisor`):
 
 | What | When it is restarted |
 |---|---|
-| The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, or the page has stopped sending its 15 s heartbeat, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium |
+| The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, the page has stopped sending its 15 s heartbeat, or it still pings but has drawn no frame for a minute, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium. Also once a day at the first quiet moment after `face_recycle_at` (03:30): Standby or the sleep clock, nothing playing, no alarm within the hour |
+| chrony, gpsd when hung | chronyc has timed out on four polls in a row; gpsd is connected with a receiver fitted but has sent no position for two minutes |
+| NetworkManager (optional, `wifi_driver_recovery`) | a saved Wi-Fi network and wlan0 missing or unavailable for 10 minutes; twice at most, then Diagnostics suggests a reboot |
 | The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in, unless an alarm on the radio is ringing or snoozed (its own ladder handles that) |
 | The PipeWire session (`pipewire`, `wireplumber`, `pipewire-pulse`, user units) | `failed`, or wireplumber `inactive`; then the sink, volume and filter chain are set up again |
 | `dawn-timed` | its status file is older than `timed_stale_s` (5 min) while the unit says active |
@@ -368,7 +374,7 @@ set the tuner gain, poll the time sources, play a test tone):
 
 | Symptom | Check |
 |---|---|
-| Face stays black | `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
+| Face stays black | after a hostname change: the kiosk clears Chromium's stale lock itself (`~/.config/dawn-face`); `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
 | Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
 | No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR); `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
 | DAB drops out or bubbles | *Diagnostics → DAB radio*: SNR below ~8 dB, FIC errors, decode errors; the spectrum should be a flat block ~1.5 MHz wide, the impulse response one main peak; try a fixed tuner gain a few steps below the AGC's choice near a strong transmitter, and move the antenna away from the Pi and the panel |

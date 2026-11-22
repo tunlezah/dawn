@@ -50,6 +50,20 @@ class DiagnosticsService(Service):
     async def start(self) -> None:
         await self._prune()
         self._tasks = [spawn(self._sample_loop(), name="diag-sample"), spawn(self._check_loop(), name="diag-checks")]
+        lv = self.ctx.liveness
+        lv.register("diag-sample", max_age_s=SAMPLE_S * 6 + 60, restart=self.restart_loop)
+        lv.register("diag-checks", max_age_s=3 * self.ctx.config.diagnostics.check_interval_s + 300, restart=self.restart_loop)
+        lv.task("diag-sample", self._tasks[0])
+        lv.task("diag-checks", self._tasks[1])
+
+    async def restart_loop(self) -> None:
+        """Both loops again (whichever died: they are cheap)."""
+        for t in self._tasks:
+            if not t.done():
+                t.cancel()
+        self._tasks = [spawn(self._sample_loop(), name="diag-sample"), spawn(self._check_loop(), name="diag-checks")]
+        self.ctx.liveness.task("diag-sample", self._tasks[0])
+        self.ctx.liveness.task("diag-checks", self._tasks[1])
 
     async def stop(self) -> None:
         for t in self._tasks:
@@ -80,6 +94,7 @@ class DiagnosticsService(Service):
     async def _check_loop(self) -> None:
         await asyncio.sleep(20)  # let the other services settle after boot
         while True:
+            self.ctx.liveness.beat("diag-checks")
             try:
                 await self.run(max_age_s=0)
             except Exception:  # noqa: BLE001
@@ -175,6 +190,7 @@ class DiagnosticsService(Service):
 
     async def _sample_loop(self) -> None:
         while True:
+            self.ctx.liveness.beat("diag-sample")
             try:
                 sample = await self.sample()
                 await asyncio.to_thread(self.history.add, sample)

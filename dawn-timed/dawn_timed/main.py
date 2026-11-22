@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 import time
 from datetime import UTC, datetime
@@ -34,6 +35,22 @@ log = logging.getLogger("dawn-timed")
 
 # FIG 0/0 with CIF count low part 0 (welle's time_last_fct0_frame) arrives every ~12 s in mode I
 FCT0_STALE_MS = 30_000
+WATCHDOG_EVERY_S = 5.0  # WATCHDOG=1 at most this often (the unit's WatchdogSec is 60)
+
+
+def sd_notify(msg: str) -> None:
+    """Minimal sd_notify(3) without a dependency (the same as dawn-core's)."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError:
+        pass
 
 
 def utctime_from_mux(j: dict) -> tuple[datetime | None, bool]:
@@ -103,6 +120,8 @@ class Timed:
         self.last_error: str | None = None
         self._status_written = 0.0
         self._attach_tried = 0.0
+        self._ready_sent = False
+        self._watchdog_at = 0.0
 
     async def run(self) -> None:
         self._attach()
@@ -122,6 +141,17 @@ class Timed:
                 await asyncio.sleep(2)
             self._status()
             self._write_status()
+            self._notify()
+
+    def _notify(self) -> None:
+        """systemd: READY=1 after the first pass, then WATCHDOG=1 while passes keep coming (a hung daemon stops)."""
+        if not self._ready_sent:
+            sd_notify("READY=1")
+            self._ready_sent = True
+        now = time.monotonic()
+        if now - self._watchdog_at >= WATCHDOG_EVERY_S:
+            self._watchdog_at = now
+            sd_notify("WATCHDOG=1")
 
     def _attach(self) -> None:
         """Attach SHM; on failure keep running (and retry) so the failure shows up in the status file."""
@@ -206,6 +236,7 @@ class Timed:
                         last = t
                     self._status()
                     self._write_status()
+                    self._notify()  # a long FIC stream is one pass of the main loop
         except (httpx.HTTPError, OSError) as e:
             self.synced = False
             self.welle_reachable = False

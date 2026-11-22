@@ -386,6 +386,7 @@ class SystemState(BaseModel):
     config_error: str | None = None
     services: dict[str, str] = Field(default_factory=dict)
     task_failures: list[dict] = Field(default_factory=list)  # background tasks that raised: last 20 (name, at, error)
+    loops_dead: list[str] = Field(default_factory=list)  # loops inside dawn-core found dead or stale (liveness.py)
 
 
 class BtDevice(BaseModel):

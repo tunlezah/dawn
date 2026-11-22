@@ -47,12 +47,22 @@ class TimeSourceService(Service):
         self._last_seen_written: float | None = None
         self._source_checked: float | None = None
         self._host = None
+        self.chronyc_timeouts = 0  # polls in a row where chronyc did not answer in time (a hung chronyd)
+        self._timed_out = False
 
     async def start(self) -> None:
         await self._start_gps()
         with suppress(Exception):
             await self.check_presence()
         self._task = spawn(self._loop(), name="chrony-poll")
+        self.ctx.liveness.register("chrony-poll", max_age_s=4 * self.ctx.config.time_sources.chrony_poll_s + 120, restart=self.restart_loop)
+        self.ctx.liveness.task("chrony-poll", self._task)
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="chrony-poll")
+        self.ctx.liveness.task("chrony-poll", self._task)
 
     async def stop(self) -> None:
         if self._task:
@@ -205,6 +215,7 @@ class TimeSourceService(Service):
     # ---- chrony ----------------------------------------------------------
     async def _loop(self) -> None:
         while True:
+            self.ctx.liveness.beat("chrony-poll")
             try:
                 await self.poll()
             except Exception:  # noqa: BLE001
@@ -234,14 +245,17 @@ class TimeSourceService(Service):
         except TimeoutError:
             with suppress(ProcessLookupError):
                 proc.kill()  # a chronyc that hangs (its socket gone) is not left behind every poll
+            self._timed_out = True
             return None
         return out.decode(errors="ignore") if proc.returncode == 0 else None
 
     async def poll(self) -> None:
         cfg = self.ctx.config.time_sources
         st = self.ctx.store.state.time_sources
+        self._timed_out = False
         src_txt = await self._chronyc("sources")
         trk_txt = await self._chronyc("tracking")
+        self.chronyc_timeouts = self.chronyc_timeouts + 1 if self._timed_out else 0
         st.chrony_available = src_txt is not None
         if src_txt is None:
             st.sources = []

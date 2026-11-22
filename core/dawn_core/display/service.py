@@ -60,6 +60,8 @@ class DisplayService(Service):
         st.backlight_driver = self.backlight.name
         self.controller.jump(self.manual_percent)
         self._task = spawn(self._loop(), name="display-loop")
+        self.ctx.liveness.register("display-loop", max_age_s=15, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("display-loop", self._task)
         log.info("display: sensor=%s backlight=%s mode=%s", st.sensor, st.backlight_driver, self.mode)
 
     async def stop(self) -> None:
@@ -111,10 +113,17 @@ class DisplayService(Service):
         return bool(self._sun) and self._sun["sunrise"] <= now < self._sun["sunset"]
 
     # ---- loop ------------------------------------------------------------
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="display-loop")
+        self.ctx.liveness.task("display-loop", self._task)
+
     async def _loop(self) -> None:
         period = 1.0 / self.ctx.config.display.lux_sensor.sample_hz
         while True:
             t0 = time.monotonic()
+            self.ctx.liveness.beat("display-loop")
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001

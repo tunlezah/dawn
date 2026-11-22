@@ -29,8 +29,11 @@ class FaceService(Service):
 
     async def start(self) -> None:
         if self._task is None or self._task.done():  # start() may be tried again after a failure
-            self.ctx.store.subscribe(self._on_state)
+            if self._task is None:
+                self.ctx.store.subscribe(self._on_state)
             self._task = spawn(self._tick(), name="face-tick")
+        self.ctx.liveness.register("face-tick", max_age_s=15, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("face-tick", self._task)
         self.recompute()
 
     async def stop(self) -> None:
@@ -74,9 +77,16 @@ class FaceService(Service):
                 f.menu_open = False
             self.ctx.store.touch()
 
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._tick(), name="face-tick")
+        self.ctx.liveness.task("face-tick", self._task)
+
     async def _tick(self) -> None:
         while True:
             await asyncio.sleep(1)
+            self.ctx.liveness.beat("face-tick")
             try:
                 self._expire()
             except Exception:  # noqa: BLE001

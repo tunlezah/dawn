@@ -462,6 +462,25 @@ class SupervisorConfig(StrictModel):
     timed_stale_s: int = Field(300, ge=30, le=3600, description="Restart dawn-timed when its status file is older than this.")
     min_backoff_s: int = Field(60, ge=10, le=3600, description="Shortest wait between two restarts of the same thing; it doubles while the problem keeps coming back.")
     max_backoff_s: int = Field(1800, ge=60, le=86400, description="Longest wait between two restarts of the same thing.")
+    face_recycle_at: str | None = Field(
+        "03:30",
+        description="Restart the face kiosk once a day at the first quiet moment after this time (null = never): Chromium grows over months. Only on Standby or the sleep clock, with nothing playing or ringing and no alarm in the next hour; skipped that day if it is not quiet within two hours.",
+    )
+    wifi_driver_recovery: bool = Field(
+        False,
+        description="With a saved Wi-Fi network: restart NetworkManager when wlan0 has been missing or 'unavailable' for 10 minutes (twice at most; then Diagnostics suggests a reboot). Never reboots.",
+    )
+
+    @field_validator("face_recycle_at", mode="before")
+    @classmethod
+    def _recycle_time(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 24 * 60:
+            v = f"{v // 60}:{v % 60}"  # YAML 1.1 reads an unquoted 13:30 as the number 810 (base 60)
+        if not isinstance(v, str):
+            raise ValueError(f"expected HH:MM, got {v!r}")
+        return _hhmm(v)
 
     @model_validator(mode="after")
     def _backoff(self) -> SupervisorConfig:

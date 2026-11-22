@@ -426,6 +426,10 @@ system:
     min_backoff_s: 60
     # Longest wait between two restarts of the same thing.
     max_backoff_s: 1800
+    # Restart the face kiosk once a day at the first quiet moment after this time (null = never): Chromium grows over months. Only on Standby or the sleep clock, with nothing playing or ringing and no alarm in the next hour; skipped that day if it is not quiet within two hours.
+    face_recycle_at: 03:30
+    # With a saved Wi-Fi network: restart NetworkManager when wlan0 has been missing or 'unavailable' for 10 minutes (twice at most; then Diagnostics suggests a reboot). Never reboots.
+    wifi_driver_recovery: false
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
   # Reads under-voltage / throttling flags on a Pi.
   vcgencmd_binary: vcgencmd

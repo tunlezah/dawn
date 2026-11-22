@@ -132,6 +132,8 @@ class AlarmService(Service):
         # the engine first: nothing below may keep it from running (and once only, should start() be tried again)
         if self._task is None or self._task.done():
             self._task = spawn(self._loop(), name="alarm-engine")
+        self.ctx.liveness.register("alarm-engine", max_age_s=30, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("alarm-engine", self._task)
         try:
             self.ctx.svc(AudioService).register_factory("buzzer", self._make_buzzer)
         except KeyError:
@@ -426,7 +428,15 @@ class AlarmService(Service):
             else:
                 self.tick_failures = 0
                 self.last_tick = time.monotonic()
+                self.ctx.liveness.beat("alarm-engine")  # only a tick that worked counts
             await asyncio.sleep(1.0)
+
+    async def restart_loop(self) -> None:
+        """Liveness found the engine dead or stuck: a new engine task (a ring in progress is its own session)."""
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="alarm-engine")
+        self.ctx.liveness.task("alarm-engine", self._task)
 
     async def tick(self, now: datetime | None = None) -> None:
         now = now or self.ctx.store.now()

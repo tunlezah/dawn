@@ -36,13 +36,15 @@ def sd_notify(msg: str) -> None:
 
 
 def alarms_alive(ctx: DawnContext) -> bool:
-    """The alarm engine is ticking (True when there is no alarm service to ask)."""
+    """The alarm engine is ticking and every loop that gates the watchdog (the state pump, the display loop, the face
+    and timer ticks) is alive. The face's own backup alarm trusts this (`alarms.engine_alive`, `/api/health`)."""
     try:
         from ..alarms.service import AlarmService
 
-        return ctx.svc(AlarmService).alive()
+        engine = ctx.svc(AlarmService).alive()
     except (ImportError, KeyError):
-        return True
+        engine = True
+    return engine and not ctx.liveness.gating_dead()
 
 
 def git_rev(repo: str) -> str | None:
@@ -142,15 +144,25 @@ class SysInfoService(Service):
             (self.ctx.runtime_dir / "heartbeat").write_text(str(int(time.time())))
         except OSError:
             pass
+        # the loops inside dawn-core: a dead or stale one is restarted (5 s, 30 s, 120 s apart); one that gates the
+        # watchdog and is still dead after that holds the watchdog back, so systemd restarts dawn-core
+        lv = self.ctx.liveness
+        repairing = cfg.system.supervisor.enabled  # self-repair off: nothing is restarted, a dead gating loop starves the watchdog at once
+        if repairing:
+            await lv.repair()
+        dead = lv.check()
+        st.loops_dead = dead
         alive = self._alarms_alive()
         self.ctx.store.state.alarms.engine_alive = alive  # the face rings by itself when this stays false
+        given_up = lv.exhausted() if repairing else lv.gating_dead()
+        feed = not given_up
         if cfg.system.watchdog:
-            if alive:
+            if feed:
                 sd_notify("WATCHDOG=1")
                 self._stall_logged = False
             elif not self._stall_logged:
                 self._stall_logged = True
-                log.error("the alarm engine has stopped ticking; holding back the watchdog so systemd restarts dawn-core")
+                log.error("%s stopped and could not be restarted; holding back the watchdog so systemd restarts dawn-core", ", ".join(given_up))
         if not self.ctx.sim and st.uptime_s % 60 < cfg.system.heartbeat_interval_s:
             # re-check SDR presence once a minute (hot plug), from the USB ids only: rtl_test would open the stick,
             # and a welle-cli starting at that moment (an alarm restarting it) would find it taken

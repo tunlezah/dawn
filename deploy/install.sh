@@ -343,6 +343,9 @@ for u in dawn-core dawn-dab dawn-timed dawn-face; do
 done
 mkdir -p /etc/systemd/system/shairport-sync.service.d
 sed "s|@UID@|$DAWN_UID|g" "$D/systemd/shairport-sync.service.d/dawn.conf" >/etc/systemd/system/shairport-sync.service.d/dawn.conf
+for u in chrony gpsd; do
+  install -D -m 0644 "$D/systemd/$u.service.d/dawn.conf" "/etc/systemd/system/$u.service.d/dawn.conf"
+done
 systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true

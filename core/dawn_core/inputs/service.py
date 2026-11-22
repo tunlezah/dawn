@@ -107,6 +107,19 @@ class InputService(Service):
             self._task = spawn(self._pump(), name="inputs")
         if self._vol_task is None or self._vol_task.done():
             self._vol_task = spawn(self._volume_worker(), name="inputs-volume")
+        # both block on a queue or an event, so they are judged by their tasks alone
+        self.ctx.liveness.register("inputs", max_age_s=None, restart=self.restart_loop)
+        self.ctx.liveness.register("inputs-volume", max_age_s=None, restart=self.restart_loop)
+        self.ctx.liveness.task("inputs", self._task)
+        self.ctx.liveness.task("inputs-volume", self._vol_task)
+
+    async def restart_loop(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = spawn(self._pump(), name="inputs")
+            self.ctx.liveness.task("inputs", self._task)
+        if self._vol_task is None or self._vol_task.done():
+            self._vol_task = spawn(self._volume_worker(), name="inputs-volume")
+            self.ctx.liveness.task("inputs-volume", self._vol_task)
         log.info("inputs backend: %s", self.backend.name)
 
     async def stop(self) -> None:

@@ -47,11 +47,14 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     return {
         "units": units,
         "task_failures": list(st.system.task_failures),
+        "loops": {"dead": {n: ctx.liveness.why(n) for n in ctx.liveness.check()}, "watched": len(ctx.liveness.names())},
         "supervisor": {
             "enabled": cfg.system.supervisor.enabled, "checked_at": supervisor.checked_at if supervisor else None,
             "repairs_24h": supervisor.recent(24) if supervisor else [], "user_units": supervisor.user_states if supervisor else None,
             "face_seen": ctx.ws_hub.face_seen() if ctx.ws_hub else False, "face_absent_s": cfg.system.supervisor.face_absent_s,
             "recovered": dict(ctx.registry.recovered),
+            "wifi_driver_tries": getattr(supervisor, "wifi_driver_tries", 0) if supervisor else 0,
+            "wifi_driver_recovery": cfg.system.supervisor.wifi_driver_recovery,
         },
         "audio": {
             "backend": st.audio.backend, "sink": st.audio.sink.model_dump() if st.audio.sink else None, "sinks": [s.model_dump() for s in st.audio.sinks],
@@ -267,6 +270,19 @@ def checks(f: dict[str, Any]) -> list[Check]:
                     "Something keeps breaking; the journal around those times says why (System → Logs). Repairs of the same thing wait longer each time it comes back.")
             else:
                 add("system", "supervisor", "Self-repair", "ok", "Nothing needed restarting in the last 24 hours." + (f" Started late: {', '.join(sorted(rec))}." if rec else ""))
+            if sup.get("wifi_driver_recovery") and (sup.get("wifi_driver_tries") or 0) >= 2:
+                add("network", "wifi_driver", "Wi-Fi adapter", "fail",
+                    "The Wi-Fi adapter stayed missing or unavailable after NetworkManager was restarted twice.",
+                    "Reboot the clock (Settings → Reboot). If it keeps happening, check the power supply: under-voltage can drop the Wi-Fi chip.")
+    lp = f.get("loops")
+    if lp is not None:
+        if lp["dead"]:
+            add("system", "loops", "Background loops", "fail",
+                "Not running: " + "; ".join(f"{n} ({why})" for n, why in lp["dead"].items()) + ".",
+                "dawn-core restarts them by itself (5 s, 30 s, then 120 s apart); if one that drives the alarms or the face stays down, "
+                "systemd restarts dawn-core. The journal says why (System → Logs).")
+        else:
+            add("system", "loops", "Background loops", "ok", f"All {lp['watched']} loops inside dawn-core are running.")
     tf = [t for t in f.get("task_failures") or [] if time.time() - float(t.get("at") or 0) < 24 * 3600]
     if tf:
         names = sorted({t["name"] for t in tf})

@@ -7,6 +7,11 @@ Wants=chrony.service
 StartLimitIntervalSec=0
 
 [Service]
+# READY=1 after its first pass, WATCHDOG=1 on every pass (its FIC read times out after 10 s, so a pass is short):
+# a dawn-timed hung on a socket is restarted by systemd itself, not only by dawn-core's supervisor
+Type=notify
+NotifyAccess=main
+WatchdogSec=60
 User=dawn
 Group=dawn
 ExecStart=@DAWN_DIR@/.venv/bin/dawn-timed --welle-url http://127.0.0.1:8000 --shm-unit 2 --status-file /run/dawn-timed/status.json

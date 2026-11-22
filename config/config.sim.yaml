@@ -263,6 +263,8 @@ system:
     timed_stale_s: 300
     min_backoff_s: 60
     max_backoff_s: 1800
+    face_recycle_at: 03:30
+    wifi_driver_recovery: false
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
   vcgencmd_binary: vcgencmd
   update_repo_dir: .

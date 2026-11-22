@@ -24,6 +24,11 @@ class WsHub:
     def connections(self) -> list[dict]:
         return [dict(v) for v in self.info.values()]
 
+    def face_frozen(self, max_raf_age_ms: float = 60_000) -> bool:
+        """A face whose page still pings but whose last animation frame is older than `max_raf_age_ms`: JavaScript runs
+        but the compositor or the GPU is stuck, so the screen is frozen."""
+        return any(v.get("role") == "face" and (v.get("raf_age_ms") or 0) > max_raf_age_ms for v in self.info.values())
+
     def face_seen(self, max_age_s: float = 60.0) -> bool:
         """A face is connected and its page has spoken within `max_age_s`."""
         now = time.monotonic()
@@ -64,6 +69,8 @@ async def ws_endpoint(ws: WebSocket) -> None:
             except json.JSONDecodeError:
                 continue
             if msg.get("type") == "ping":
+                if info is not None and isinstance(msg.get("raf_age_ms"), int | float):
+                    info["raf_age_ms"] = float(msg["raf_age_ms"])
                 await ws.send_text(json.dumps({"type": "pong", "now": ctx.store.iso()}))
             elif msg.get("type") == "hello":
                 hub.info.setdefault(ws, {})["role"] = str(msg.get("role") or "")[:16] or None

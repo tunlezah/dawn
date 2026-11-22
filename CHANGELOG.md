@@ -5,6 +5,44 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.2.8] - 2026-11-22
+
+Watchdog coverage (robustness plan WP-D).
+
+### Added
+- **Every loop inside dawn-core is watched** (`dawn_core/liveness.py`), not only the alarm engine: the state pump, the
+  display loop, the face and timer ticks, audio, DAB, the supervisor, the chrony poll, network, weather, Diagnostics
+  and the input pump. A loop that died or stopped making passes is restarted on the next heartbeat, then 5 s, 30 s and
+  120 s apart, each a `supervisor_repair` ("dawn-core: display-loop") under *Diagnostics → System → Self-repair*. If
+  one that the alarms or the face depend on (alarm engine, state pump, display loop, face tick, timers tick) is still
+  dead after that, the systemd watchdog is held back, as it was for the engine alone, so systemd restarts dawn-core
+  and the saved ring carries on. `alarms.engine_alive` (and `alarms_alive` in `/api/health`) now means every one of
+  those loops is alive, so the face's own backup alarm trusts it too. `/api/health` lists `loops_dead`, and
+  *Diagnostics → System → Background loops* names any loop that is down. With `system.supervisor.enabled: false`
+  nothing is restarted and a dead gating loop starves the watchdog at once.
+- dawn-timed tells systemd it is up and alive (`Type=notify`, `WatchdogSec=60`): a dawn-timed hung on a socket is
+  restarted by systemd itself.
+- The face's 15 s ping carries how long ago the page last drew a frame; a kiosk whose page still runs JavaScript but
+  draws nothing for a minute (a stuck compositor or GPU: a frozen screen) is restarted after `face_absent_s`.
+- **The kiosk is refreshed once a day** (`system.supervisor.face_recycle_at`, 03:30) at the first quiet moment: on
+  Standby or the sleep clock, nothing playing, ringing or counting down, no alarm or light wake in the next hour, and
+  the kiosk up for six hours. A day without a quiet moment in the two hours after is skipped.
+- A chronyd that no longer answers `chronyc` (four polls in a row) is restarted, and so is a gpsd that is connected but
+  has sent no position report for two minutes while a receiver is fitted.
+- `system.supervisor.wifi_driver_recovery` (off by default): with a saved Wi-Fi network and wlan0 missing or
+  `unavailable` for 10 minutes, NetworkManager is restarted, twice at most; then *Diagnostics → Network* suggests a
+  reboot. It never reboots by itself.
+- `POST /api/debug/cancel/<loop>` cancels a watched loop, for the on-device check; it exists only with `DAWN_DEBUG=1`.
+
+### Changed
+- `dawn-core.service`: `OOMScoreAdjust=-800`, `LimitCORE=0`, `TimeoutStopSec=45`; dawn-core stops its services
+  within 35 s overall (10 s each at most) instead of 10 s per service. `dawn-face.service`: `OOMScoreAdjust=500`.
+- chrony and gpsd get drop-ins with `Restart=always` and `StartLimitIntervalSec=0`: their stock units left them down
+  after a clean exit.
+- The kiosk runs Chromium with its own profile (`~/.config/dawn-face`, taken over from Chromium's default profile on
+  the first run so the face's backup-alarm memory is kept) and clears a stale single-instance lock before starting:
+  after a hostname change Chromium could refuse its profile and the face stayed black.
+
 ## [0.2.7] - 2026-11-22
 
 Timers and background tasks (robustness plan WP-C).

@@ -52,6 +52,15 @@ class NetworkService(Service):
 
     async def start(self) -> None:
         self._task = spawn(self._loop(), name="network")
+        # a pass can include a hotspot retry (a rescan, then up to 45 s joining)
+        self.ctx.liveness.register("network", max_age_s=4 * self.ctx.config.network.online_check_interval_s + 300, restart=self.restart_loop)
+        self.ctx.liveness.task("network", self._task)
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="network")
+        self.ctx.liveness.task("network", self._task)
 
     async def stop(self) -> None:
         if self._task:
@@ -64,6 +73,7 @@ class NetworkService(Service):
 
     async def _loop(self) -> None:
         while True:
+            self.ctx.liveness.beat("network")
             try:
                 await self.poll()
             except Exception:  # noqa: BLE001

@@ -191,7 +191,15 @@ class DabService(Service):
         self.channel = self.ctx.db.get("dab.last_channel") or self.ctx.config.dab.default_channel
         self._write_env()
         self._task = spawn(self._loop(), name="dab-loop")
+        self.ctx.liveness.register("dab-loop", max_age_s=90, restart=self.restart_loop)
+        self.ctx.liveness.task("dab-loop", self._task)
         self.publish()
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="dab-loop")
+        self.ctx.liveness.task("dab-loop", self._task)
 
     async def stop(self) -> None:
         for t in (self._task, self._scan_task):
@@ -223,6 +231,7 @@ class DabService(Service):
     # ---- polling ---------------------------------------------------------
     async def _loop(self) -> None:
         while True:
+            self.ctx.liveness.beat("dab-loop")
             try:
                 await self._poll()
             except Exception:  # noqa: BLE001

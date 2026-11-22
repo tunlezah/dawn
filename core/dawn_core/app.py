@@ -45,6 +45,9 @@ def create_app(cfg_mgr: ConfigManager | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         await ctx.store.start()
+        # the pump carries every change to the face; sysinfo touches the store each heartbeat, so it runs every few s
+        ctx.liveness.register("state-pump", max_age_s=60, gates_watchdog=True, restart=ctx.store.restart_loop)
+        ctx.liveness.task("state-pump", ctx.store._task)
         ctx.store.subscribe(lambda _s: hub.broadcast(ctx.store.snapshot()))
         build_services(ctx)
         await ctx.registry.start_all()

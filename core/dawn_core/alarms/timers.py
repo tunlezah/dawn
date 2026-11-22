@@ -70,6 +70,8 @@ class TimerService(Service):
     async def start(self) -> None:
         if self._tick_task is None or self._tick_task.done():
             self._tick_task = spawn(self._tick(), name="timers-tick")
+        self.ctx.liveness.register("timers-tick", max_age_s=15, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("timers-tick", self._tick_task)
         self._restore_nap()
         self.publish()
 
@@ -298,9 +300,16 @@ class TimerService(Service):
         self.publish()
 
     # ---- state -----------------------------------------------------------
+    async def restart_loop(self) -> None:
+        if self._tick_task and not self._tick_task.done():
+            self._tick_task.cancel()
+        self._tick_task = spawn(self._tick(), name="timers-tick")
+        self.ctx.liveness.task("timers-tick", self._tick_task)
+
     async def _tick(self) -> None:
         while True:
             await asyncio.sleep(1.0)
+            self.ctx.liveness.beat("timers-tick")
             try:
                 self.watch_clock()
             except Exception:  # noqa: BLE001

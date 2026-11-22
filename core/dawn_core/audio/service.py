@@ -62,7 +62,15 @@ class AudioService(Service):
         await self.backend.set_mute(self.muted)
         await self.apply_eq()
         self._task = spawn(self._loop(), name="audio-loop")
+        self.ctx.liveness.register("audio-loop", max_age_s=60, restart=self.restart_loop)
+        self.ctx.liveness.task("audio-loop", self._task)
         self.publish()
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="audio-loop")
+        self.ctx.liveness.task("audio-loop", self._task)
 
     async def stop(self) -> None:
         if self._task:
@@ -92,6 +100,7 @@ class AudioService(Service):
         n = 0
         while True:
             await asyncio.sleep(2)
+            self.ctx.liveness.beat("audio-loop")
             n += 1
             try:
                 if n % 15 == 0:

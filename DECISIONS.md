@@ -531,6 +531,35 @@ each section. Every entry says what was decided and why, so it can be revisited.
   and the face's heartbeat when `time.time() - last_seen` was; a clock step (chrony at boot, an hour after a power
   cut) made a healthy daemon or kiosk look hung. The supervisor now times how long dawn-timed's `updated_at` value
   has stayed the same, and the WebSocket hub stamps the face's messages with `time.monotonic()`.
+- **Every loop inside dawn-core has a liveness entry, and five of them gate the watchdog.** The watchdog used to see
+  only the alarm engine; a state pump, display loop or timers tick that died was noticed by nobody (the face froze,
+  the backlight stopped following the room, a nap never counted down). Loops call `beat()` each pass, or register
+  their task when they block on a queue; the heartbeat restarts a dead or stale one through the service's
+  `restart_loop()` (which re-creates only that task, as `start()` already could), 5 s, 30 s and 120 s apart, and logs a
+  self-repair. The engine, state pump, display loop, face tick and timers tick gate the watchdog: still dead after
+  those restarts, `WATCHDOG=1` is held back and systemd restarts dawn-core. This restarts a broken engine in place
+  before the process, so systemd steps in a few minutes later than before; meanwhile `engine_alive` is false from the
+  first missed pass, so the face's backup alarm covers the gap. The other loops are retried every 120 s for ever and
+  never touch the watchdog. Tests that drive a loop by hand turn the repair off (the `liveness` marker turns it on).
+- **dawn-timed is a `Type=notify` service with its own watchdog.** The supervisor's 5-minute status check stays, but a
+  daemon hung on a socket is now restarted by systemd within a minute. READY=1 comes after the first pass;
+  WATCHDOG=1 at most every 5 s from the main loop and from inside a long FIC stream (each read times out after 10 s).
+- **A frozen screen is told apart by its frames, not its pings.** A page whose JavaScript runs but whose compositor
+  or GPU is stuck still pings; the ping now carries the age of the last `requestAnimationFrame` callback (asked for
+  every 5 s), and an age over a minute counts like a missing face (`face_absent_s`, then a restart).
+- **The kiosk is replaced once a day while nobody looks** (round one's recommendation): at the first check after
+  `face_recycle_at` (03:30) that finds Standby or the sleep clock, nothing playing or ringing, no nap or light wake,
+  no alarm or light wake within the hour, and a kiosk up for six hours. Not quiet within two hours: skipped that day.
+  The profile stays on the card (not tmpfs), because the face's backup alarm keeps its memory in localStorage there;
+  a stale `Singleton*` lock (a hostname change, a crash) is removed before Chromium starts.
+- **Hung chronyd and gpsd are restarted; the Wi-Fi driver only on request.** Four chronyc polls in a row that time out,
+  or a connected gpsd with a receiver fitted and no position report for two minutes, are restarted like any unit. A
+  missing or `unavailable` wlan0 is more often a power problem than a software one, so its recovery
+  (`wifi_driver_recovery`) is off by default, restarts NetworkManager twice at most and then asks for a reboot in
+  Diagnostics; software never reboots the clock.
+- **Memory pressure takes the face first.** `OOMScoreAdjust=-800` on dawn-core (the alarms), `500` on the kiosk, and
+  welle-cli in between (WP-E), so the kernel's OOM killer picks Chromium before anything that rings. No core dumps on
+  the card. dawn-core's stop is budgeted to 35 s overall under a 45 s `TimeoutStopSec`.
 - **A service inside dawn-core that fails to start is started again** (`ServiceRegistry.retry_failed`,
   asked by the supervisor): PipeWire's tools not answering within the 30 s start timeout left the audio
   service without its loop (no sink refresh, no PipeWire retry) until the next restart of dawn-core;
