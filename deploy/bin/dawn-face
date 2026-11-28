@@ -20,6 +20,19 @@ FLAGS=(
 case "$MODEL" in
   *"Zero 2"*|*"Pi 3"*) FLAGS+=(--disable-gpu-compositing --disable-smooth-scrolling --renderer-process-limit=1 --js-flags=--max-old-space-size=96);;
 esac
+# An explicit profile on the SD card, not on tmpfs: the face's own backup alarm keeps its memory of the next alarm in
+# localStorage there (web/src/face/backup.ts). The first run takes over Chromium's default profile, so that memory
+# is kept.
+PROFILE="${HOME:-/home/dawn}/.config/dawn-face"
+if [ ! -d "$PROFILE" ] && [ -d "${HOME:-/home/dawn}/.config/chromium" ]; then
+  cp -a "${HOME:-/home/dawn}/.config/chromium" "$PROFILE" 2>/dev/null || true
+fi
+mkdir -p "$PROFILE"
+# Chromium's single-instance lock names the host it was taken on: after a hostname change (dawn-set-hostname) or a
+# crash it can point at a host or process that no longer exists and Chromium refuses the profile. Only this kiosk
+# uses the profile, so a stale lock is always safe to remove.
+rm -f "$PROFILE"/Singleton{Lock,Cookie,Socket}
+FLAGS+=(--user-data-dir="$PROFILE")
 export WLR_LIBINPUT_NO_DEVICES=1   # HDMI panels without touch must still start
 export XDG_SESSION_TYPE=wayland
 rm -rf /tmp/dawn-face-cache

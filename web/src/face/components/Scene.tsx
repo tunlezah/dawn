@@ -18,6 +18,8 @@ type Season = 'summer' | 'autumn' | 'winter' | 'spring';
 export interface SceneProps {
   now: Date; tz: string; wx: SceneWeather | null;
   sunrise: string | null; sunset: string | null; latitude: number; lowCpu: boolean;
+  /** nothing moves (low-CPU, or cool mode); lowCpu alone also drops the blur filters */
+  still?: boolean;
   /** burn-in: draw the hills, trees and stars from today's date so their outline is not the same edge every day */
   daily?: boolean;
 }
@@ -116,7 +118,7 @@ const PRECIP: Partial<Record<Kind, { n: number; len: [number, number]; s: number
   hail: { n: 45, len: [12, 22], s: 0.6, alpha: 0.35 },
 };
 
-export const Scene = memo(function Scene({ now, tz, wx, sunrise, sunset, latitude, lowCpu, daily = false }: SceneProps) {
+export const Scene = memo(function Scene({ now, tz, wx, sunrise, sunset, latitude, lowCpu, still, daily = false }: SceneProps) {
   const day = daily ? dayNumber(now, tz) % 9973 : 0;
   const icon = wx?.icon ?? null, temp = wx?.temperature ?? null, cloudPct = wx?.cloud ?? null, wind = wx?.wind ?? null;
   const gusts = wx?.gusts ?? null, rainMm = wx?.precip ?? null, vis = wx?.visibility ?? null;
@@ -227,7 +229,7 @@ export const Scene = memo(function Scene({ now, tz, wx, sunrise, sunset, latitud
   const boltX = 160 + rnd(Math.floor(m.t / 60) + d0) * 480;
 
   return (
-    <div className={`f-scene ${lowCpu ? 'static' : ''}`} aria-hidden="true" data-kind={m.kind} data-season={m.season} data-hour={wx?.at ?? undefined}>
+    <div className={`f-scene ${lowCpu || still ? 'static' : ''}`} aria-hidden="true" data-kind={m.kind} data-season={m.season} data-hour={wx?.at ?? undefined}>
       <svg className="sc-layer" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="xMidYMid slice">
         <defs>
           <linearGradient id="sc-sky" x1="0" y1="0" x2="0" y2="1">

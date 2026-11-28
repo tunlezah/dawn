@@ -58,5 +58,5 @@ line-length = 110
 target-version = "py311"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "ASYNC"]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "RUF006"]  # RUF006: a task nobody holds can be collected mid-flight (use dawn_core.tasks.spawn)
 ignore = ["E501", "B008", "ASYNC109", "ASYNC240"]

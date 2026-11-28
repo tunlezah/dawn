@@ -11,7 +11,7 @@ from dawn_core.config import ConfigManager
 async def client(tmp_config):
     app = create_app(ConfigManager(tmp_config, poll_s=10))
     async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
             yield c
 
 
@@ -61,19 +61,27 @@ def test_the_face_is_known_by_what_its_page_sends(tmp_config) -> None:
     from fastapi.testclient import TestClient
 
     app = create_app(ConfigManager(tmp_config, poll_s=10))
-    with TestClient(app) as c:
+    with TestClient(app, headers={"X-Dawn-Client": "1"}) as c:
         hub = app.state.ws_hub
         with c.websocket_connect("/ws") as ws:
             assert ws.receive_json()["type"] == "state"
             assert not hub.face_seen()  # connected, but it has not said it is the face
             ws.send_json({"type": "hello", "role": "face"})
             ws.send_json({"type": "ping"})
-            assert ws.receive_json()["type"] == "pong"
+            assert _next_pong(ws)["type"] == "pong"  # a state push may come first: services are still starting
             assert hub.face_seen()
             info = next(iter(hub.info.values()))
             info["last_seen"] -= 120  # the page went quiet two minutes ago
             assert not hub.face_seen() and hub.face_seen(max_age_s=300)
             ws.send_json({"type": "ping"})
-            ws.receive_json()
+            _next_pong(ws)
             assert hub.face_seen()
         assert not hub.face_seen()
+
+
+def _next_pong(ws) -> dict:
+    for _ in range(50):
+        msg = ws.receive_json()
+        if msg["type"] != "state":
+            return msg
+    raise AssertionError("no pong")

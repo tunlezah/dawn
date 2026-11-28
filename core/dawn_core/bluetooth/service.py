@@ -12,6 +12,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import BtDevice, NowPlaying
+from ..tasks import spawn
 from .backend import BluetoothBackend, make_backend
 
 log = logging.getLogger("dawn.bt")
@@ -76,7 +77,7 @@ class BluetoothService(Service):
                 await self.backend.set_alias(self.ctx.config.bluetooth_name())
         except Exception as e:  # noqa: BLE001
             log.debug("set alias failed: %s", e)
-        self._task = asyncio.create_task(self._loop(), name="bt-loop")
+        self._task = spawn(self._loop(), name="bt-loop")
         self.publish()
 
     async def stop(self) -> None:
@@ -149,7 +150,7 @@ class BluetoothService(Service):
         self.ctx.store.state.bluetooth.discoverable_until = until.isoformat(timespec="seconds")
         if self._disc_task:
             self._disc_task.cancel()
-        self._disc_task = asyncio.create_task(self._end_discoverable(secs))
+        self._disc_task = spawn(self._end_discoverable(secs), name="bluetooth-discoverable", owner="bluetooth")
         self.publish()
 
     async def _end_discoverable(self, secs: int) -> None:

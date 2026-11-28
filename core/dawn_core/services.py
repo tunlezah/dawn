@@ -21,6 +21,8 @@ log = logging.getLogger("dawn.services")
 START_TIMEOUT_S = 30.0
 RETRY_MIN_S = 60.0  # a failed service is tried again after this long, then twice as long each time...
 RETRY_MAX_S = 900.0  # ...up to this
+STOP_BUDGET_S = 35.0  # all of stop_all; dawn-core.service has TimeoutStopSec=45
+STOP_EACH_S = 10.0
 
 
 class Service:
@@ -93,10 +95,14 @@ class ServiceRegistry:
                 out.append(s.name)
         return out
 
-    async def stop_all(self) -> None:
+    async def stop_all(self, budget_s: float = STOP_BUDGET_S) -> None:
+        """Stop in reverse order within `budget_s` overall (the unit's TimeoutStopSec is 45 s). Each service gets up to
+        STOP_EACH_S of what is left; one that hangs costs its share, not the shutdown, and those after it still stop."""
+        deadline = time.monotonic() + budget_s
         for s in reversed(self._services):
+            left = deadline - time.monotonic()
             try:
-                await asyncio.wait_for(s.stop(), timeout=10)
+                await asyncio.wait_for(s.stop(), timeout=max(0.5, min(STOP_EACH_S, left)))
             except Exception:  # noqa: BLE001
                 log.exception("service %s failed to stop", s.name)
 

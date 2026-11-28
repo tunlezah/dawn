@@ -54,6 +54,7 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     units = await host.units(["NetworkManager", "avahi-daemon"])
     return {
         "online": n.online, "ip": n.ip, "ssid": n.ssid, "interface": n.interface, "hotspot": n.hotspot_active, "hotspot_ssid": n.hotspot_ssid,
+        "wifi_configured": bool(n.wifi_configured), "retry_every_s": cfg.network.hotspot.retry_every_s,
         "check_host": cfg.network.online_check_host, "route": route, "nameservers": nameservers, "dns_host": probe_host,
         "dns_addresses": addrs, "dns_error": dns_err, "wireless": wireless, "units": units,
         "hostname": cfg.general.hostname, "port": cfg.web.port, "sim": ctx.sim,
@@ -66,7 +67,12 @@ def checks(f: dict[str, Any]) -> list[Check]:
     def add(id_: str, title: str, status: str, detail: str, hint: str | None = None) -> None:
         c.append(Check(f"net.{id_}", "network", title, status, detail, hint))  # type: ignore[arg-type]
 
-    if f["hotspot"]:
+    if f["hotspot"] and f.get("wifi_configured"):
+        add("hotspot", "Setup hotspot", "warn",
+            f"The saved Wi-Fi network has been out of reach, so the setup hotspot \"{f['hotspot_ssid']}\" is on. Dawn looks for the "
+            f"saved network every {f.get('retry_every_s', 180) // 60 or 1} min and joins it when it is back (never while a phone is on the hotspot).",
+            f"Check the router. To choose another network, join the hotspot from a phone and open http://10.42.0.1:{f['port']}/.")
+    elif f["hotspot"]:
         add("hotspot", "Setup hotspot", "warn", f"No network, so the setup hotspot \"{f['hotspot_ssid']}\" is on.",
             f"Join it from a phone and open http://10.42.0.1:{f['port']}/ to choose a Wi-Fi network.")
     if f["ip"] and not f["hotspot"]:

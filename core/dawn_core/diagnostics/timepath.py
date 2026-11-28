@@ -127,6 +127,7 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
             addrs, err = await host.resolve(h)
             dns[h] = {"addresses": addrs, "error": err}
     timed, timed_age, timed_err = _timed_status(cfg.diagnostics.timed_status_file)
+    rtc = ((await host.read("/sys/class/rtc/rtc0/name")) or "").strip() or None
     t = parse_tracking(trk) if trk else None
     return {
         "units": units, "chronyc_error": src_err or trk_err, "select_error": sel_err, "ntpdata_error": ntp_err,
@@ -134,9 +135,10 @@ async def collect(ctx: DawnContext, host: Host, gps: dict[str, Any], dab: dict[s
         "sources": merge_sources(src, stats, sel, ntp, cfg.time_sources.stale_after_s),
         "activity": asdict(a) if (a := parse_activity(act or "")) else None,
         "shm": [asdict(s) for s in shm if s.unit is not None], "servers": servers, "gps_offset_s": gps_offset_s, "dns": dns, "online": online,
-        "timed": timed, "timed_age_s": round(timed_age, 1) if timed_age is not None else None, "timed_error": timed_err,
-        "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"]},
-        "dab": {"enabled": dab["enabled"], "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
+        "timed": timed, "timed_age_s": round(timed_age, 1) if timed_age is not None else None, "timed_error": timed_err, "rtc": rtc,
+        "gps": {"enabled": gps["enabled"], "has_fix": bool(gps["detail"].get("has_fix")), "unit": gps["unit"],
+                "presence": gps.get("presence", "present"), "required": gps.get("required", False)},
+        "dab": {"enabled": dab["enabled"], "paused": bool(dab.get("paused")), "sync": bool(dab["mux"] and dab["mux"]["sync"]), "channel": (dab["mux"] or {}).get("channel"),
                 "ensemble": (dab["mux"] or {}).get("ensemble")},
     }
 
@@ -185,6 +187,16 @@ def checks(f: dict[str, Any]) -> list[Check]:
         add("synced", g0, "System clock", "fail", "Not synchronised to any source.",
             "Alarms use the system clock; until a source below works it free-runs. A Pi 4 has no battery clock, so after a power cut it starts "
             "from the last shutdown time.", ["time.burst"])
+    rtc = f.get("rtc")
+    if rtc and ("1307" in rtc or "3231" in rtc):
+        add("rtc", g0, "Real-time clock", "ok", f"DS3231 present ({rtc}): the time is right from the first second after a power cut.")
+    elif rtc and "rpi" in rtc:
+        add("rtc", g0, "Real-time clock", "info", f"The Pi 5's own RTC ({rtc}); it keeps time through a power cut only with its battery fitted.")
+    elif rtc:
+        add("rtc", g0, "Real-time clock", "ok", f"{rtc} present.")
+    else:
+        add("rtc", g0, "Real-time clock", "info", "None: after a power cut the time is unknown until DAB, GPS or the internet answers.",
+            "A DS3231 module on I2C bus 1 (address 0x68) keeps the time; the installer finds it and sets it up.")
     if f["select_error"]:
         add("select_access", g0, "Selection details", "info", "chrony's own reasons for (not) using a source need `sudo chronyc selectdata`.",
             "Re-run install.sh to add the sudo rule (deploy/sudoers/dawn).")
@@ -198,7 +210,15 @@ def checks(f: dict[str, Any]) -> list[Check]:
         by_kind.setdefault(s["kind"], []).append(s)
     shm = {s["unit"]: s for s in f["shm"]}
 
-    if f["gps"]["enabled"]:
+    presence = f["gps"].get("presence", "present") if f["gps"]["enabled"] else "off"
+    if presence in ("absent", "off") and not (presence == "absent" and f["gps"].get("required")):
+        # no module (or GPS switched off): one quiet row, no "No GPS fix" or shared-memory warnings; the GPS tab says why
+        c.append(Check("time.gps.source", "time", "chrony uses GPS", "off",
+                       "Not in use: no GPS module." if presence == "absent" else "Not in use: GPS is switched off.", None, [], "GPS → chrony"))
+    elif presence in ("missing", "absent"):
+        c.append(Check("time.gps.source", "time", "chrony uses GPS", "fail" if f["gps"].get("required") else "warn",
+                       "GPS module not found (see GPS).", None, [], "GPS → chrony"))
+    else:
         g = "GPS → chrony"
         fix = f["gps"]["has_fix"]
         add("gps.fix", g, "GPS fix", "ok" if fix else "fail", "Receiver has a fix." if fix else "No GPS fix (see GPS).")
@@ -216,7 +236,9 @@ def checks(f: dict[str, Any]) -> list[Check]:
                      "Add 'refclock SHM 0 refid GPS offset 0.070 delay 0.2' to /etc/chrony/chrony.conf (deploy/chrony/chrony.conf).",
                      "gpsd has a fix but chrony gets no samples from SHM 0: restart gpsd, then chrony.", ["gps.restart", "time.restart_chrony"])
 
-    if f["dab"]["enabled"]:
+    if f["dab"]["enabled"] and f["dab"].get("paused"):
+        c.append(Check("time.dab.source", "time", "chrony uses DAB", "off", "Paused by cool mode (the decoder is stopped for now).", None, [], "DAB → chrony"))
+    elif f["dab"]["enabled"]:
         g = "DAB → chrony"
         d = f["dab"]
         add("dab.sync", g, "DAB ensemble", "ok" if d["sync"] else "fail",
@@ -233,6 +255,11 @@ def checks(f: dict[str, Any]) -> list[Check]:
             last = st.get("last_sample_at")
             add("dab.timed", g, "dawn-timed", "ok", f"Running ({'FIC' if st['mode'] == 'fic' else 'mux.json'} mode), {st['samples_written']} samples"
                 + (f", last at {last[11:19]} UTC" if last else "") + (" (dry run)" if st.get("dry_run") else "") + ".")
+        if st is not None and st.get("rejected"):
+            add("dab.guard", g, "Implausible DAB times", "warn",
+                f"{st['rejected']} DAB time sample(s) rejected; last: {st.get('last_rejected') or '?'}.",
+                "The ensemble broadcast a time before the last saved time or years ahead of it (a week rollover or a broken "
+                "multiplex). dawn-timed ignores those; an RTC module gives the clock a reference of its own.")
         if st is not None:
             long_, short = st.get("fig010_long", 0), st.get("fig010_short", 0)
             if long_:

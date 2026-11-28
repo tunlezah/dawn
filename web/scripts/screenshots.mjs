@@ -10,10 +10,10 @@ const hub = process.argv[3] || process.env.DAWN_HUB || 'http://127.0.0.1:8099';
 const out = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'screenshots');
 mkdirSync(out, { recursive: true });
 
-const json = (method, url, body) => fetch(url, { method, headers: { 'content-type': 'application/json' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
+const json = (method, url, body) => fetch(url, { method, headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify(body ?? {}) }).catch(() => {});
 const post = (url, body) => json('POST', url, body);
 const put = (url, body) => json('PUT', url, body);
-const del = (url) => fetch(url, { method: 'DELETE' }).catch(() => {});
+const del = (url) => fetch(url, { method: 'DELETE', headers: { 'x-dawn-client': '1' } }).catch(() => {});
 const config = (patch) => json('PATCH', `${base}/api/config`, patch);
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 

@@ -146,6 +146,8 @@ export function Display() {
         </Card>
       )}
 
+      <CoolModeCard />
+
       {cfg && (
         <Card title="Face">
           <Row label="Layout"><select value={cfg.layout} onChange={(e) => patch({ layout: e.target.value })} className="w-36"><option value="rect">Rectangular</option><option value="round">Round display</option></select></Row>
@@ -243,5 +245,35 @@ export function Display() {
         </Card>
       )}
     </div>
+  );
+}
+
+/** Cool mode (power.cool_mode): on hot days, while nothing much is happening, the Pi runs cooler. The alarms are never
+ *  affected: the radio is back before an alarm on DAB, and any use ends it at once. */
+function CoolModeCard() {
+  const s = useState();
+  const p = s.power;
+  const [mode, setMode] = useReactState<string | null>(null);
+  const shown = mode ?? p.mode;
+  const set = (m: string) => { setMode(m); api.patch('/api/config', { power: { cool_mode: m } }).catch(() => setMode(null)); };
+  const temp = s.system.cpu_temp_c !== null ? ` · SoC ${Math.round(s.system.cpu_temp_c)} °C` : '';
+  const parts = p.cool
+    ? [`Cool${temp}`, p.dab_paused ? 'radio paused' : null, p.cpu_cap_mhz ? `CPU capped at ${(p.cpu_cap_mhz / 1000).toFixed(1)} GHz` : null].filter(Boolean).join(' · ')
+    : `Normal${temp}`;
+  const today = Math.round(p.cool_today_s / 60);
+  return (
+    <Card title="Cool mode" action={<span className={`chip ${p.cool ? 'text-accent' : ''}`} data-testid="cool-state">{p.cool ? 'cool' : 'normal'}</span>}>
+      <Row label="Cool mode" hint="auto: when idle on summer or hot days, or when the Pi runs hot · on: whenever idle">
+        <div className="inline-flex rounded-lg border border-border p-0.5" role="group" aria-label="Cool mode">
+          {(['off', 'auto', 'on'] as const).map((m) => (
+            <button key={m} type="button" aria-pressed={shown === m} onClick={() => set(m)}
+              className={`px-3 py-1 text-sm rounded-md ${shown === m ? 'bg-elev-2 text-fg font-medium' : 'text-muted'}`}>{m === 'off' ? 'Off' : m === 'auto' ? 'Auto' : 'On'}</button>
+          ))}
+        </div>
+      </Row>
+      <div className="text-sm py-1">{parts}</div>
+      <div className="text-xs text-muted">{p.cool ? `Why: ${p.reason}.` : `Not cool: ${p.reason}.`}{p.dab_paused ? '' : p.cool ? ` Radio: ${p.dab_reason}.` : ''}{today ? ` ${today} min in cool mode today.` : ''}</div>
+      <div className="text-xs text-faint mt-1">Pausing the radio, a CPU cap and frozen animations; the radio is back minutes before any alarm on DAB.</div>
+    </Card>
   );
 }

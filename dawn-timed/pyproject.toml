@@ -22,3 +22,7 @@ include = ["dawn_timed*"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff.lint]
+# a task nobody holds can be garbage-collected part way through
+extend-select = ["RUF006"]

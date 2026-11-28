@@ -7,7 +7,7 @@ const WIRING = [
   ['Big button (optional)', 'GPIO23 (pin 16) ↔ GND, internal pull-up · off unless inputs.big_button.enabled'],
   ['VEML6030 SDA/SCL', 'GPIO2/GPIO3 (pins 3/5), 3V3 (pin 1), GND (pin 9) · address 0x10'],
   ['Audio Amp SHIM', 'I2S on GPIO18/19/21, 5V (pins 2/4), GPIO25 high · dtoverlay=hifiberry-dac'],
-  ['RTL-SDR', 'USB'], ['u-blox 7 GPS', 'USB (/dev/ttyACM0)'], ['Waveshare 4.3" DSI', 'DSI ribbon + backlight via sysfs'],
+  ['RTL-SDR', 'USB'], ['u-blox 7 GPS (optional)', 'USB (/dev/ttyACM0)'], ['Waveshare 4.3" DSI', 'DSI ribbon + backlight via sysfs'],
 ];
 
 export function About() {

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import time
+from datetime import datetime
 from typing import Any
 
 from ..context import DawnContext
@@ -31,7 +32,16 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     unit = (await host.units(["gpsd"]))["gpsd"] if want_gpsd else None
     loc = ctx.config.location
     distance = round(km_between((loc.latitude, loc.longitude), (d["lat"], d["lon"])), 1) if d.get("has_fix") and d["lat"] is not None else None
+    ts = ctx.svc(TimeSourceService)
+    gi = ctx.store.state.time_sources.gps
+    seen_age = None
+    if gi.last_seen_at:
+        try:
+            seen_age = max(0.0, (ctx.store.now() - datetime.fromisoformat(gi.last_seen_at)).total_seconds())
+        except ValueError:
+            seen_age = None
     return {
+        "presence": ts.presence, "required": g.required, "last_seen_age_s": seen_age,
         "enabled": g.enabled and g.source != "none", "configured_source": g.source, "detail": d, "usb": usb, "paths": paths,
         "unit": unit, "last_msg_age_s": round(time.time() - d["last_msg_at"], 1) if d.get("last_msg_at") else None,
         "toff_age_s": round(time.time() - d["toff_at"], 1) if d.get("toff_at") else None,
@@ -48,16 +58,30 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if not f["enabled"]:
         add("enabled", "GPS", "off", "Disabled in the configuration (time_sources.gps).")
         return c
+    presence, required = f.get("presence", "present"), f.get("required", False)
+    if presence == "absent":
+        # GPS is optional: no module is a state, not a fault, and the chain below would only list its consequences
+        add("receiver", "GPS receiver", "fail" if required else "absent",
+            "No GPS module fitted. Time comes from DAB and the internet; the location from Settings → Location.",
+            ("This build is set to need one (time_sources.gps.required). " if required else "")
+            + "Plug in a u-blox USB receiver at any time; it is picked up automatically.")
+        return c
+    if presence == "missing":
+        age = f.get("last_seen_age_s")
+        add("receiver", "GPS receiver", "fail" if required else "warn",
+            "GPS module not found" + (f" (last seen {ago(age)})." if age is not None else "."),
+            "Plug it back in (directly or on its extension), or restart gpsd. If it was removed on purpose, forget it.",
+            ["gps.restart", "gps.forget"])
+        return c
     d = f["detail"]
-    present = bool(f["usb"]) or any(f["paths"].values())
+    present = True
     if f["usb"]:
         u = f["usb"][0]
         add("receiver", "GPS receiver", "ok", f"{u['product'] or 'u-blox receiver'} on USB" + (", /dev/gps0 present" if f["paths"].get("/dev/gps0") else ""))
-    elif present:
+    elif any(f["paths"].values()):
         add("receiver", "GPS receiver", "ok", "Device node present: " + ", ".join(p for p, ok in f["paths"].items() if ok))
     else:
-        add("receiver", "GPS receiver", "fail", "No u-blox receiver on USB and no /dev/gps0.",
-            "Plug the receiver in (directly or on its extension). /dev/gps0 comes from the udev rule for u-blox (USB vendor 1546).")
+        add("receiver", "GPS receiver", "ok", "Receiver found " + ("by gpsd." if d["source"] == "gpsd" else "on the serial port (NMEA)."))
     if d["source"] == "gpsd":
         if f["unit"] not in (None, "active", "unknown"):
             add("gpsd", "gpsd", "fail", f"gpsd is {f['unit']}.", "Restart it; if it will not start, check `journalctl -u gpsd`.", ["gps.restart"])

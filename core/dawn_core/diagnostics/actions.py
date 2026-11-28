@@ -10,6 +10,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..context import DawnContext
+from ..tasks import spawn
 from .host import Host
 
 log = logging.getLogger("dawn.diag.actions")
@@ -77,6 +78,13 @@ async def gps_restart(ctx: DawnContext, host: Host, _v: Any) -> Result:
     return await _unit(host, "gpsd")
 
 
+async def gps_forget(ctx: DawnContext, host: Host, _v: Any) -> Result:
+    from ..timesync.service import TimeSourceService
+
+    ctx.svc(TimeSourceService).forget_gps()
+    return True, "Forgotten. With no receiver plugged in, GPS now shows as not fitted."
+
+
 async def chrony_restart(ctx: DawnContext, host: Host, _v: Any) -> Result:
     return await _unit(host, "chrony")
 
@@ -113,7 +121,7 @@ async def test_tone(ctx: DawnContext, host: Host, _v: Any) -> Result:
         if slot and slot.source.ref == ref:
             await audio.stop_level("user")
 
-    asyncio.create_task(stop_later(), name="test-tone")
+    spawn(stop_later(), name="test-tone", owner="diagnostics")
     return True, f"Playing the {ctx.config.audio.default_chime.replace('_', ' ')} chime for 4 s at volume {audio.volume}."
 
 
@@ -123,6 +131,7 @@ ACTIONS: dict[str, tuple[str, Fn]] = {
     "dab.retune": ("Tune to a channel", dab_retune),
     "dab.gain": ("Set tuner gain", dab_gain),
     "gps.restart": ("Restart gpsd", gps_restart),
+    "gps.forget": ("Forget the GPS module", gps_forget),
     "time.restart_chrony": ("Restart chrony", chrony_restart),
     "time.burst": ("Poll all time sources now", chrony_burst),
     "time.restart_timed": ("Restart dawn-timed", timed_restart),

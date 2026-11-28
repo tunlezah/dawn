@@ -327,6 +327,10 @@ class DabConfig(StrictModel):
     audio_timeout_s: float = Field(15.0, ge=3, le=120, description="No audio flowing for this long = failure.")
     gain: float | None = Field(None, description="Fixed tuner gain in dB, rounded to the nearest R820T/R828D step (null or negative = AGC).")
     poll_interval_s: float = Field(1.0, ge=0.2, le=10, description="How often /mux.json is read for DLS/MOT.")
+    no_sync_restart_s: int = Field(
+        180, ge=10, le=3600,
+        description="Restart the decoder when it answers but has had no sync for this long on a channel a scan found good (a stick that stopped delivering samples). After three such restarts the stick is re-enumerated on USB.",
+    )
 
     @field_validator("scan_channels", "scan_priority")
     @classmethod
@@ -384,12 +388,17 @@ class TimersConfig(StrictModel):
 # Time sources, GPS, weather, network, system, web
 # --------------------------------------------------------------------------- #
 class GpsConfig(StrictModel):
-    enabled: bool = True
+    enabled: bool = Field(True, description="Use a GPS receiver for time and location when one is fitted (it is optional).")
     source: Literal["auto", "gpsd", "serial", "sim", "none"] = "auto"
     gpsd_host: str = "127.0.0.1"
     gpsd_port: int = Field(2947, ge=1, le=65535)
     serial_device: str = "/dev/ttyACM0"
     serial_baud: int = 9600
+    required: bool = Field(False, description="This build must have a GPS receiver: a missing one is a fault (red) instead of 'not fitted'.")
+    forget_after_days: int = Field(
+        14, ge=1, le=3650,
+        description="A receiver seen within this many days and now gone is 'missing' (a warning); after that it is 'not fitted'.",
+    )
 
 
 class TimeSourcesConfig(StrictModel):
@@ -412,7 +421,15 @@ class HotspotConfig(StrictModel):
     enabled: bool = True
     ssid: str | None = Field(None, description="Hotspot SSID (null = <name>-<serial4>).")
     password: str = Field("dawnsetup", min_length=8, max_length=63)
-    wait_for_network_s: int = Field(45, ge=5, le=600, description="Seconds without a network before the hotspot starts.")
+    wait_for_network_s: int = Field(45, ge=5, le=600, description="Seconds without a network before the hotspot starts, on a box with no saved Wi-Fi network.")
+    configured_wait_s: int = Field(
+        900, ge=10, le=86400,
+        description="Seconds without a network before the hotspot starts when a Wi-Fi network is saved (a router rebooting at night is not a reason to go into setup).",
+    )
+    retry_every_s: int = Field(
+        180, ge=10, le=3600,
+        description="With a saved Wi-Fi network and the hotspot up: how often to drop the hotspot briefly and look for that network (never while a phone is connected to the hotspot).",
+    )
     interface: str = "wlan0"
 
 
@@ -431,7 +448,14 @@ class WebConfig(StrictModel):
     host: str = "0.0.0.0"
     port: int = Field(8080, ge=1, le=65535)
     static_dir: str | None = Field(None, description="Built web assets (null = bundled web/dist).")
-    cors_origins: list[str] = Field(default_factory=lambda: ["*"])
+    cors_origins: list[str] = Field(
+        default_factory=list,
+        description="Other web origins allowed to call the API from a browser (e.g. http://laptop.local:5173 for UI development). '*' is ignored: it would let any page on the network change the clock.",
+    )
+    allowed_hosts: list[str] = Field(
+        default_factory=list,
+        description="Extra names the clock may be reached by (a DNS name of your own). localhost, its addresses, <hostname>.local and the setup hotspot's 10.42.0.1 always work; anything else is refused (DNS rebinding).",
+    )
     auth: AuthConfig = AuthConfig()
 
 
@@ -449,6 +473,25 @@ class SupervisorConfig(StrictModel):
     timed_stale_s: int = Field(300, ge=30, le=3600, description="Restart dawn-timed when its status file is older than this.")
     min_backoff_s: int = Field(60, ge=10, le=3600, description="Shortest wait between two restarts of the same thing; it doubles while the problem keeps coming back.")
     max_backoff_s: int = Field(1800, ge=60, le=86400, description="Longest wait between two restarts of the same thing.")
+    face_recycle_at: str | None = Field(
+        "03:30",
+        description="Restart the face kiosk once a day at the first quiet moment after this time (null = never): Chromium grows over months. Only on Standby or the sleep clock, with nothing playing or ringing and no alarm in the next hour; skipped that day if it is not quiet within two hours.",
+    )
+    wifi_driver_recovery: bool = Field(
+        False,
+        description="With a saved Wi-Fi network: restart NetworkManager when wlan0 has been missing or 'unavailable' for 10 minutes (twice at most; then Diagnostics suggests a reboot). Never reboots.",
+    )
+
+    @field_validator("face_recycle_at", mode="before")
+    @classmethod
+    def _recycle_time(cls, v: object) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 24 * 60:
+            v = f"{v // 60}:{v % 60}"  # YAML 1.1 reads an unquoted 13:30 as the number 810 (base 60)
+        if not isinstance(v, str):
+            raise ValueError(f"expected HH:MM, got {v!r}")
+        return _hhmm(v)
 
     @model_validator(mode="after")
     def _backoff(self) -> SupervisorConfig:
@@ -459,12 +502,20 @@ class SupervisorConfig(StrictModel):
 
 class SystemConfig(StrictModel):
     heartbeat_interval_s: int = Field(5, ge=1, le=60)
+    heartbeat_url: str | None = Field(
+        None, pattern=r"^https?://",
+        description="Optional outside check-in (Healthchecks, Uptime Kuma push): GET every 5 minutes with ?status=ok|fail&msg=... so you are told when the clock is unhealthy or dead. Nothing is sent unless this is set.",
+    )
     watchdog: bool = Field(True, description="Send systemd watchdog keepalives.")
     supervisor: SupervisorConfig = SupervisorConfig()
     cpu_temp_path: str = "/sys/class/thermal/thermal_zone0/temp"
     vcgencmd_binary: str = Field("vcgencmd", description="Reads under-voltage / throttling flags on a Pi.")
     update_repo_dir: str = Field("/opt/dawn", description="Git checkout used by the software updater.")
-    update_branch: str = "main"
+    update_branch: str = Field("main", pattern=r"^[A-Za-z0-9._/-]{1,100}$")
+    update_quiet_minutes: int = Field(
+        60, ge=0, le=720,
+        description="No software update while an alarm, a snooze or a nap is on, or when the next alarm (or its light wake) is due within this many minutes.",
+    )
     sudo_binary: str = "sudo"
     allow_shutdown: bool = True
     log_tail_lines: int = Field(200, ge=20, le=2000)
@@ -484,6 +535,46 @@ class SimConfig(StrictModel):
 # --------------------------------------------------------------------------- #
 # Root
 # --------------------------------------------------------------------------- #
+class PowerConfig(StrictModel):
+    """Cool mode: on hot days, while nothing much is happening, the Pi runs cooler (the DAB decoder paused, the CPU
+    capped, the face's animations frozen, less polling). The alarms are never affected: the radio is back minutes
+    before an alarm on DAB, and any activity ends cool mode at once."""
+
+    cool_mode: Literal["off", "auto", "on"] = Field(
+        "auto", description="off: never; on: whenever idle; auto: when idle and it is summer, a hot day is forecast, or the SoC is hot.",
+    )
+    enter_temp_c: float = Field(65.0, ge=40, le=90, description="auto: the SoC at or above this for hold_s counts as hot.")
+    exit_temp_c: float = Field(55.0, ge=30, le=85, description="...and below this for exit_hold_s counts as cool again (hysteresis).")
+    hold_s: int = Field(300, ge=0, le=7200)
+    exit_hold_s: int = Field(900, ge=0, le=7200)
+    summer: Literal["auto"] | list[int] = Field(
+        "auto", description="auto: December to February south of the equator, June to August north (from location.latitude); or a list of months (1-12).",
+    )
+    hot_day_c: float = Field(30.0, ge=10, le=50, description="auto: today's forecast maximum at or above this means cool mode for the day.")
+    idle_after_s: int = Field(300, ge=30, le=7200, description="No activity (touch, controls, playing, the web UI) for this long before cool mode starts.")
+    pause_dab: bool = Field(True, description="Stop the DAB decoder while cool (the stick and its decoding are the largest load); it is back before any alarm on DAB.")
+    dab_wake_lead_minutes: int = Field(3, ge=1, le=30, description="The decoder is running again this long before an alarm's preparation (alarm_defaults.prepare_minutes) starts.")
+    dab_time_sync_every_h: float = Field(6.0, ge=0.5, le=48, description="With no live NTP or GPS time, run the decoder this often for DAB time.")
+    dab_time_sync_minutes: int = Field(10, ge=1, le=120, description="...for this long, or until dawn-timed has written samples.")
+    cpu_max_mhz: int = Field(1000, ge=0, le=4000, description="CPU frequency cap while cool (0 = leave it alone).")
+    freeze_animations: bool = Field(True, description="Stop the face's moving background while cool (it does not change your low-CPU setting).")
+    lux_sample_hz: float = Field(2.0, ge=0.5, le=20, description="Light sensor reads per second while cool.")
+    max_backlight_percent: int | None = Field(None, ge=1, le=100, description="Cap the backlight while cool (null = no cap).")
+
+    @field_validator("summer")
+    @classmethod
+    def _months(cls, v: object) -> object:
+        if isinstance(v, list) and not all(isinstance(m, int) and 1 <= m <= 12 for m in v):
+            raise ValueError("summer months must be 1-12")
+        return v
+
+    @model_validator(mode="after")
+    def _hysteresis(self) -> PowerConfig:
+        if self.exit_temp_c >= self.enter_temp_c:
+            raise ValueError("power.exit_temp_c must be below power.enter_temp_c")
+        return self
+
+
 class DawnConfig(StrictModel):
     """Root of config.yaml."""
 
@@ -505,6 +596,7 @@ class DawnConfig(StrictModel):
     web: WebConfig = WebConfig()
     system: SystemConfig = SystemConfig()
     diagnostics: DiagnosticsConfig = DiagnosticsConfig()
+    power: PowerConfig = PowerConfig()
     sim: SimConfig = SimConfig()
 
     @model_validator(mode="after")

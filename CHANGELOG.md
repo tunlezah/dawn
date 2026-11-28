@@ -5,7 +5,7 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
-## [0.3.0] - 2026-11-08
+## [0.3.0] - 2026-11-28
 
 ### Changed
 - Time: NTP is now the primary source, GPS the fallback and DAB the last resort (GPS was `prefer trust`).
@@ -28,11 +28,286 @@ All notable changes to Dawn are recorded here. The format follows
   - "Stick model" warns about an R828D stick whose EEPROM does not say RTLSDRBlog / Blog V4 (a clone): the
     rtl-sdr-blog driver only switches on its V4 handling for those strings.
 - RTL-SDR Blog V4 support checked end to end (driver: the rtl-sdr-blog fork already installed; same USB id and
-  gain table as before). The tuner is now named from the stick's USB descriptors when `rtl_test` cannot open it
-  (welle-cli holds it at boot, which showed every stick as "generic"), e.g. "Rafael Micro R828D (RTL-SDR Blog V4)".
-- Swapping or replugging the SDR stick restarts welle-cli within about 5 s. Before, a welle-cli left running when
-  its stick went away kept answering with no samples and DAB stayed dead until a reboot; presence was also only
-  re-checked once a minute and the old stick's name stayed on show.
+  gain table as before). Merged with 0.2.9's naming: the stick is named from its USB descriptors ("RTL-SDR Blog
+  V4 (R828D)"), and the "Stick model" note uses the same rule (`hw.is_blog_v4`) as the name.
+- Swapping or replugging the SDR stick restarts welle-cli within one heartbeat. Before, a welle-cli left running
+  when its stick went away kept answering with no samples and DAB stayed dead until a reboot; presence was also
+  only re-checked once a minute and the old stick's name stayed on show. A decoder that cool mode has stopped is
+  left stopped (it opens the new stick when it starts).
+
+## [0.2.12] - 2026-11-22
+
+Other hardening (robustness plan WP-H, H1 to H8). Each part stands alone.
+
+### Fixed
+- **Shutting down with an alarm pending** (H1). The hold-to-shutdown countdown on the face says "The 06:30 alarm will
+  not ring while Dawn is off" when an alarm or nap is due within a day; `POST /api/system/shutdown` answers 409 naming
+  the alarm unless the body is `{"confirm": true}` (Settings asks), and is refused while an alarm rings. On a Pi 5 the
+  RTC is set to switch the clock on 10 minutes before that alarm ("Dawn will switch itself on at 06:20").
+- **LAN security** (H5). Any web page opened on the Wi-Fi could shut the clock down or stop an alarm with a plain form
+  post. Every non-GET `/api/*` request now needs `X-Dawn-Client: 1` (Dawn's pages send it; a cross-site form cannot,
+  and a cross-site fetch with it is refused by CORS: `web.cors_origins` no longer honours `*`, now also ignored in
+  older config files). Only Host names of the clock itself are served (localhost, its addresses, `<hostname>.local`,
+  10.42.0.1 and the new `web.allowed_hosts`): anything else is 421, which stops DNS rebinding. At most 5 wrong PINs a
+  minute from one address, then 60 s of 429. With a PIN set, the WebSocket needs the session cookie (except from the
+  box itself). After joining a Wi-Fi network from Settings, Dawn offers to set a PIN.
+- **The WebSocket fan-out** (H8) sends to every client at once, each with its own 2 s budget: one slow phone held the
+  face's copy of a ring back by 2 s per broadcast.
+
+### Added
+- **Real-time clock** (H2): the installer looks for a DS3231 on I2C bus 1 (0x68), adds `dtoverlay=i2c-rtc,ds3231` and
+  disables `fake-hwclock` (the package stays); *Diagnostics → Time sync* reports the RTC, or that after a power cut the
+  time is unknown until DAB, GPS or the internet answers.
+- **A gross-error guard on DAB time** (H3): dawn-timed rejects a sample more than a minute before the time
+  `fake-hwclock` saved (or the RTC holds) or more than two years after it (a week rollover, a broken ensemble), counts
+  them in its status and *Diagnostics → Time sync* shows them.
+- **Logs that survive a reboot** (H4): a journald drop-in keeps the journal on the card (`Storage=persistent`, 64 MB,
+  14 days), so `journalctl -b -1` shows the night that ended in a reboot; chrony logs `tracking` only (it wrote its
+  measurements and statistics to the card all the time).
+- **The evening readiness check** (H6): half an hour before bedtime (21:30 with sleep mode off) the next alarm due within
+  14 hours is checked without disturbing anything (an output, PipeWire answering, its players, and for DAB the station
+  on air, only when nobody is listening and never by retuning). The sleep clock, the standby strip and Home show
+  "06:30 ✓" or "06:30 · will start on the chime: no DAB signal on 9A", so there is time to fix it before sleeping.
+- **An optional outside heartbeat** (H7): `system.heartbeat_url` (off; nothing is sent unless set) is called every 5
+  minutes with `?status=ok|fail&msg=…` (alarms alive, the next alarm, the count of problems), for a Healthchecks or
+  Uptime Kuma push monitor that alerts a phone when the clock is unhealthy or dead.
+- README: hardware recommendations (a GPIO piezo, a DS3231, the SDR outside the case, ventilation, the supply, a UPS).
+
+## [0.2.11] - 2026-11-22
+
+Cool mode (robustness plan WP-G).
+
+### Added
+- **Cool mode** (`power`, default `auto`): on hot days, while nothing much is happening, the Pi runs cooler. With the
+  box idle for `idle_after_s` (5 minutes: no touch, controls, playback, ring, timer, open menu or open control UI),
+  and in `auto` when it is summer (by hemisphere), a hot day is forecast (`hot_day_c`, 30 °C) or the SoC has been hot
+  (`enter_temp_c` 65 °C for 5 minutes, back below 55 °C for 15), it:
+  - stops the DAB decoder (`pause_dab`): the stick streams and welle-cli demodulates around the clock otherwise.
+    It is running again `dab_wake_lead_minutes` (3) before any alarm on DAB starts its preparation (`last-played`
+    resolving to DAB counts), whenever a station plays, a scan runs or the DAB diagnostics page is open, and, with no
+    live NTP or GPS time, for a time-sync window every `dab_time_sync_every_h`;
+  - caps the CPU at `cpu_max_mhz` (1000; 0 leaves it alone), lifted as soon as any alarm's preparation starts;
+  - freezes the face's moving background and its marquees (`freeze_animations`, without changing the low-CPU
+    setting), and drops the strip's backdrop blur;
+  - reads the light sensor at `lux_sample_hz` (2 Hz), refreshes the audio sinks once a minute, and halves the
+    supervisor's checks outside an alarm's preparation window; and caps the backlight if `max_backlight_percent` is set.
+  Any activity ends it at once. *Display → Cool mode* sets Off / Auto / On and says what it is doing and why;
+  *Diagnostics → System* has a cool-mode history next to the CPU temperature and the minutes in cool mode today.
+- The interlocks: the alarm's preparation treats a paused decoder as "waking the radio" (a step under way, not a
+  failure); "Radio on", a preset, a scan, a retune and the DAB diagnostics wake the decoder first; the supervisor leaves
+  a decoder stopped on purpose alone while the cool-mode loop is alive (and restarts it as usual if that loop has died);
+  Diagnostics reports a paused decoder as *off* ("Paused by cool mode") in the DAB tab and the time chain; the face's
+  DAB dot says "paused (cool mode)". At dawn-core's start the plan is "not cool" and the decoder is started if it is
+  not running. Nothing in cool mode touches the alarm engine, the ring, the face's backup alarm, the buzzer or the
+  watchdog.
+- `deploy/tmpfiles.d/dawn-cpufreq.conf` lets dawn-core write the CPU cap without sudo; `dawn-core.service` puts the
+  full frequency back when it stops. New sudo rules: `systemctl stop dawn-dab` and `systemctl start dawn-dab`.
+
+### Changed
+- The throttling flags are read from `/sys/devices/platform/soc/soc:firmware/get_throttled` when it exists, instead
+  of running `vcgencmd` every 5 s (every 30 s in cool mode when it has to).
+
+## [0.2.10] - 2026-11-22
+
+Safe software updates (robustness plan WP-F).
+
+### Fixed
+- **An update from the UI no longer kills itself part way through.** `dawn-update` ran as a child of dawn-core, in its
+  cgroup, so `install.sh` restarting dawn-core killed the update too: the kiosk was never restarted onto the new
+  bundle and the log never said "done". It now runs as its own unit, `dawn-update.service`; dawn-core writes the
+  branch to `/var/lib/dawn/update.env`, starts it with `systemctl start --no-block dawn-update.service` (the one sudo
+  rule for it; the direct `dawn-update` rule is gone) and follows `/var/log/dawn-update.log`, picking it up again
+  after the update restarts it.
+- **A web build that fails no longer leaves the face blank.** Vite emptied `web/dist` before writing, so a failed or
+  OOM-killed build (likely on a Zero 2 W) left no face at the next kiosk restart, and no face backup alarm with it.
+  The build goes to `web/dist.new` (`deploy/build-web.sh`) and is swapped in only when both pages are there; the old
+  bundle is kept as `web/dist.old`.
+- **A bad update is rolled back.** After restarting dawn-core, `dawn-update` waits up to 120 s for `/api/health` to
+  report the new version with its alarm engine alive; if it does not, or anything fails after the merge, it puts back
+  the old commit, the old web bundle and the old Python packages, restarts dawn-core and the face, logs
+  "ROLLED BACK" and writes `/var/lib/dawn/update-result.json`. dawn-core shows the result at its next start (a face
+  toast, *Settings → Software update*, *Diagnostics → System → Software update*).
+
+### Changed
+- Restart order: `dawn-timed` and `dawn-dab`, then `dawn-core` (healthy first), then `dawn-face` last so the kiosk
+  loads the new bundle. `install.sh --no-restart` installs without restarting anything.
+- **No updates near an alarm**: `POST /api/system/update` answers 409 while a ring, snooze or nap is on, or when the
+  next alarm (or its light wake) is within `system.update_quiet_minutes` (60); Settings says why.
+- `install.sh --update` skips apt when the package list is the one installed last time
+  (`/var/lib/dawn/apt-pkgs.sha256`), so a network-dependent step cannot fail an update after the code has moved.
+
+## [0.2.9] - 2026-11-22
+
+DAB and the RTL-SDR Blog V4 (robustness plan WP-E).
+
+### Fixed
+- **A decoder that answers but decodes nothing is recovered.** When the stick stops delivering samples, welle-cli
+  keeps answering HTTP but never syncs (and its OFDM thread busy-waits, costing CPU and heat); the supervisor only
+  restarted a welle-cli that stopped answering. Now, with no sync for `dab.no_sync_restart_s` (180 s) on a channel a
+  scan found at 6 dB or better, no scan running and no DAB alarm ringing or snoozed, the decoder is restarted
+  (reason "no sync", with the usual backoff). After three such restarts in a row with the stick still on the bus, the
+  stick is re-enumerated on USB by a new root helper, `dawn-usb-reset` (no arguments, RTL2832U ids only, one exact
+  sudoers line); if that does not bring sync back within three minutes, *Diagnostics → DAB radio* says to replug the
+  stick and check the supply, with the under-voltage history when the Pi has seen any.
+- An alarm's preparation restarts a decoder that answers on the right channel but has no sync (on a channel scanned
+  good) once, after two checks 30 s apart, and treats it as a step under way ("restarting the decoder") rather than a
+  failure, so the preparation window can bring the station back before the ring would start on the chime. A ring
+  restarts the decoder once when it is unreachable, or when it answers but has had no sync for 20 s on such a channel.
+- The boot-time `rtl_test -t` raced welle-cli for the stick. The stick is now named from sysfs alone ("RTL-SDR Blog V4
+  (R828D)" from its USB strings), welle-cli's own name for it is preferred once it answers, and `rtl_test` only runs
+  when the decoder is not.
+- An alarm-time decoder restart could take 90 s (the unit's default stop timeout). `dawn-dab.service` stops in 10 s
+  (`TimeoutStopSec=10`) and dawn-core gives a restart 30 s.
+- The installer wrote the DVB driver blacklist only when it built librtlsdr, so an install that found the library
+  already there never got it; it is written on every run and the modules are unloaded. A welle-cli that links the
+  distro librtlsdr instead of the RTL-SDR Blog one (built before it, so no V4 support) is rebuilt once, and a warning
+  is written for *Diagnostics → DAB radio* if it still does; welle is also rebuilt whenever the library is. A failed
+  `cmake`, `make` or `install` inside the build functions now stops that build (they run under `|| echo WARNING`, which
+  turns `set -e` off inside them).
+
+### Changed
+- rtl-sdr-blog and welle.io are built from pinned releases (`RTLSDR_REF=v1.3.6`, `WELLE_REF=v2.7`, overridable)
+  instead of a moving master; what was built is in `/usr/local/share/dawn/versions.json` and under *Diagnostics → DAB
+  radio → Built from*.
+- `dawn-dab.service`: `RestartSec=2` with `RestartSteps=6`/`RestartMaxDelaySec=60` (backs off to a minute on systemd
+  254+, ignored on Bookworm), `MemoryMax=400M` (measure on the device and adjust), `OOMScoreAdjust=300`.
+- dawn-timed backs off from 2 s to 30 s while welle-cli does not answer, and starts over when it does.
+- The udev hot-plug restart covers `0bda:2832` sticks too.
+
+### Added
+- `dab_drop` events when the stick leaves the bus or sync is lost for more than a minute after it was there, with the
+  SoC temperature, the throttling flags and the channel; *Diagnostics → DAB radio → Last 24 hours* lists them.
+- `dab.no_sync_restart_s`. Simulator: an *SDR zombie* toggle (welle answers, no samples).
+
+## [0.2.8] - 2026-11-22
+
+Watchdog coverage (robustness plan WP-D).
+
+### Added
+- **Every loop inside dawn-core is watched** (`dawn_core/liveness.py`), not only the alarm engine: the state pump, the
+  display loop, the face and timer ticks, audio, DAB, the supervisor, the chrony poll, network, weather, Diagnostics
+  and the input pump. A loop that died or stopped making passes is restarted on the next heartbeat, then 5 s, 30 s and
+  120 s apart, each a `supervisor_repair` ("dawn-core: display-loop") under *Diagnostics → System → Self-repair*. If
+  one that the alarms or the face depend on (alarm engine, state pump, display loop, face tick, timers tick) is still
+  dead after that, the systemd watchdog is held back, as it was for the engine alone, so systemd restarts dawn-core
+  and the saved ring carries on. `alarms.engine_alive` (and `alarms_alive` in `/api/health`) now means every one of
+  those loops is alive, so the face's own backup alarm trusts it too. `/api/health` lists `loops_dead`, and
+  *Diagnostics → System → Background loops* names any loop that is down. With `system.supervisor.enabled: false`
+  nothing is restarted and a dead gating loop starves the watchdog at once.
+- dawn-timed tells systemd it is up and alive (`Type=notify`, `WatchdogSec=60`): a dawn-timed hung on a socket is
+  restarted by systemd itself.
+- The face's 15 s ping carries how long ago the page last drew a frame; a kiosk whose page still runs JavaScript but
+  draws nothing for a minute (a stuck compositor or GPU: a frozen screen) is restarted after `face_absent_s`.
+- **The kiosk is refreshed once a day** (`system.supervisor.face_recycle_at`, 03:30) at the first quiet moment: on
+  Standby or the sleep clock, nothing playing, ringing or counting down, no alarm or light wake in the next hour, and
+  the kiosk up for six hours. A day without a quiet moment in the two hours after is skipped.
+- A chronyd that no longer answers `chronyc` (four polls in a row) is restarted, and so is a gpsd that is connected but
+  has sent no position report for two minutes while a receiver is fitted.
+- `system.supervisor.wifi_driver_recovery` (off by default): with a saved Wi-Fi network and wlan0 missing or
+  `unavailable` for 10 minutes, NetworkManager is restarted, twice at most; then *Diagnostics → Network* suggests a
+  reboot. It never reboots by itself.
+- `POST /api/debug/cancel/<loop>` cancels a watched loop, for the on-device check; it exists only with `DAWN_DEBUG=1`.
+
+### Changed
+- `dawn-core.service`: `OOMScoreAdjust=-800`, `LimitCORE=0`, `TimeoutStopSec=45`; dawn-core stops its services
+  within 35 s overall (10 s each at most) instead of 10 s per service. `dawn-face.service`: `OOMScoreAdjust=500`.
+- chrony and gpsd get drop-ins with `Restart=always` and `StartLimitIntervalSec=0`: their stock units left them down
+  after a clean exit.
+- The kiosk runs Chromium with its own profile (`~/.config/dawn-face`, taken over from Chromium's default profile on
+  the first run so the face's backup-alarm memory is kept) and clears a stale single-instance lock before starting:
+  after a hostname change Chromium could refuse its profile and the face stayed black.
+
+## [0.2.7] - 2026-11-22
+
+Timers and background tasks (robustness plan WP-C).
+
+### Fixed
+- A nap timer could vanish: it cleared its saved state before asking for the ring, so a ring that would not start
+  lost the nap without a trace. The nap stays saved until the ring has started, a failure is retried every 5 s up to
+  three times (`nap_ring_failed` events), and after that the backup tone is sounded directly with the face beeping
+  along, as a ring does when the audio arbiter fails it; stop and snooze end it.
+- A sleep-timer fade step that failed (a hung PipeWire) ended the fade before the sleep source was stopped, so the
+  radio played all night. Each fade step is on its own, and stopping the source and putting the volume back always
+  happen, each bounded to 10 s.
+- Nap, snooze and sleep countdowns ran on the monotonic clock but were shown and saved in wall time, so a clock step
+  (chrony at boot) showed the wrong countdown. They are kept as monotonic deadlines and what is shown or saved is
+  derived from them. A new clock watch notices the wall clock jumping against the monotonic one (more than 2 s), logs
+  a `clock_step` event with the step and puts the right countdowns on the face at once.
+- dawn-timed's status and the face's heartbeat were judged against the wall clock, so a clock step could restart a
+  healthy dawn-timed or kiosk. The supervisor now measures how long dawn-timed's `updated_at` has stayed the same on
+  its own monotonic clock, and the WebSocket hub's `last_seen` is monotonic.
+- Fire-and-forget tasks (weather refresh, the update, the test tone, Bluetooth discoverable, two change callbacks) were
+  held by nobody, so Python could collect them part way through, and their exceptions were never logged.
+- A snooze stuck behind volume steps: the input pump handled every encoder detent in turn, so twenty detents queued
+  behind a hung `wpctl` held up a push for minutes. Consecutive detents are added up into one volume change on a
+  worker of its own, and every input is given 10 s.
+
+### Changed
+- The alarm engine keeps the alarm table and the leave date in memory instead of reading them several times a second
+  on the event loop (the leave date was read once per alarm per pass): every write re-reads at once, otherwise they
+  are read again every 30 s, so an edit to `dawn.db` from outside is seen within 30 s. Measured on a laptop with 12
+  alarms: 6.0 ms of event-loop time per second down to 0.5 ms.
+
+### Added
+- `dawn_core.tasks.spawn()`: holds a task until it ends and logs its failure with its name; the last 20 failures are
+  `system.task_failures` and a *Diagnostics → System → Background tasks* row. ruff's RUF006 now fails new dangling
+  tasks.
+
+## [0.2.6] - 2026-11-22
+
+GPS is optional now: a box without a module never shows GPS as a problem.
+
+### Changed
+- GPS presence is tracked as `time_sources.gps.presence`: **present** (a u-blox receiver on USB, `/dev/gps0`, a
+  device gpsd has activated, or NMEA the serial reader parsed in the last 30 s), **missing** (seen within
+  `time_sources.gps.forget_after_days`, 14, and gone now), **absent** (none fitted, or forgotten) or **off**. A bare
+  `/dev/ttyACM0` is not evidence, and neither is a connection to gpsd (it is socket-activated, so it answers with no
+  receiver). It is looked at every 30 s and at once when gpsd reports a device change; a change is a `gps_presence`
+  event.
+- Without a module, Diagnostics shows one *GPS receiver* check with the new status **not fitted** (a hollow yellow
+  ring and the word, its own colour well clear of the warning amber) instead of a red ✕, the Time sync tab shows
+  "Not in use: no GPS module" instead of "No GPS fix" and a shared-memory warning, and nothing about GPS reaches the
+  Home card or *Needs attention*. The face's GPS dot is a hollow yellow ring (`title="no GPS module"`); with GPS
+  switched off it is hidden. A receiver that was there and has gone is **missing**: an amber warning with *Restart
+  gpsd* and the new *Forget the GPS module* fix (`gps.forget`). `time_sources.gps.required: true` makes either a
+  fault.
+- Settings → Location shows the GPS state; its switches (*Use GPS for time and location*, *Prefer GPS position*)
+  appear once a module has been seen. Status reads "No GPS module", "Missing", "No fix", "2D fix" or "3D fix".
+- chrony: the GPS refclock is `prefer` without `trust`, so a NMEA-only receiver with a bad week or date cannot override
+  NTP and DAB. Re-run the installer (or `dawn-update`) to install the new `chrony.conf`.
+- `time_sources.gps.source: auto` is re-checked every 5 minutes while on the serial reader, and moves to gpsd when it
+  answers, so two readers never share one tty.
+
+### Added
+- `time_sources.gps.required`, `time_sources.gps.forget_after_days`; `presence` and `last_seen_at` in the GPS state.
+- Simulator: the fake gpsd sends gpsd's hot-plug `DEVICE` messages when the receiver is plugged in or pulled out.
+
+## [0.2.5] - 2026-11-22
+
+The first of the robustness work packages planned from the review of 0.2.4: a Wi-Fi drop no longer latches the
+setup hotspot.
+
+### Fixed
+- A Wi-Fi drop of 45 s (a router rebooting at 3 am) started the setup hotspot, and while wlan0 was the access point
+  the clock could never see its network again: it stayed off the home Wi-Fi (no NTP, weather, AirPlay or control UI)
+  until someone stepped in, and the bedside face showed a full-screen "Connect to set up" page with a white QR code
+  all night. A box with a saved Wi-Fi network now waits `network.hotspot.configured_wait_s` (15 minutes) before
+  starting the hotspot, and while it is up looks for the saved network every `network.hotspot.retry_every_s`
+  (3 minutes): it drops the hotspot, rescans, joins the network if it is in view and puts the hotspot back if not,
+  never while a phone is connected to the hotspot. Each look is a `hotspot_retry` event. A box that was never set up
+  behaves as before (hotspot after 45 s, full Setup screen).
+- On a box with a saved network the hotspot is a notice, not a takeover: the face keeps Standby or the sleep clock
+  and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip in the standby strip and under the sleep clock. Tapping the
+  chip opens the Setup screen for `inputs.touch_menu_timeout_s`; at night its QR code is drawn on a dim amber card
+  instead of white.
+- A wired network with its cable plugged in counts as a network, so it never starts the hotspot.
+
+### Added
+- `network.hotspot.configured_wait_s` and `network.hotspot.retry_every_s`; `system.network.wifi_configured` and
+  `face.setup_open` in the state; `POST /api/face/setup`.
+- The installer adds `iw` (to see whether a phone is on the hotspot).
+- Simulator: *Wi-Fi saved* and *Phone on hotspot* toggles; while the simulated hotspot is up the network reads as
+  offline, as it does on the Pi.
 
 ## [0.2.4] - 2026-10-25
 

@@ -32,6 +32,9 @@ class FaceState(BaseModel):
     peek_until: str | None = None  # screen-off sleep: a tap shows the sleep clock until then
     shutdown_countdown: int | None = None
     setup: SetupInfo | None = None
+    # the full Setup screen on a box that has a saved Wi-Fi network: only when someone taps the "No Wi-Fi" chip
+    # (it closes again after inputs.touch_menu_timeout_s); a box never set up shows it whenever the hotspot is up
+    setup_open: bool = False
 
 
 class SetupInfo(BaseModel):
@@ -75,6 +78,7 @@ class DisplayState(BaseModel):
     orbit: bool = True
     strip_autohide_s: int = 120
     scene_daily: bool = True
+    cool: bool = False  # cool mode: the face freezes its animations (like low_cpu, without changing that setting)
 
 
 class SinkInfo(BaseModel):
@@ -191,6 +195,17 @@ class AlarmPrep(BaseModel):
     checked_at: str | None = None
 
 
+class EveningCheck(BaseModel):
+    """The evening readiness check of the next alarm (an hour or so before bed): what the alarm will start on."""
+
+    alarm_id: int
+    label: str
+    at: str
+    ok: bool | None  # True: ready; False: it will start on the chime (or the tone); None: checked again before it rings
+    message: str = ""
+    checked_at: str
+
+
 class AlarmsState(BaseModel):
     items: list[AlarmSummary] = Field(default_factory=list)
     next: NextAlarm | None = None
@@ -205,6 +220,7 @@ class AlarmsState(BaseModel):
     # the engine ticks (sysinfo sets it every heartbeat); false means no alarm is being evaluated, so the face
     # treats core as down for its own backup ring even though core answers
     engine_alive: bool = True
+    evening_check: EveningCheck | None = None
 
 
 class TimerInfo(BaseModel):
@@ -260,6 +276,7 @@ class DabState(BaseModel):
     scan: ScanProgress = ScanProgress()
     last_scan_at: str | None = None
     service_state: str = "unknown"  # systemd state of dawn-dab
+    paused: str | None = None  # the decoder was stopped on purpose (cool mode): why
 
 
 class Preset(BaseModel):
@@ -281,8 +298,15 @@ class TimeSource(BaseModel):
     live: bool = False
 
 
+GpsPresence = Literal["present", "missing", "absent", "off"]
+
+
 class GpsInfo(BaseModel):
-    available: bool = False
+    # present: a receiver is fitted and seen; missing: one was seen within time_sources.gps.forget_after_days and is
+    # gone now (a warning); absent: none fitted (or forgotten), which is fine: GPS is optional; off: disabled
+    presence: GpsPresence = "absent"
+    last_seen_at: str | None = None
+    available: bool = False  # connected to gpsd (true with no receiver too: gpsd is socket-activated)
     fix: int = 0  # 0 none, 2 2D, 3 3D
     lat: float | None = None
     lon: float | None = None
@@ -348,6 +372,7 @@ class NetworkInfo(BaseModel):
     interface: str | None = None
     hotspot_active: bool = False
     hotspot_ssid: str | None = None
+    wifi_configured: bool | None = None  # a Wi-Fi network is saved (None = not looked yet: only asked when offline)
     mdns_name: str | None = None
 
 
@@ -374,6 +399,10 @@ class SystemState(BaseModel):
     booted_at: str | None = None
     config_error: str | None = None
     services: dict[str, str] = Field(default_factory=dict)
+    task_failures: list[dict] = Field(default_factory=list)  # background tasks that raised: last 20 (name, at, error)
+    loops_dead: list[str] = Field(default_factory=list)  # loops inside dawn-core found dead or stale (liveness.py)
+    update_result: dict | None = None  # the last software update: status ok | rolled_back | failed, message, from, to, at
+    can_wake: bool = False  # a Pi 5 with its RTC: a shutdown sets it to switch the clock on before the next alarm
 
 
 class BtDevice(BaseModel):
@@ -436,6 +465,19 @@ class SettingsSummary(BaseModel):
     auth_required: bool = False
 
 
+class PowerState(BaseModel):
+    """Cool mode (power/): what the planner decided and why."""
+
+    mode: Literal["off", "auto", "on"] = "auto"
+    cool: bool = False
+    reason: str = "starting"
+    hot: bool = False  # the SoC has been above power.enter_temp_c long enough
+    dab_paused: bool = False
+    dab_reason: str = ""
+    cpu_cap_mhz: int | None = None
+    cool_today_s: int = 0
+
+
 class UIState(BaseModel):
     version: int = 0
     now: str = ""
@@ -455,3 +497,4 @@ class UIState(BaseModel):
     airplay: AirPlayState = AirPlayState()
     settings: SettingsSummary = SettingsSummary()
     diagnostics: DiagnosticsSummary = DiagnosticsSummary()
+    power: PowerState = PowerState()

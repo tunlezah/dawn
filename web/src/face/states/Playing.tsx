@@ -36,7 +36,7 @@ export function Playing() {
           {np.source === 'dab' && s.dab.ensemble && <div className="f-eyebrow truncate">{s.dab.ensemble}</div>}
           {meta.length > 0 && <div className="f-meta truncate">{meta.map((m, i) => <span key={i}>{i > 0 && <span className="f-sep" />}{m}</span>)}</div>}
           <hr className="f-hr" style={{ width: '30vmin', margin: '1.2vmin 0' }} />
-          {(np.dls || np.title) && <Scrolling text={np.dls || np.title || ''} className="f-dls" lowCpu={s.display.low_cpu} />}
+          {(np.dls || np.title) && <Scrolling text={np.dls || np.title || ''} className="f-dls" lowCpu={s.display.low_cpu || s.display.cool} />}
           {tech.length > 0 && <div className="f-tiny truncate tnum">{tech.map((m, i) => <span key={i}>{i > 0 && <span className="f-sep" />}{m}</span>)}</div>}
         </div>
         <Art src={np.slide_url || np.logo_url} />

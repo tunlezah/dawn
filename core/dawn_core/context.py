@@ -9,11 +9,13 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 from pathlib import Path
 from typing import Any
 
 from .config import ConfigManager, DawnConfig
 from .db import Database
+from .liveness import Liveness
 from .services import ServiceRegistry
 from .state import StateStore
 
@@ -33,6 +35,10 @@ class DawnContext:
         self.runtime_dir = self._runtime_dir()
         self.db = Database(self.data_dir / "dawn.db")
         self.registry = ServiceRegistry()
+        self.liveness = Liveness()  # the loops inside dawn-core (liveness.py); checked on every heartbeat
+        self.last_activity = time.monotonic()  # someone used the clock (controls, a write to the API): cool mode waits
+        self.store.on_beat = lambda: self.liveness.beat("state-pump")
+        self.store.on_restart = lambda task: self.liveness.task("state-pump", task)
         self.ws_hub: Any = None  # api.ws.WsHub, set by the app (Diagnostics lists the connected clients)
         self.store.state.system.sim = self.sim
         self.store.state.system.config_error = cfg_mgr.last_error  # a file that only partly validated at start
@@ -60,6 +66,10 @@ class DawnContext:
             p = self.data_dir / "run"
             p.mkdir(parents=True, exist_ok=True)
         return p
+
+    def note_activity(self) -> None:
+        """A touch, the controls, a change from the web: cool mode (power/) ends at once and waits idle_after_s."""
+        self.last_activity = time.monotonic()
 
     def svc(self, cls: type) -> Any:
         return self.registry.get(cls)

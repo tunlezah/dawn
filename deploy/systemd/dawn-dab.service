@@ -11,7 +11,18 @@ SupplementaryGroups=plugdev audio
 EnvironmentFile=-/var/lib/dawn/dab.env
 ExecStart=/bin/sh -c 'exec /usr/local/bin/welle-cli -c "${DAWN_DAB_CHANNEL:-9A}" ${DAWN_WELLE_ARGS:--w 8000}'
 Restart=always
-RestartSec=3
+RestartSec=2
+# systemd >= 254 (Trixie) backs the restarts off from 2 s to 60 s while the stick is gone; Bookworm (252) ignores
+# these two lines with a warning and keeps the fixed RestartSec
+RestartSteps=6
+RestartMaxDelaySec=60
+# welle-cli can hang in rtlsdr_cancel_async on a wedged USB transfer; the default 90 s stop held an alarm's
+# decoder restart for a minute and a half
+TimeoutStopSec=10
+# a leak in the decoder stops here instead of in the OOM killer's hands, and systemd restarts it. A first guess:
+# measure welle-cli's RSS over a 24 h soak on the device and set this to about three times that
+MemoryMax=400M
+OOMScoreAdjust=300
 Nice=-5
 # welle-cli on an unplugged SDR exits quickly; the restart loop keeps trying without flooding
 StandardOutput=journal

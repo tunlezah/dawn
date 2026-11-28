@@ -25,7 +25,7 @@ EOF
 )"
 HHMM="${ALARM_AT:11:5}"
 echo "alarm at $ALARM_AT ($HHMM)"
-curl -s -X POST localhost:8080/api/alarms -H 'content-type: application/json' \
+curl -s -X POST localhost:8080/api/alarms -H 'content-type: application/json' -H 'X-Dawn-Client: 1' \
   -d "{\"label\": \"Hang test\", \"time\": \"$HHMM\", \"repeat\": \"daily\", \"source\": \"chime:birds\", \"ramp_seconds\": 0}" | head -c 200; echo
 CORE_PID=$CORE_PID ALARM_AT="$ALARM_AT" node "$HERE/hang_face.js"
 RC=$?

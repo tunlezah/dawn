@@ -23,7 +23,11 @@ class SimState:
     dab_sync: bool = True  # decoder has sync on a tuned channel
     dab_snr: float = 14.5  # dB; below ~8 errors start, below ~3 the ensemble is lost
     sdr_present: bool = True  # fake welle up at all
+    dab_zombie: bool = False  # welle answers but no samples arrive (no sync, FIG 0/0 stale)
+    dab_stopped: bool = False  # dawn-dab stopped on purpose (cool mode): welle does not answer, the unit is inactive
     network_online: bool = True
+    wifi_configured: bool = True  # a Wi-Fi network is saved (False = a box never set up)
+    hotspot_client: bool = False  # a phone is connected to the setup hotspot
     audio_flowing: bool = True  # fake PipeWire stream activity
     chrony_active: str = "NTP"  # which fake source chrony prefers (falls back NTP -> GPS -> DAB)
     channel: str = "9A"
@@ -63,7 +67,11 @@ class SimState:
             "wifi_dbm": self.wifi_dbm,
             "units_down": self.units_down,
             "sdr_present": self.sdr_present,
+            "dab_zombie": self.dab_zombie,
+            "dab_stopped": self.dab_stopped,
             "network_online": self.network_online,
+            "wifi_configured": self.wifi_configured,
+            "hotspot_client": self.hotspot_client,
             "audio_flowing": self.audio_flowing,
             "chrony_active": self.chrony_active,
             "channel": self.channel,

@@ -24,6 +24,8 @@ Environment=DAWN_FACE_URL=http://127.0.0.1:8080/face
 ExecStart=/usr/local/bin/dawn-face
 Restart=always
 RestartSec=3
+# Chromium is the first thing to go when memory runs out, before dawn-core (-800) and welle-cli
+OOMScoreAdjust=500
 
 [Install]
 WantedBy=multi-user.target

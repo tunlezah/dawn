@@ -43,27 +43,47 @@ def test_sdr_usb_reads_the_descriptors(tmp_path: Path) -> None:
     root = _sysfs(tmp_path, {"1-1.4": {"idVendor": "1546", "idProduct": "01a7", "product": "u-blox 7"}, "1-1.2": V4})
     u = hw.sdr_usb(root)
     assert u is not None and u["vidpid"] == "0bda:2838" and u["path"] == "1-1.2" and u["product"] == "Blog V4" and u["devnum"] == "5"
-    assert hw.is_blog_v4(u) and hw.tuner_from_usb(u) == "Rafael Micro R828D (RTL-SDR Blog V4)"
+    assert hw.is_blog_v4(u) and hw.sdr_name(u["vidpid"], u["manufacturer"], u["product"]) == "RTL-SDR Blog V4 (R828D)"
+    assert hw.sdr_identity(root) == (True, "RTL-SDR Blog V4 (R828D)", "0bda:2838")  # the same stick, the same name
     assert hw.sdr_usb(_sysfs(tmp_path / "none", {"1-1.4": {"idVendor": "1546", "idProduct": "01a7"}})) is None
 
 
 def test_generic_stick_is_not_a_v4(tmp_path: Path) -> None:
     u = hw.sdr_usb(_sysfs(tmp_path, {"1-1.2": GENERIC}))
-    assert u is not None and not hw.is_blog_v4(u) and hw.tuner_from_usb(u) == "RTL2838 (generic RTL2832U)"
+    assert u is not None and not hw.is_blog_v4(u)
+    assert hw.sdr_name(u["vidpid"], u["manufacturer"], u["product"]) == "Realtek RTL2838UHIDIR (RTL2838 (generic RTL2832U))"
 
 
-def test_tuner_from_rtl_test() -> None:
-    assert hw.tuner_from_rtl_test(RTL_TEST_V4) == "Rafael Micro R828D (RTL-SDR Blog V4)"
-    assert hw.tuner_from_rtl_test(RTL_TEST_GENERIC) == "Rafael Micro R820T"
-    assert hw.tuner_from_rtl_test(RTL_TEST_BUSY) is None  # welle-cli has it: the caller falls back to the descriptors
+def test_v4_rule_is_the_drivers() -> None:
+    # the rtl-sdr-blog driver switches on its V4 handling only for manufacturer "RTLSDRBlog" and a V4 product string
+    assert hw.is_blog_v4({"manufacturer": "RTLSDRBlog", "product": "Blog V4"})
+    assert not hw.is_blog_v4({"manufacturer": "RTLSDRBlog", "product": "Blog V3"})
+    assert not hw.is_blog_v4({"manufacturer": "Realtek", "product": "Blog V4 clone"})
+    assert not hw.is_blog_v4({})
+
+
+def test_detect_sdr_with_rtl_test(tmp_path: Path, monkeypatch) -> None:
+    import subprocess
+
+    root = _sysfs(tmp_path, {"1-1.2": GENERIC})
+    real = hw.sdr_identity
+    monkeypatch.setattr(hw, "sdr_identity", lambda: real(root))
+    for out, want in ((RTL_TEST_GENERIC, "Realtek RTL2838UHIDIR (RTL2838 (generic RTL2832U)) (Rafael Micro R820T tuner)"),
+                      (RTL_TEST_BUSY, "Realtek RTL2838UHIDIR (RTL2838 (generic RTL2832U))")):  # welle-cli has it: the descriptors' name
+        monkeypatch.setattr(subprocess, "run", lambda *a, _o=out, **k: subprocess.CompletedProcess(a, 0, _o, ""))
+        assert hw.detect_sdr(probe_tuner=True)[1] == want
+    v4 = _sysfs(tmp_path / "v4", {"1-1.2": V4})
+    monkeypatch.setattr(hw, "sdr_identity", lambda: real(v4))
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: subprocess.CompletedProcess(a, 0, RTL_TEST_V4, ""))
+    assert hw.detect_sdr(probe_tuner=True)[1] == "RTL-SDR Blog V4 (R828D)"  # the descriptors already say it all
 
 
 def test_identity_changes_on_swap_and_replug() -> None:
     u = {"path": "1-1.2", **V4}
-    assert hw.sdr_identity(u) == hw.sdr_identity(dict(u))
-    assert hw.sdr_identity(u) != hw.sdr_identity({**u, "devnum": "6"})  # replugged into the same port
-    assert hw.sdr_identity(u) != hw.sdr_identity({"path": "1-1.2", **GENERIC})  # another stick
-    assert hw.sdr_identity(None) is None
+    assert hw.sdr_fingerprint(u) == hw.sdr_fingerprint(dict(u))
+    assert hw.sdr_fingerprint(u) != hw.sdr_fingerprint({**u, "devnum": "6"})  # replugged into the same port
+    assert hw.sdr_fingerprint(u) != hw.sdr_fingerprint({"path": "1-1.2", **GENERIC})  # another stick
+    assert hw.sdr_fingerprint(None) is None
 
 
 @pytest.fixture()
@@ -86,7 +106,7 @@ async def test_swapping_in_a_v4_restarts_the_decoder(app, monkeypatch) -> None:
     monkeypatch.setattr(sysinfo_mod, "REPLUG_SETTLE_S", 0.0)
     old = {"vidpid": "0bda:2838", "path": "1-1.2", **GENERIC}
     new = {"vidpid": "0bda:2838", "path": "1-1.2", **V4}
-    svc._sdr_id = hw.sdr_identity(old)
+    svc._sdr_id = hw.sdr_fingerprint(old)
     st = ctx.store.state.system
 
     seq = iter([old, None, new, new])
@@ -96,8 +116,27 @@ async def test_swapping_in_a_v4_restarts_the_decoder(app, monkeypatch) -> None:
     await svc._check_sdr(st)  # old stick pulled out
     assert st.sdr_present is False and ctx.store.state.dab.sdr_present is False and restarts == []
     await svc._check_sdr(st)  # V4 plugged in
-    assert st.sdr_present and st.sdr_tuner == "Rafael Micro R828D (RTL-SDR Blog V4)" and ctx.store.state.dab.tuner == st.sdr_tuner
+    assert st.sdr_present and st.sdr_tuner == "RTL-SDR Blog V4 (R828D)" and ctx.store.state.dab.tuner == st.sdr_tuner
     await svc._sdr_restart
     assert restarts == ["replugged"]
     await svc._check_sdr(st)  # still the same V4: nothing more
     assert restarts == ["replugged"]
+
+
+async def test_a_swap_leaves_a_cool_mode_decoder_stopped(app, monkeypatch) -> None:
+    ctx = app.state.ctx
+    svc: SysInfoService = ctx.svc(SysInfoService)
+    restarts: list[str] = []
+
+    async def restart(self, force: bool = False, reason: str = "unreachable") -> bool:
+        restarts.append(reason)
+        return True
+
+    monkeypatch.setattr(DabService, "restart_welle", restart)
+    monkeypatch.setattr(sysinfo_mod, "REPLUG_SETTLE_S", 0.0)
+    ctx.svc(DabService).paused = "cool mode"
+    svc._sdr_id = None
+    monkeypatch.setattr(hw, "sdr_usb", lambda root=hw.USB_DEVICES: {"vidpid": "0bda:2838", "path": "1-1.2", **V4})
+    await svc._check_sdr(ctx.store.state.system)
+    await svc._sdr_restart
+    assert restarts == [] and ctx.svc(DabService).paused == "cool mode"

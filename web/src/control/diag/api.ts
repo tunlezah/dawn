@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '../../shared/api';
 import type { TPoint } from './charts';
 
-export type CheckStatus = 'ok' | 'warn' | 'fail' | 'info' | 'off';
+export type CheckStatus = 'ok' | 'warn' | 'fail' | 'absent' | 'info' | 'off';
 export interface Check { id: string; area: string; title: string; status: CheckStatus; detail: string; hint: string | null; actions: string[]; group: string | null }
 
 export interface Usb { vid: string; pid: string; product: string | null; manufacturer: string | null; path: string; power: string | null }
@@ -36,6 +36,7 @@ export interface GpsDetail {
   connected: boolean; connect_error: string | null; enabled: boolean;
 }
 export interface GpsFacts {
+  presence?: 'present' | 'missing' | 'absent' | 'off'; required?: boolean; last_seen_age_s?: number | null;
   enabled: boolean; configured_source: string; detail: GpsDetail; usb: Usb[]; paths: Record<string, boolean>; unit: string | null;
   last_msg_age_s: number | null; toff_age_s: number | null; location_source: string; prefer_gps: boolean; configured_distance_km: number | null;
 }

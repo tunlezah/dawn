@@ -352,6 +352,7 @@ async def test_a_corrupt_row_still_rings_with_the_defaults(svc) -> None:
         s.add(AlarmRow(label="", time="06:30", repeat="daily", source="", volume=0, snooze_minutes=-3, max_ring_minutes=0,
                        enabled=True, last_fired_occurrence=BEFORE.isoformat()))
         s.commit()
+    a._invalidate()  # written behind the service's back: the engine sees it within ROWS_FRESH_S; here, at once
     await a.tick(now=AT)
     req, d = a.ring.req, ctx.config.alarm_defaults
     assert req.label == "Alarm" and req.source == "chime:gentle_bell"
@@ -399,7 +400,7 @@ async def test_test_ring_during_an_alarm_is_refused_by_the_api(tmp_config) -> No
         a._task.cancel()
         a.create(AlarmIn(label="Real", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0), now=BEFORE)
         await a.tick(now=AT)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
             r = await c.post("/api/alarms/test", json={"source": "chime:birds"})
             assert r.status_code == 409 and "Real" in r.json()["detail"]
         await a.stop_ringing()

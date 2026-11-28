@@ -4,6 +4,7 @@ from typing import Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
 from ..context import DawnContext
 from ..logging_setup import RING
@@ -54,7 +55,10 @@ async def set_hostname(body: dict[str, str], ctx: DawnContext = Depends(get_ctx)
 
 @router.post("/update")
 async def start_update(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
-    await update.run_update(ctx)
+    try:
+        await update.run_update(ctx)
+    except update.UpdateRefused as e:
+        raise HTTPException(409, f"Not now: {e}.") from e
     return {"started": True}
 
 
@@ -87,9 +91,17 @@ async def wifi_connect(body: dict[str, str], ctx: DawnContext = Depends(get_ctx)
     return {"ok": True, "message": msg}
 
 
+class ShutdownBody(BaseModel):
+    confirm: bool = False
+
+
 @router.post("/shutdown")
-async def shutdown(ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
-    await power.shutdown(ctx)
+async def shutdown(body: ShutdownBody | None = None, ctx: DawnContext = Depends(get_ctx)) -> dict[str, Any]:
+    """With an alarm or nap due within a day, `{"confirm": true}` is needed (409 says which alarm); never while ringing."""
+    try:
+        await power.shutdown(ctx, confirmed=bool(body and body.confirm), source="api")
+    except power.ShutdownRefused as e:
+        raise HTTPException(409, f"Not shut down: {e}.") from e
     return {"ok": True}
 
 

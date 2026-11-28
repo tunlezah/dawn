@@ -182,12 +182,12 @@ async def test_a_connected_face_that_keeps_talking_is_fine_and_a_frozen_one_is_n
     s, ctx, host = sv
     with_face(host)
     hub = ctx.ws_hub
-    hub.info["ws"] = {"role": "face", "last_seen": time.time(), "connected_at": "x", "remote": None, "agent": ""}
+    hub.info["ws"] = {"role": "face", "last_seen": time.monotonic(), "connected_at": "x", "remote": None, "agent": ""}
     t = 1000.0
     await s.check(now=t)
     await s.check(now=t + s.cfg.face_absent_s + 5)
     assert restarts(host) == []
-    hub.info["ws"]["last_seen"] = time.time() - sup.FACE_STALE_S - 1  # the page froze: no ping for a minute
+    hub.info["ws"]["last_seen"] = time.monotonic() - sup.FACE_STALE_S - 1  # the page froze: no ping for a minute
     await s.check(now=t + 2 * s.cfg.face_absent_s)
     assert restarts(host) == []  # first seen frozen now: it gets face_absent_s
     await s.check(now=t + 3 * s.cfg.face_absent_s)
@@ -270,12 +270,16 @@ async def test_a_dawn_timed_that_stopped_writing_its_status_is_restarted(sv, tmp
     status.write_text(json.dumps({"updated_at": datetime.now(UTC).isoformat()}))
     await s.check(now=t + 20)
     assert restarts(host) == []
-    old = datetime.fromtimestamp(time.time() - s.cfg.timed_stale_s - 5, UTC).isoformat()
-    status.write_text(json.dumps({"updated_at": old}))
-    await s.check(now=t + 40)
+    # the stamp is judged by how long it has stayed the same on the supervisor's monotonic clock, not by the wall clock
+    status.write_text(json.dumps({"updated_at": datetime.now(UTC).isoformat() + "x"}))  # it moved: still alive
+    await s.check(now=t + 20 + s.cfg.timed_stale_s - 10)
+    assert restarts(host) == []
+    await s.check(now=t + 20 + 2 * s.cfg.timed_stale_s - 15)
+    assert restarts(host) == []  # timed_stale_s - 5 since it last moved
+    await s.check(now=t + 20 + 2 * s.cfg.timed_stale_s)
     assert restarts(host) == ["dawn-timed"]
     host.states["dawn-timed"] = "activating"
-    await s.check(now=t + 40 + s.cfg.min_backoff_s + 1)
+    await s.check(now=t + 20 + 2 * s.cfg.timed_stale_s + s.cfg.min_backoff_s + 1)
     assert restarts(host) == ["dawn-timed"]  # systemd is starting it: not again
 
 

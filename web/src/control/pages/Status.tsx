@@ -1,6 +1,7 @@
 import { useEffect, useState as useReactState } from 'react';
 import { useState } from '../../shared/store';
 import { Card, Dot, Row } from '../../shared/components';
+import { gpsChipClass, gpsLook } from '../../shared/gps';
 import { api } from '../../shared/api';
 import { fmtDuration, fmtShort } from '../../shared/time';
 
@@ -14,6 +15,7 @@ export function Status() {
   useEffect(() => { load(); }, []);
   useEffect(() => { if (!auto) return; const id = setInterval(load, 3000); return () => clearInterval(id); }, [auto]);
   const ts = s.time_sources;
+  const gps = gpsLook(ts.gps);
   const sys = s.system;
 
   return (
@@ -24,7 +26,9 @@ export function Status() {
         <div className="flex gap-4 mb-3 text-sm">
           {(['GPS', 'DAB', 'NTP'] as const).map((k) => {
             const live = ts.sources.some((x) => x.kind === k.toLowerCase() && x.live);
-            return <span key={k} className="flex items-center gap-1.5"><Dot state={live ? 'ok' : 'off'} />{k}{ts.active === k && <span className="text-xs text-accent">active</span>}</span>;
+            if (k === 'GPS' && !gps) return null;
+            const state = k === 'GPS' && gps && gps.dot !== 'ok' && gps.dot !== 'off' ? gps.dot : live ? 'ok' : 'off';
+            return <span key={k} className="flex items-center gap-1.5"><Dot state={state} title={k === 'GPS' ? gps?.title : undefined} />{k}{ts.active === k && <span className="text-xs text-accent">active</span>}</span>;
           })}
           {ts.system_offset_ms !== null && <span className="text-muted ml-auto tnum">system offset {ts.system_offset_ms.toFixed(2)} ms · stratum {ts.stratum}</span>}
         </div>
@@ -38,11 +42,17 @@ export function Status() {
         <div className="text-xs text-faint mt-2">Updated {fmtShort(ts.updated_at, s.tz, s.settings.clock_24h)} · alarms use the system clock only</div>
       </Card>
 
-      <Card title="GPS" action={<span className="chip">{ts.gps.fix >= 3 ? '3D fix' : ts.gps.fix === 2 ? '2D fix' : ts.gps.available ? 'no fix' : 'no receiver'}</span>}>
-        <Row label="Position" hint={ts.gps.lat !== null ? `${ts.gps.lat.toFixed(5)}, ${ts.gps.lon?.toFixed(5)}` : 'using configured location'}><span className="text-sm text-muted">{s.settings.location_source}</span></Row>
-        <Row label="Satellites" hint={`${ts.gps.sats_used} used of ${ts.gps.sats_seen} seen`} />
-        <Row label="Device" hint={ts.gps.device ?? '–'} />
-        {ts.gps.time && <Row label="GPS time" hint={ts.gps.time} />}
+      <Card title="GPS" action={<span className={gpsChipClass(gps)} data-testid="status-gps-chip">{gps ? gps.chip : 'Off'}</span>}>
+        {ts.gps.presence === 'absent' ? (
+          <div className="text-sm text-muted">GPS is optional. Time comes from DAB and the internet; the location from Settings → Location.</div>
+        ) : (
+          <>
+            <Row label="Position" hint={ts.gps.lat !== null ? `${ts.gps.lat.toFixed(5)}, ${ts.gps.lon?.toFixed(5)}` : 'using configured location'}><span className="text-sm text-muted">{s.settings.location_source}</span></Row>
+            <Row label="Satellites" hint={`${ts.gps.sats_used} used of ${ts.gps.sats_seen} seen`} />
+            <Row label="Device" hint={ts.gps.device ?? '–'} />
+            {ts.gps.time && <Row label="GPS time" hint={ts.gps.time} />}
+          </>
+        )}
       </Card>
 
       <Card title="Hardware">

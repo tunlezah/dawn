@@ -23,6 +23,8 @@ def unit_state(unit: str) -> str:
     unit = unit.removesuffix(".service")
     if unit in STATE.units_down:
         return "failed"
+    if unit == "dawn-dab" and STATE.dab_stopped:
+        return "inactive"  # stopped on purpose (cool mode)
     if unit == "dawn-dab" and not STATE.sdr_present:
         return "activating"  # welle-cli exits without a stick; systemd keeps restarting it
     return "active"
@@ -74,9 +76,12 @@ button.alt{background:#444}.row{display:flex;flex-wrap:wrap;gap:4px}pre{backgrou
 <button class=alt onclick="tog('gps_fix')">GPS fix: <span id=gps_fix></span></button>
 <button class=alt onclick="tog('dab_sync')">DAB sync: <span id=dab_sync></span></button>
 <button class=alt onclick="tog('sdr_present')">SDR plugged: <span id=sdr_present></span></button>
+<button class=alt onclick="tog('dab_zombie')">SDR zombie (no samples): <span id=dab_zombie></span></button>
 <button class=alt onclick="tog('network_online')">Network: <span id=network_online></span></button>
 <button class=alt onclick="tog('audio_flowing')">Audio flowing: <span id=audio_flowing></span></button>
 <button class=alt onclick="tog('gps_present')">GPS plugged: <span id=gps_present></span></button>
+<button class=alt onclick="tog('wifi_configured')">Wi-Fi saved: <span id=wifi_configured></span></button>
+<button class=alt onclick="tog('hotspot_client')">Phone on hotspot: <span id=hotspot_client></span></button>
 </div>
 <label>DAB SNR <span id=snrv></span> dB: <input id=snr type=range min=0 max=25 step=0.5 oninput="set({dab_snr:+this.value})"></label>
 <label>GPS signal (strongest) <span id=gpsv></span> dBHz: <input id=gpss type=range min=0 max=50 step=1 oninput="set({gps_signal:+this.value})"></label>
@@ -95,7 +100,7 @@ let S={};async function tog(k){await set({[k]:!S[k]})}
 async function refresh(){S=await (await fetch('/state')).json();
 document.getElementById('luxv').textContent=S.lux+' lx';document.getElementById('lux').value=log2(S.lux);
 document.getElementById('bl').textContent=S.backlight+' %';
-for(const k of ['gps_fix','dab_sync','sdr_present','network_online','audio_flowing','gps_present']){const e=document.getElementById(k);e.textContent=S[k]?'on':'off';e.className=S[k]?'on':'off'}
+for(const k of ['gps_fix','dab_sync','sdr_present','network_online','audio_flowing','gps_present','wifi_configured','hotspot_client','dab_zombie']){const e=document.getElementById(k);e.textContent=S[k]?'on':'off';e.className=S[k]?'on':'off'}
 for(const [i,v,k] of [['snr','snrv','dab_snr'],['gpss','gpsv','gps_signal'],['wifi','wifiv','wifi_dbm']]){document.getElementById(v).textContent=S[k];if(document.activeElement.id!==i)document.getElementById(i).value=S[k]}
 if(document.activeElement.id!=='down')document.getElementById('down').value=(S.units_down||[]).join(',');
 document.getElementById('chrony').value=S.chrony_active;
@@ -275,7 +280,22 @@ def create_app() -> FastAPI:
 
     @app.get("/network")
     async def network() -> dict[str, Any]:
-        return {"online": STATE.network_online, "ip": "192.168.1.42" if STATE.network_online else None, "ssid": "HomeWiFi" if STATE.network_online else None}
+        return {"online": STATE.network_online, "ip": "192.168.1.42" if STATE.network_online else None, "ssid": "HomeWiFi" if STATE.network_online else None,
+                "wifi_configured": STATE.wifi_configured}
+
+    # the setup hotspot's retry: a phone on the hotspot, what a Wi-Fi scan sees, and joining the saved network
+    @app.get("/wifi/station")
+    async def wifi_station() -> dict[str, Any]:
+        return {"client": STATE.hotspot_client}
+
+    @app.get("/wifi/scan")
+    async def wifi_scan() -> dict[str, Any]:
+        return {"ssids": (["HomeWiFi"] if STATE.network_online else []) + ["Neighbour"]}
+
+    @app.post("/wifi/up")
+    async def wifi_up(body: dict[str, Any]) -> dict[str, Any]:
+        STATE.note(f"wifi: join {body.get('profile')} -> {'ok' if STATE.network_online else 'not found'}")
+        return {"ok": STATE.network_online}
 
     @app.get("/openmeteo")
     async def openmeteo(latitude: float = -33.87, longitude: float = 151.21, temperature_unit: str = "celsius", timezone: str = "Australia/Sydney") -> JSONResponse:

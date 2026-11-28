@@ -108,17 +108,28 @@ _RTL_IDS = {
 }
 
 
-def _sdr_vidpid() -> str | None:
-    for dev in glob.glob("/sys/bus/usb/devices/*"):
-        vid = _read(os.path.join(dev, "idVendor"))
-        pid = _read(os.path.join(dev, "idProduct"))
-        if vid and pid and f"{vid}:{pid}" in _RTL_IDS:
-            return f"{vid}:{pid}"
-    return None
-
-
+V4_MANUFACTURER = "RTLSDRBlog"  # what an RTL-SDR Blog V4 reports over USB (rtlsdr_get_usb_strings, sysfs)
+V4_PRODUCT = "Blog V4"
 USB_DEVICES = "/sys/bus/usb/devices"
-BLOG_V4_TUNER = "Rafael Micro R828D (RTL-SDR Blog V4)"
+
+
+def sdr_name(vidpid: str, manufacturer: str = "", product: str = "") -> str:
+    """A readable name for the stick from its USB strings alone (opening it would race welle-cli for it)."""
+    m, p = manufacturer.strip(), product.strip()
+    if m == V4_MANUFACTURER and "V4" in p:
+        return "RTL-SDR Blog V4 (R828D)"
+    if m == V4_MANUFACTURER and "V3" in p:
+        return "RTL-SDR Blog V3 (R820T2)"
+    generic = _RTL_IDS.get(vidpid, "RTL2832U")
+    label = " ".join(x for x in (m, p) if x)
+    return f"{label} ({generic})" if label else generic
+
+
+def is_blog_v4(u: dict[str, str]) -> bool:
+    """The RTL-SDR Blog V4 says so in its EEPROM (manufacturer "RTLSDRBlog", product "Blog V4"). The rtl-sdr-blog
+    driver goes by the same strings to switch on its V4 handling (R828D input switching), so a stick without them
+    is treated as a generic one whatever is printed on its case. Same rule as sdr_name()."""
+    return (u.get("manufacturer") or "").strip() == V4_MANUFACTURER and "V4" in (u.get("product") or "")
 
 
 def sdr_usb(root: str = USB_DEVICES) -> dict[str, str] | None:
@@ -132,50 +143,57 @@ def sdr_usb(root: str = USB_DEVICES) -> dict[str, str] | None:
     return None
 
 
-def is_blog_v4(u: dict[str, str]) -> bool:
-    """The RTL-SDR Blog V4 says so in its EEPROM (manufacturer "RTLSDRBlog", product "Blog V4"). The rtl-sdr-blog
-    driver goes by the same strings to switch on its V4 handling (R828D input switching), so a stick without them
-    is treated as a generic one whatever is printed on its case."""
-    text = f"{u.get('manufacturer', '')} {u.get('product', '')}".lower()
-    return "blog" in text and "v4" in text
+def sdr_identity(root: str = USB_DEVICES) -> tuple[bool, str | None, str | None]:
+    """(present, name, vid:pid) of the first RTL-SDR stick, from sysfs (idVendor, idProduct, manufacturer, product)."""
+    u = sdr_usb(root)
+    if u is None:
+        return False, None, None
+    return True, sdr_name(u["vidpid"], u.get("manufacturer", ""), u.get("product", "")), u["vidpid"]
 
 
-def tuner_from_usb(u: dict[str, str]) -> str:
-    """A tuner name from the USB descriptors alone, for when rtl_test cannot open the stick (welle-cli has it)."""
-    return BLOG_V4_TUNER if is_blog_v4(u) else _RTL_IDS.get(u.get("vidpid", ""), "RTL2832U")
-
-
-def sdr_identity(u: dict[str, str] | None) -> tuple[str, ...] | None:
+def sdr_fingerprint(u: dict[str, str] | None) -> tuple[str, ...] | None:
     """What changes when a stick is swapped or replugged (a new bus address, or another stick)."""
     return None if u is None else (u["path"], u.get("busnum", ""), u.get("devnum", ""), u.get("serial", ""), u.get("product", ""))
 
 
+def name_from_welle(hardware: str | None) -> str | None:
+    """welle-cli's own name for the receiver (mux.json receiver.hardware.name, from rtlsdr_get_usb_strings)."""
+    if not hardware:
+        return None
+    if V4_MANUFACTURER in hardware and "V4" in hardware:
+        return "RTL-SDR Blog V4 (R828D)"
+    return hardware.strip() or None
+
+
 def sdr_on_usb() -> tuple[bool, str | None]:
-    """(present, generic name) from the USB ids alone, without opening the stick."""
-    vidpid = _sdr_vidpid()
-    return (vidpid is not None, _RTL_IDS.get(vidpid) if vidpid else None)
+    """(present, name) from the USB ids and strings alone, without opening the stick."""
+    present, name, _ = sdr_identity()
+    return present, name
 
 
-def detect_sdr() -> tuple[bool, str | None, str | None]:
-    """Presence from USB IDs; tuner type from rtl_test when available (boot only: it opens the stick)."""
-    u = sdr_usb()
-    if u is None:
-        return False, None, None
+def detect_sdr(probe_tuner: bool = False) -> tuple[bool, str | None, str | None]:
+    """Presence and name from sysfs. `rtl_test -t` (which opens the stick to read the tuner) only with `probe_tuner`,
+    i.e. when the decoder is not running: at boot welle-cli starts at the same moment and the two raced for the stick."""
+    present, name, vidpid = sdr_identity()
+    if not present or not probe_tuner:
+        return present, name, vidpid
     try:
         out = subprocess.run(["rtl_test", "-t"], capture_output=True, text=True, timeout=6)
-        tuner = tuner_from_rtl_test(out.stdout + out.stderr)
+        m = re.search(r"Found (.+?) tuner", out.stdout + out.stderr)
+        if m and "V4" not in (name or ""):
+            name = f"{name} ({m.group(1).strip()} tuner)"
     except (OSError, subprocess.TimeoutExpired):
-        tuner = None
-    # rtl_test cannot open a stick welle-cli already holds (dawn-dab starts first at boot): the descriptors still tell
-    return True, tuner or tuner_from_usb(u), u["vidpid"]
+        pass
+    return present, name, vidpid
 
 
-def tuner_from_rtl_test(txt: str) -> str | None:
-    m = re.search(r"Found (.+?) tuner", txt)
-    if not m:
-        return None
-    tuner = m.group(1).strip()
-    return BLOG_V4_TUNER if "RTL-SDR Blog V4 Detected" in txt else tuner
+def _unit_active(unit: str) -> bool:
+    """active or activating (a decoder starting at boot counts: it is about to open the stick)."""
+    try:
+        out = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True, timeout=5)
+        return out.stdout.strip() in ("active", "activating", "reloading")
+    except (OSError, subprocess.TimeoutExpired):
+        return True  # cannot tell: do not open the stick
 
 
 # vcgencmd get_throttled bits: (mask, label, happening now?)
@@ -203,6 +221,21 @@ def throttle_flags(value: int | None) -> list[str]:
     return [label for mask, label, _ in THROTTLE_FLAGS if value & mask]
 
 
+THROTTLED_SYSFS = "/sys/devices/platform/soc/soc:firmware/get_throttled"
+
+
+def read_throttled_sysfs(path: str = THROTTLED_SYSFS) -> int | None:
+    """The firmware's throttling flags straight from sysfs (hex, as vcgencmd prints them), without starting a process
+    every few seconds. None when the file is not there (older kernels)."""
+    raw = _read(path)
+    if raw is None:
+        return None
+    try:
+        return int(raw.strip(), 16)
+    except ValueError:
+        return None
+
+
 def read_throttled(binary: str = "vcgencmd") -> int | None:
     try:
         out = subprocess.run([binary, "get_throttled"], capture_output=True, text=True, timeout=3)
@@ -227,7 +260,7 @@ def detect(config_panel: str = "auto", backlight_override: str | None = None) ->
     hw.serial = detect_serial()
     hw.backlight_sysfs = detect_backlight(backlight_override)
     hw.panel = detect_panel(config_panel)
-    hw.sdr_present, hw.sdr_tuner, hw.sdr_vid_pid = detect_sdr()
+    hw.sdr_present, hw.sdr_tuner, hw.sdr_vid_pid = detect_sdr(probe_tuner=not _unit_active("dawn-dab"))
     hw.i2c_buses = detect_i2c()
     if hw.panel == "hyperpixel4":
         hw.notes.append("HyperPixel 4 uses GPIO 0-25 for DPI; remap encoder/button pins in config.yaml")

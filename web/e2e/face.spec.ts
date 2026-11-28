@@ -185,7 +185,7 @@ test('DAB playback shows station, DLS and slide; the encoder still pops the volu
 test('playing: the control bar stars the station as a preset and cycles presets', async ({ page }) => {
   // make sure there is something to cycle to and that triple j is not a preset yet
   for (const p of await (await fetch(`${BASE}/api/presets`)).json()) {
-    if (p.source === 'dab:1002') await fetch(`${BASE}/api/presets/${p.id}`, { method: 'DELETE' });
+    if (p.source === 'dab:1002') await fetch(`${BASE}/api/presets/${p.id}`, { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
   }
   const presets = await (await fetch(`${BASE}/api/presets`)).json();
   if (!presets.some((p: any) => p.source === 'dab:1005')) await post('/api/presets', { label: 'Double J', source: 'dab:1005' });
@@ -205,10 +205,10 @@ test('playing: the control bar stars the station as a preset and cycles presets'
 });
 
 test('AirPlay: artwork, device, progress and transport; idle switches to the ambient clock', async ({ page }) => {
-  await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { ambient_after_s: 2 } }) });
+  await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ display: { ambient_after_s: 2 } }) });
   try {
     await page.goto('/face');
-    await fetch(`${HUB}/airplay/start`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Sunrise', artist: 'Norah Jones' }) });
+    await fetch(`${HUB}/airplay/start`, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ title: 'Sunrise', artist: 'Norah Jones' }) });
     await waitFor((s) => s.face.mode === 'playing' && s.now_playing.source === 'airplay');
     await expect(page.locator('.f-title')).toHaveText('Sunrise');
     await expect(page.locator('.f-sub')).toHaveText('Norah Jones');
@@ -223,8 +223,8 @@ test('AirPlay: artwork, device, progress and transport; idle switches to the amb
     await expect(page.locator('.f-progress')).toBeVisible();
     await waitFor((s) => !s.face.menu_open);
   } finally {
-    await fetch(`${HUB}/airplay/stop`, { method: 'POST' });
-    await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ display: { ambient_after_s: 20 } }) });
+    await fetch(`${HUB}/airplay/stop`, { method: 'POST', headers: { 'x-dawn-client': '1' } });
+    await fetch(`${BASE}/api/config`, { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify({ display: { ambient_after_s: 20 } }) });
   }
 });
 
@@ -281,4 +281,43 @@ test('sleep mode with the screen off: black until a tap shows the clock', async 
     await post('/api/display/sleep', { on: false });
     await config({ display: { sleep: SLEEP_DEFAULTS } });
   }
+});
+
+test('a saved Wi-Fi network that drops: the clock stays, the hotspot is a chip, and it rejoins by itself', async ({ page }) => {
+  test.setTimeout(120_000);
+  await page.goto('/face');
+  await hub({ wifi_configured: true, network_online: false });
+  // the simulator's configured_wait_s is 20 s; on a Pi it is 15 minutes
+  await waitFor((s) => s.system.network.hotspot_active, 60_000);
+  const s = await waitFor((x) => x.face.mode === 'standby');
+  expect(s.system.network.wifi_configured).toBe(true);
+  await expect(page.getByTestId('setup-chip')).toBeVisible();
+  await expect(page.getByTestId('setup-chip')).toContainText('No Wi-Fi');
+  await expect(page.locator('.face-screen', { hasText: 'Connect to set up' })).toHaveCount(0);
+  // the chip opens the full Setup screen; a tap puts the clock back
+  await page.getByTestId('setup-chip').tap();
+  await waitFor((x) => x.face.mode === 'setup');
+  await expect(page.locator('.face-screen')).toContainText('Connect to set up');
+  await page.locator('.face-root').tap();
+  await waitFor((x) => x.face.mode === 'standby');
+  // the router comes back: the retry finds the saved network and drops the hotspot
+  await hub({ network_online: true });
+  await waitFor((x) => !x.system.network.hotspot_active && x.system.network.online, 60_000);
+  await expect(page.getByTestId('setup-chip')).toHaveCount(0);
+});
+
+test('no GPS module: the face shows a hollow "not fitted" ring, not a fault', async ({ page }) => {
+  test.setTimeout(60_000);
+  try {
+    await hub({ gps_present: false });
+    // Forget is offered once the module shows as gone (as the Settings button is): not while it still reads present
+    await waitFor((s) => s.time_sources.gps.presence !== 'present', 20_000);
+    await post('/api/diag/action/gps.forget');
+    await waitFor((s) => s.time_sources.gps.presence === 'absent', 20_000);
+    await page.goto('/face');
+    await expect(page.locator('.face-dots .dot-absent')).toHaveAttribute('title', 'no GPS module');
+  } finally {
+    await hub({ gps_present: true });
+  }
+  await waitFor((s) => s.time_sources.gps.presence === 'present', 20_000);
 });

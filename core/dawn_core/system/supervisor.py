@@ -27,13 +27,14 @@ import time
 from collections import deque
 from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from ..context import DawnContext
 from ..diagnostics.host import Host, make_host
 from ..services import Service
+from ..tasks import spawn
 
 log = logging.getLogger("dawn.supervisor")
 
@@ -49,6 +50,51 @@ HEAL_S = 600.0  # fine for this long: the backoff starts over
 REPAIRS_KEPT = 50
 
 Fix = Callable[[], Awaitable[tuple[bool, str]]]
+
+
+NOSYNC_RESTARTS_BEFORE_RESET = 3  # decoder restarts for "no sync" before the stick is re-enumerated on USB
+USB_RESET_GRACE_S = 180.0  # after re-enumerating: no sync by then and Diagnostics asks for a replug
+FRAME_STALE_MS = 60_000  # the face's last animation frame older than this while it still pings: a frozen screen
+CHRONYC_TIMEOUTS = 4  # chronyc polls in a row that timed out (30 s apart): chronyd is hung
+GPSD_QUIET_S = 120.0
+WIFI_DRIVER_S = 600.0
+RECYCLE_WINDOW = timedelta(hours=2)  # face_recycle_at until then; not quiet in that time: skipped that day
+RECYCLE_MIN_UP_S = 6 * 3600.0
+RECYCLE_ALARM_GAP = timedelta(minutes=60)
+
+
+def recycle_due(now: datetime, at: str, done_on: date | None) -> str | None:
+    """"due" in the window after `at` (local time) on a day not yet done, "missed" once the window has passed without
+    it, else None."""
+    if done_on == now.date():
+        return None
+    h, m = (int(x) for x in at.split(":"))
+    start = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if now < start:
+        return None
+    return "due" if now < start + RECYCLE_WINDOW else "missed"
+
+
+def quiet_for_recycle(st: Any, now: datetime, active_for_s: float | None) -> str | None:
+    """Why the face may not be refreshed now (None: it may): it must be on Standby or the sleep clock, with nothing
+    playing, ringing or counting down, no alarm (or its light wake) within the hour, and up for six hours."""
+    if st.face.mode not in ("standby", "sleep"):
+        return f"the face shows {st.face.mode}"
+    if st.audio.active_source != "none":
+        return "something is playing"
+    if st.alarms.ringing is not None or st.alarms.light_wake_active or st.timers.nap is not None:
+        return "an alarm, a nap or a light wake is on"
+    nxt = st.alarms.next
+    if nxt is not None:
+        try:
+            first = min(datetime.fromisoformat(t) for t in (nxt.at, nxt.light_wake_at) if t)
+            if first - now < RECYCLE_ALARM_GAP:
+                return "an alarm is due within the hour"
+        except ValueError:
+            return "the next alarm cannot be read"
+    if active_for_s is None or active_for_s < RECYCLE_MIN_UP_S:
+        return "the kiosk started less than six hours ago"
+    return None
 
 
 @dataclass
@@ -75,6 +121,13 @@ class SupervisorService(Service):
         self.user_states: dict[str, str] | None = None
         self.repairs: deque[Repair] = deque(maxlen=REPAIRS_KEPT)
         self.checked_at: float | None = None  # time.time()
+        self._timed_value: str | None = None  # dawn-timed's last updated_at, and when (monotonic) it last changed
+        self._timed_changed = 0.0
+        self._recycled_on: date | None = None  # the day the face had its daily refresh (or it was skipped)
+        self.wifi_driver_tries = 0
+        self.dab_nosync_restarts = 0  # decoder restarts for "no sync" in a row (heals after ten minutes of sync)
+        self._usb_reset_at: float | None = None  # monotonic: the stick was re-enumerated then
+        self.dab_stuck_since: float | None = None  # monotonic: re-enumerating did not help either
         self._bad_since: dict[str, float] = {}  # key -> monotonic time the problem was first seen
         self._good_since: dict[str, float] = {}
         self._backoff: dict[str, float] = {}  # key -> the wait after its last repair
@@ -86,7 +139,15 @@ class SupervisorService(Service):
     async def start(self) -> None:
         self._started = time.monotonic()
         if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="supervisor")
+            self._task = spawn(self._loop(), name="supervisor")
+        self.ctx.liveness.register("supervisor", max_age_s=4 * self.cfg.check_interval_s + 120, restart=self.restart_loop)
+        self.ctx.liveness.task("supervisor", self._task)
+        self.ctx.liveness.on_restart = self.note_loop_restart
+        if not getattr(self, "_update_resumed", False):
+            self._update_resumed = True
+            from . import update
+
+            update.resume(self.ctx)  # an update that restarted us is followed again; a finished one's result is shown
 
     async def stop(self) -> None:
         if self._task:
@@ -97,9 +158,27 @@ class SupervisorService(Service):
     def cfg(self):  # noqa: ANN201
         return self.ctx.config.system.supervisor
 
+    def note_loop_restart(self, name: str, attempt: int, ok: bool, why: str) -> None:
+        """Liveness restarted a loop inside dawn-core: a self-repair like any other (Diagnostics → System)."""
+        from ..liveness import BACKOFF_S
+
+        nxt = BACKOFF_S[min(attempt, len(BACKOFF_S)) - 1]
+        self._note(Repair(self.ctx.store.iso(), f"dawn-core: {name}", why, ok, f"restarted the loop (attempt {attempt})" if ok else "the restart failed", nxt))
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="supervisor")
+        self.ctx.liveness.task("supervisor", self._task)
+
     async def _loop(self) -> None:
+        from ..power.service import cool_plan
+
         while True:
-            await asyncio.sleep(self.cfg.check_interval_s)
+            plan = cool_plan(self.ctx)
+            # half as often in cool mode (poll_scale is 1 again within an alarm's preparation window)
+            await asyncio.sleep(self.cfg.check_interval_s * (plan.poll_scale if plan else 1.0))
+            self.ctx.liveness.beat("supervisor")
             try:
                 await self.check()
             except Exception:  # noqa: BLE001
@@ -111,7 +190,8 @@ class SupervisorService(Service):
         `now` is a monotonic time (tests drive the clock)."""
         now = time.monotonic() if now is None else now
         self.checked_at = time.time()
-        for step in (self._core_services, self._units, self._face, self._dab, self._user_audio, self._timed):
+        for step in (self._core_services, self._units, self._face, self._face_recycle, self._dab, self._user_audio, self._timed,
+                     self._chrony, self._gpsd, self._wifi_driver):
             try:
                 await step(now)
             except Exception:  # noqa: BLE001
@@ -130,9 +210,23 @@ class SupervisorService(Service):
             own = unit in OWN_UNITS
             if state == "unknown" or not await self.host.unit_enabled(unit):
                 continue  # systemd cannot say, or the unit is not meant to run here (AirPlay not built, a kiosk disabled on a headless box)
+            if unit == self.ctx.config.dab.service_name and state == "inactive" and self._dab_paused_on_purpose():
+                self._bad_for(f"unit:{unit}", False, now)
+                continue
             bad_for = self._bad_for(f"unit:{unit}", state == "failed" or (own and state == "inactive"), now)
             if state == "failed" or bad_for >= INACTIVE_FOR_S:
                 await self._repair(f"unit:{unit}", unit, f"{state}" + (f" for {bad_for:.0f} s" if state != "failed" else ""), lambda u=unit: self._restart_unit(u), now)
+
+    def _dab_paused_on_purpose(self) -> bool:
+        """Cool mode stopped the decoder, and the loop that will start it again is alive. With that loop dead the usual
+        policy applies, so a controller that died cannot leave the radio off."""
+        try:
+            from ..dab.service import DabService
+
+            paused = bool(self.ctx.svc(DabService).paused)
+        except (ImportError, KeyError):
+            return False
+        return paused and "power" in self.ctx.liveness.names() and "power" not in self.ctx.liveness.check()
 
     async def _face(self, now: float) -> None:
         """No face on the socket (or one whose page has frozen) while dawn-face is active: Chromium is blank, on an
@@ -140,15 +234,93 @@ class SupervisorService(Service):
         if self.ctx.sim or not self.cfg.enabled or self.ctx.ws_hub is None:
             return
         seen = self.ctx.ws_hub.face_seen(FACE_STALE_S)
-        absent_for = self._bad_for("face", not seen, now)
-        if seen or absent_for < self.cfg.face_absent_s:
+        frozen = seen and self.ctx.ws_hub.face_frozen(FRAME_STALE_MS)  # pings arrive but no frame is drawn
+        absent_for = self._bad_for("face", not seen or frozen, now)
+        if (seen and not frozen) or absent_for < self.cfg.face_absent_s:
             return
         if self.unit_states.get("dawn-face") != "active" or not await self.host.unit_enabled("dawn-face"):
             return  # stopped, starting or restarting: systemd (or the unit check above) is on it
         active_for = await self.host.unit_active_for("dawn-face")
         if active_for is not None and active_for < self.cfg.face_absent_s:
             return  # Chromium is still coming up (slow on a Pi 3 or Zero 2)
-        await self._repair("face", "dawn-face", f"no face connected for {absent_for:.0f} s", lambda: self._restart_unit("dawn-face"), now)
+        why = f"the face's page draws no frames (frozen screen) for {absent_for:.0f} s" if frozen else f"no face connected for {absent_for:.0f} s"
+        await self._repair("face", "dawn-face", why, lambda: self._restart_unit("dawn-face"), now)
+
+    async def _face_recycle(self, now: float) -> None:
+        """Once a day, at the first quiet moment after `face_recycle_at`, a fresh Chromium: one that runs for months
+        grows (memory, GPU state) and is better replaced while nobody is looking than found frozen in the morning."""
+        if self.ctx.sim or not self.cfg.enabled or not self.cfg.face_recycle_at:
+            return
+        if self.unit_states.get("dawn-face") != "active" or not await self.host.unit_enabled("dawn-face"):
+            return
+        wall = self.ctx.store.now()
+        due = recycle_due(wall, self.cfg.face_recycle_at, self._recycled_on)
+        if due is None:
+            return
+        if due == "missed":
+            log.info("supervisor: no quiet moment for the face's daily refresh since %s; skipping today", self.cfg.face_recycle_at)
+            self._recycled_on = wall.date()
+            return
+        active_for = await self.host.unit_active_for("dawn-face")
+        why_not = quiet_for_recycle(self.ctx.store.state, wall, active_for)
+        if why_not:
+            return
+        self._recycled_on = wall.date()
+        await self._repair("face-recycle", "dawn-face", "daily refresh", lambda: self._restart_unit("dawn-face"), now)
+
+    async def _chrony(self, now: float) -> None:
+        """chronyd that no longer answers chronyc (4 polls in a row, two minutes): systemd sees it as running."""
+        if not self.cfg.enabled:
+            return
+        try:
+            from ..timesync.service import TimeSourceService
+
+            n = self.ctx.svc(TimeSourceService).chronyc_timeouts
+        except (ImportError, KeyError):
+            return
+        if n >= CHRONYC_TIMEOUTS:
+            await self._repair("chrony-hung", "chrony", f"chronyc timed out {n} times in a row", lambda: self._restart_unit("chrony"), now)
+
+    async def _gpsd(self, now: float) -> None:
+        """A receiver is fitted and gpsd is connected, but no position report has come for two minutes: gpsd lost it."""
+        if not self.cfg.enabled:
+            return
+        try:
+            from ..timesync.gps import GpsdClient
+            from ..timesync.service import TimeSourceService
+
+            ts = self.ctx.svc(TimeSourceService)
+        except (ImportError, KeyError):
+            return
+        c = ts.gps
+        quiet = None
+        if ts.presence == "present" and isinstance(c, GpsdClient) and c.connected:
+            last = c.fix.last_tpv_at
+            quiet = time.time() - last if last else None
+        hung = quiet is not None and quiet > GPSD_QUIET_S
+        self._bad_for("gpsd-quiet", hung, now)
+        if hung:
+            await self._repair("gpsd-quiet", "gpsd", f"no position report for {quiet:.0f} s", lambda: self._restart_unit("gpsd"), now)
+
+    async def _wifi_driver(self, now: float) -> None:
+        """Optional (wifi_driver_recovery): a saved Wi-Fi network but no usable wlan0 for 10 minutes. NetworkManager is
+        restarted twice at most; after that Diagnostics suggests a reboot (never done automatically)."""
+        if self.ctx.sim or not self.cfg.enabled or not self.cfg.wifi_driver_recovery:
+            return
+        net = self.ctx.store.state.system.network
+        if not net.wifi_configured or net.online:
+            self._bad_for("wifi-driver", False, now)
+            self.wifi_driver_tries = 0
+            return
+        iface = self.ctx.config.network.hotspot.interface
+        missing = not await self.host.exists(f"/sys/class/net/{iface}")
+        rc, out = (127, "") if missing else await self.host.run("nmcli", "-t", "-f", "DEVICE,STATE", "dev", timeout=10)
+        unavailable = rc == 0 and any(ln.split(":")[:2] == [iface, "unavailable"] for ln in out.splitlines())
+        bad_for = self._bad_for("wifi-driver", missing or unavailable, now)
+        if bad_for >= WIFI_DRIVER_S and self.wifi_driver_tries < 2:
+            why = f"{iface} {'missing' if missing else 'unavailable'} for {bad_for:.0f} s"
+            if await self._repair("wifi-driver", "NetworkManager", why, lambda: self._restart_unit("NetworkManager"), now):
+                self.wifi_driver_tries += 1
 
     async def _dab(self, now: float) -> None:
         """welle-cli running but not answering: a decoder that will not stream to anyone. While an alarm rings or is
@@ -164,8 +336,10 @@ class SupervisorService(Service):
         st = self.ctx.store.state
         if not st.dab.sdr_present or st.alarms.ringing is not None or self.unit_states.get("dawn-dab") not in ("active", "unknown"):
             self._bad_for("dab", False, now)
+            self._bad_for("dab-nosync", False, now)
             return
-        dead_for = self._bad_for("dab", not await dab.client.reachable(), now)
+        reachable = await dab.client.reachable()
+        dead_for = self._bad_for("dab", not reachable, now)
         if dead_for >= self.cfg.welle_dead_s:
 
             async def fix() -> tuple[bool, str]:
@@ -173,6 +347,48 @@ class SupervisorService(Service):
                 return ok, "restarting welle-cli" if ok else "restarted moments ago already"
 
             await self._repair("dab", "DAB decoder (welle-cli)", f"not answering for {dead_for:.0f} s", fix, now)
+        if reachable:
+            await self._dab_zombie(dab, now)
+
+    async def _dab_zombie(self, dab: Any, now: float) -> None:
+        """welle-cli answers but no samples arrive (a stick that stopped delivering them: its OFDM thread waits for ever,
+        and burns CPU doing it): no sync for `dab.no_sync_restart_s` on a channel a scan found good, with no scan
+        running. Restart the decoder; after three in a row with the stick still on the bus, re-enumerate it on USB
+        (dawn-usb-reset); if that does not bring sync back within three minutes, Diagnostics says to replug it."""
+        scanning = bool(dab._scan_task and not dab._scan_task.done())
+        zombie = not dab.live_sync and not scanning and dab.channel_known_good()
+        nosync_for = self._bad_for("dab-nosync", zombie, now)
+        if not zombie:
+            if dab.live_sync and now - self._good_since.get("dab-nosync", now) >= HEAL_S:
+                self.dab_nosync_restarts = 0  # ten minutes of sync: the count starts over
+            if dab.live_sync:
+                self.dab_stuck_since = None
+                self._usb_reset_at = None
+            return
+        if self._usb_reset_at is not None and now - self._usb_reset_at >= USB_RESET_GRACE_S and self.dab_stuck_since is None:
+            self.dab_stuck_since = self._usb_reset_at
+            log.error("supervisor: the SDR stick still delivers no samples %.0f s after re-enumerating it", now - self._usb_reset_at)
+        if nosync_for < self.ctx.config.dab.no_sync_restart_s:
+            return
+        if self.dab_nosync_restarts >= NOSYNC_RESTARTS_BEFORE_RESET and self.ctx.store.state.dab.sdr_present:
+            if self._usb_reset_at is None:
+
+                async def reset() -> tuple[bool, str]:
+                    rc, out = await self.host.sudo("/usr/local/bin/dawn-usb-reset", timeout=30)
+                    if rc == 0:
+                        self._usb_reset_at = now
+                    return (rc == 0), (out.strip()[:200] or "re-enumerated the stick") if rc == 0 else f"dawn-usb-reset failed: {out.strip()[:200] or rc}"
+
+                await self._repair("dab-usb", "RTL-SDR stick", f"no samples through {self.dab_nosync_restarts} decoder restarts", reset, now)
+            return
+
+        async def fix() -> tuple[bool, str]:
+            ok = await dab.restart_welle(reason="no sync")
+            if ok:
+                self.dab_nosync_restarts += 1
+            return ok, "restarting welle-cli" if ok else "restarted moments ago already"
+
+        await self._repair("dab-nosync", "DAB decoder (welle-cli)", f"no sync for {nosync_for:.0f} s on {dab.channel}, a channel scanned good", fix, now)
 
     async def _user_audio(self, now: float) -> None:
         """The dawn user's PipeWire session. pipewire and pipewire-pulse are socket-activated (inactive is fine);
@@ -212,7 +428,7 @@ class SupervisorService(Service):
         if not self.cfg.enabled or self.unit_states.get("dawn-timed") != "active":
             self._bad_for("timed", False, now)
             return
-        age = self._status_age(self.ctx.config.diagnostics.timed_status_file)
+        age = self._status_age(self.ctx.config.diagnostics.timed_status_file, now)
         stale = age is not None and age > self.cfg.timed_stale_s
         self._bad_for("timed", stale, now)
         if stale:
@@ -273,13 +489,16 @@ class SupervisorService(Service):
         except Exception:  # noqa: BLE001
             log.exception("audio could not be set up again after the PipeWire restart")
 
-    @staticmethod
-    def _status_age(path: str) -> float | None:
+    def _status_age(self, path: str, now: float) -> float | None:
+        """How long dawn-timed's `updated_at` has stayed the same, on the supervisor's own monotonic clock. Comparing the
+        stamp with the wall clock made a clock step (chrony at boot, by an hour) look like a hung daemon."""
         try:
-            d = json.loads(Path(path).read_text())
-            return time.time() - datetime.fromisoformat(d["updated_at"]).timestamp()
+            value = json.loads(Path(path).read_text())["updated_at"]
         except (OSError, ValueError, KeyError, TypeError):
             return None  # no file (an older dawn-timed), or not readable: nothing to judge by
+        if value != self._timed_value:
+            self._timed_value, self._timed_changed = value, now
+        return now - self._timed_changed
 
     # ---- state -----------------------------------------------------------
     def recent(self, hours: float = 24.0) -> list[dict[str, Any]]:

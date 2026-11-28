@@ -3,6 +3,8 @@ import { useState } from '../../shared/store';
 import { Card, Row, Switch, Spinner, Empty } from '../../shared/components';
 import { api, ApiError } from '../../shared/api';
 import { ConfigEditor } from '../components/ConfigEditor';
+import { gpsChipClass, gpsLook } from '../../shared/gps';
+import { runAction } from '../diag/api';
 
 const STATES = ['ACT', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'];
 const ZONES = ['Australia/Sydney', 'Australia/Melbourne', 'Australia/Brisbane', 'Australia/Adelaide', 'Australia/Perth', 'Australia/Hobart', 'Australia/Darwin', 'Australia/Canberra', 'Australia/Broken_Hill', 'Australia/Lord_Howe', 'Pacific/Auckland', 'UTC'];
@@ -13,6 +15,7 @@ interface Cfg {
   holidays: { region: string; scope: string };
   web: { auth: { pin: string | null } };
   display: { clock_24h: boolean };
+  time_sources: { gps: { enabled: boolean } };
 }
 interface WifiNet { ssid: string; signal: number; security: string; active: boolean }
 
@@ -26,14 +29,29 @@ export function Settings() {
   const [wifiBusy, setWifiBusy] = useReactState(false);
   const [join, setJoin] = useReactState<{ ssid: string; psk: string } | null>(null);
   const [msg, setMsg] = useReactState<string | null>(null);
+  const [updateMsg, setUpdateMsg] = useReactState<string | null>(null);
+  const [offerPin, setOfferPin] = useReactState(false);
   const reload = () => api.get<Cfg>('/api/config').then((c) => { setCfg(c); setDraft({}); });
   useEffect(() => { reload(); }, []);
   const patch = async (p: Record<string, unknown>) => { try { await api.patch('/api/config', p); await reload(); setMsg('Saved'); setTimeout(() => setMsg(null), 1500); } catch (e) { setMsg(e instanceof ApiError ? `Error: ${JSON.stringify(e.detail)}` : String(e)); } };
   const scanWifi = async () => { setWifiBusy(true); setWifiErr(null); try { setWifi(await api.get<WifiNet[]>('/api/wifi/networks')); } catch (e) { setWifiErr(e instanceof ApiError && e.status === 404 ? 'Wi-Fi management is not available in this build.' : String(e)); } finally { setWifiBusy(false); } };
   const restore = async (file: File) => { const text = await file.text(); try { await api.post('/api/system/restore', JSON.parse(text)); setMsg('Restored. Services apply the new settings now.'); reload(); } catch (e) { setMsg(`Restore failed: ${e instanceof ApiError ? e.message : String(e)}`); } };
 
+  // With an alarm due within a day the API answers 409 until it is confirmed: ask, naming the alarm
+  const shutDown = async () => {
+    if (!confirm('Shut down now? Unplug only after the screen goes dark.')) return;
+    try {
+      await api.post('/api/system/shutdown', {});
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 409 && !s.alarms.ringing) {
+        if (confirm(`${e.message}\n\nShut down anyway?`)) await api.post('/api/system/shutdown', { confirm: true }).catch((x) => setMsg(String(x.message)));
+      } else setMsg(e instanceof Error ? e.message : String(e));
+    }
+  };
   if (!cfg) return <div className="p-6"><Spinner /></div>;
   const loc = { ...cfg.location, ...draft };
+  const gps = gpsLook(s.time_sources.gps);
+  const gpsPresence = s.time_sources.gps.presence;
 
   return (
     <div className="space-y-4">
@@ -51,7 +69,16 @@ export function Settings() {
       </Card>
 
       <Card title="Location" action={<span className="chip">{s.settings.location_source === 'gps' ? 'using GPS fix' : 'using these values'}</span>}>
-        <Row label="Prefer GPS position" hint="Falls back to the values below without a fix"><Switch on={cfg.location.prefer_gps} onChange={(v) => patch({ location: { prefer_gps: v } })} /></Row>
+        {/* GPS is optional: its switches only appear once a module has been seen; with none, one quiet line */}
+        <Row label="GPS" hint={gpsPresence === 'missing' && s.time_sources.gps.last_seen_at ? `last seen ${fmtSeen(s.time_sources.gps.last_seen_at, s.tz)}` : gpsPresence === 'off' ? 'switched off' : undefined}>
+          <span className={gpsChipClass(gps)} data-testid="settings-gps-chip">{gps ? gps.chip : 'Off'}</span>
+        </Row>
+        {gpsPresence === 'absent' && <div className="text-sm text-muted py-1">No GPS module detected. Plug one in and it appears here.</div>}
+        {gpsPresence !== 'absent' && <Row label="Use GPS for time and location"><Switch on={cfg.time_sources.gps.enabled} onChange={(v) => patch({ time_sources: { gps: { enabled: v } } })} /></Row>}
+        {(gpsPresence === 'present' || gpsPresence === 'missing') && <Row label="Prefer GPS position" hint="Falls back to the values below without a fix"><Switch on={cfg.location.prefer_gps} onChange={(v) => patch({ location: { prefer_gps: v } })} /></Row>}
+        {gpsPresence === 'missing' && (
+          <div className="py-1"><button className="btn btn-sm" onClick={async () => { const r = await runAction('gps.forget'); setMsg(r.message); setTimeout(() => setMsg(null), 3000); }}>Forget GPS module</button></div>
+        )}
         <div className="grid grid-cols-2 gap-2 py-2">
           <label className="text-sm text-muted">Latitude<input type="number" step="0.0001" value={loc.latitude} onChange={(e) => setDraft({ ...draft, latitude: Number(e.target.value) })} /></label>
           <label className="text-sm text-muted">Longitude<input type="number" step="0.0001" value={loc.longitude} onChange={(e) => setDraft({ ...draft, longitude: Number(e.target.value) })} /></label>
@@ -79,9 +106,20 @@ export function Settings() {
           </Row>
         ))}
         {join && (
-          <form className="flex gap-2 mt-3" onSubmit={async (e) => { e.preventDefault(); try { await api.post('/api/wifi/connect', join); setMsg(`Joining ${join.ssid}…`); setJoin(null); } catch (err) { setMsg(String((err as Error).message)); } }}>
+          <form className="flex gap-2 mt-3" onSubmit={async (e) => { e.preventDefault(); try { await api.post('/api/wifi/connect', join); setMsg(`Joining ${join.ssid}…`); setJoin(null); if (!cfg.web.auth.pin) setOfferPin(true); } catch (err) { setMsg(String((err as Error).message)); } }}>
             <span className="self-center text-sm">{join.ssid}</span><input type="password" placeholder="password" value={join.psk} onChange={(e) => setJoin({ ...join, psk: e.target.value })} /><button className="btn btn-sm btn-primary">Connect</button><button type="button" className="btn btn-sm btn-ghost" onClick={() => setJoin(null)}>✕</button>
           </form>
+        )}
+        {offerPin && !cfg.web.auth.pin && (
+          <div className="mt-3 rounded-xl border border-border p-3" data-testid="offer-pin">
+            <div className="text-sm font-medium">Set a PIN for this control page?</div>
+            <div className="text-xs text-muted mt-1">Anyone on your Wi-Fi can open it otherwise. The clock's own face never needs it. You can skip this and set one later under Device.</div>
+            <div className="flex gap-2 mt-2">
+              <input type="password" inputMode="numeric" placeholder="new PIN" className="w-28" value={pin} onChange={(e) => setPin(e.target.value)} />
+              <button className="btn btn-sm btn-primary" disabled={!pin} onClick={() => { patch({ web: { auth: { pin } } }); setPin(''); setOfferPin(false); }}>Set PIN</button>
+              <button className="btn btn-sm btn-ghost" onClick={() => setOfferPin(false)}>Skip</button>
+            </div>
+          </div>
         )}
       </Card>
 
@@ -91,7 +129,15 @@ export function Settings() {
       </Card>
 
       <Card title="Software update" action={<span className="chip">{s.system.update_running ? 'running…' : s.system.update_available ? 'update available' : `v${s.system.version}${s.system.git_rev ? ` · ${s.system.git_rev}` : ''}`}</span>}>
-        <Row label="Update from git" hint="git pull + install.sh, then services restart"><button className="btn btn-sm btn-primary" disabled={s.system.update_running} onClick={() => api.post('/api/system/update').catch((e) => setMsg(String(e.message)))}>Update now</button><button className="btn btn-sm" onClick={() => api.post('/api/system/update/check').catch(() => {})}>Check</button></Row>
+        <Row label="Update from git" hint="git pull + install, then the services restart in turn; rolled back by itself if Dawn does not come up healthy">
+          <button className="btn btn-sm btn-primary" disabled={s.system.update_running} onClick={() => api.post('/api/system/update').then(() => setUpdateMsg(null)).catch((e) => setUpdateMsg(e instanceof ApiError && e.status === 409 ? String(e.message) : `Could not start: ${String(e.message)}`))}>Update now</button>
+          <button className="btn btn-sm" onClick={() => api.post('/api/system/update/check').catch(() => {})}>Check</button>
+        </Row>
+        {/* an update restarts dawn-core and the radio: it waits for a quiet moment away from the alarms (409) */}
+        {updateMsg && <div className="text-sm text-warn py-1" data-testid="update-refused">{updateMsg}</div>}
+        {s.system.update_result && s.system.update_result.status === 'rolled_back' && (
+          <div className="text-sm text-warn py-1">The last update was rolled back: {String(s.system.update_result.message ?? '')}.</div>
+        )}
         {s.system.update_log && <pre className="text-[11px] bg-black/40 rounded-xl p-3 max-h-48 overflow-auto whitespace-pre-wrap mt-2">{s.system.update_log}</pre>}
       </Card>
 
@@ -102,9 +148,13 @@ export function Settings() {
       <Card title="Power">
         <div className="flex gap-2">
           <button className="btn" onClick={() => confirm('Reboot now?') && api.post('/api/system/reboot')}>Reboot</button>
-          <button className="btn btn-danger" onClick={() => confirm('Shut down now? Unplug only after the screen goes dark.') && api.post('/api/system/shutdown')}>Shut down</button>
+          <button className="btn btn-danger" onClick={shutDown}>Shut down</button>
         </div>
       </Card>
     </div>
   );
+}
+
+function fmtSeen(iso: string, tz: string): string {
+  return new Intl.DateTimeFormat('en-AU', { timeZone: tz, day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 }

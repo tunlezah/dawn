@@ -18,3 +18,7 @@ include = ["dawn_sim*"]
 
 [tool.setuptools.package-data]
 dawn_sim = ["assets/**/*"]
+
+[tool.ruff.lint]
+# a task nobody holds can be garbage-collected part way through
+extend-select = ["RUF006"]

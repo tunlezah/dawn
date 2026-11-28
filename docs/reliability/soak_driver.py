@@ -46,7 +46,7 @@ def proc_stats(pid: int) -> dict:
 
 async def ok(c: httpx.AsyncClient, method: str, path: str, **kw):
     try:
-        return await c.request(method, BASE + path, timeout=15, **kw)
+        return await c.request(method, BASE + path, timeout=15, headers={"X-Dawn-Client": "1"}, **kw)
     except Exception as e:  # noqa: BLE001
         log("req failed", method, path, type(e).__name__, e)
         return None
