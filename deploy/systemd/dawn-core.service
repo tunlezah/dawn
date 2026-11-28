@@ -22,6 +22,14 @@ Restart=always
 RestartSec=2
 WatchdogSec=60
 TimeoutStartSec=90
+# dawn-core stops its services within 35 s (ServiceRegistry.stop_all); the default 90 s held a restart for longer
+TimeoutStopSec=45
+# the alarms live here: the kernel's OOM killer takes almost anything else first (Chromium, welle-cli)
+OOMScoreAdjust=-800
+# no core dumps onto the SD card
+LimitCORE=0
+# cool mode may have capped the CPU: whatever happened, the full frequency comes back when dawn-core stops
+ExecStopPost=/bin/sh -c 'cat /sys/devices/system/cpu/cpufreq/policy0/cpuinfo_max_freq > /sys/devices/system/cpu/cpufreq/policy0/scaling_max_freq 2>/dev/null || true'
 RuntimeDirectory=dawn
 RuntimeDirectoryMode=0755
 # kept until reboot (systemd deletes it whenever the service stops by default): a ring stopped while the

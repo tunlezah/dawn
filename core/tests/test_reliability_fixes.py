@@ -225,7 +225,7 @@ async def test_a_tick_that_keeps_failing_starves_the_watchdog_and_shows_on_the_f
     await ctx.svc(SysInfoService)._tick()
     assert ctx.store.state.alarms.engine_alive is False
     assert alarms_alive(ctx) is False
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
         r = await c.get("/api/health")
         assert r.status_code == 200 and r.json()["ok"] and r.json()["alarms_alive"] is False
         assert (await c.get("/api/state")).json()["alarms"]["engine_alive"] is False

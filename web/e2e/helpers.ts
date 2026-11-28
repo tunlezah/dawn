@@ -2,11 +2,11 @@ export const HUB = process.env.DAWN_HUB || 'http://127.0.0.1:8099';
 export const BASE = process.env.DAWN_URL || 'http://127.0.0.1:8080';
 
 export async function post(path: string, body: unknown = {}, base = BASE) {
-  const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const r = await fetch(base + path, { method: 'POST', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify(body) });
   return r;
 }
 export async function hub(body: Record<string, unknown>) {
-  await fetch(HUB + '/set', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  await fetch(HUB + '/set', { method: 'POST', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify(body) });
 }
 export async function state(): Promise<any> {
   return (await fetch(BASE + '/api/state')).json();
@@ -21,18 +21,18 @@ export async function waitFor(pred: (s: any) => boolean, ms = 8000): Promise<any
   throw new Error('condition not met: ' + pred.toString());
 }
 export async function config(patch: Record<string, unknown>) {
-  const r = await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(patch) });
+  const r = await fetch(BASE + '/api/config', { method: 'PATCH', headers: { 'content-type': 'application/json', 'x-dawn-client': '1' }, body: JSON.stringify(patch) });
   if (!r.ok) throw new Error(`config patch failed: ${r.status} ${await r.text()}`);
 }
 // sleep mode as the simulator config ships it (off, so results do not depend on the hour)
 export const SLEEP_DEFAULTS = { enabled: false, jump_every_s: 120, screen_off: false };
 export async function reset() {
   await hub({ lux: 150, gps_fix: true, dab_sync: true, sdr_present: true, network_online: true, audio_flowing: true,
-    gps_present: true, dab_snr: 14.5, gps_signal: 38.0, wifi_dbm: -58.0, units_down: [] });
+    gps_present: true, dab_snr: 14.5, gps_signal: 38.0, wifi_dbm: -58.0, units_down: [], wifi_configured: true, hotspot_client: false, dab_zombie: false });
   await post('/api/alarms/stop');
   await post('/api/audio/standby');
-  await fetch(BASE + '/api/timers/nap', { method: 'DELETE' });
-  await fetch(BASE + '/api/timers/sleep', { method: 'DELETE' });
+  await fetch(BASE + '/api/timers/nap', { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
+  await fetch(BASE + '/api/timers/sleep', { method: 'DELETE', headers: { 'x-dawn-client': '1' } });
   await post('/api/face/menu', { open: false });
   await post('/api/face/demo', { mode: null });
   const s = await state();

@@ -42,7 +42,7 @@ readings, a week of history and one-tap fixes.
 
 - [Hardware](#hardware) · [Wiring](#wiring)
 - [First boot](#first-boot) · [Updating](#updating)
-- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring) · [Keeping itself running](#keeping-itself-running)
+- [Controls](#controls) · [Alarms that always ring](#alarms-that-always-ring) · [Keeping itself running](#keeping-itself-running) · [Cool mode](#cool-mode)
 - [Laptop simulator](#laptop-simulator)
 - [Architecture](#architecture) · [Configuration](#configuration)
 - [Troubleshooting](#troubleshooting)
@@ -57,13 +57,30 @@ auto-detected at boot and the fallbacks stay supported:
 |---|---|---|
 | Board | Raspberry Pi 4 B, Raspberry Pi OS Lite 64-bit (Oct 2026); passive heatsink, no fan | Pi 5 (22-pin DSI cable, 27 W PSU), Pi 3B+, Pi Zero 2 W (HyperPixel/HDMI only, low-CPU face) |
 | Power | 5 V 3 A USB-C (KSA-15E-052300HA); ~7–8 W typical, ~13 W worst case | — |
-| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork), on a short USB extension | any RTL2832U/R820T2 stick (tuner type logged) |
-| GPS | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS | none (DAB and NTP time) |
+| DAB+ | RTL-SDR Blog V4 (librtlsdr from the rtl-sdr-blog fork, pinned release), on a short USB extension, outside the case | any RTL2832U/R820T2 stick (named from its USB strings) |
+| GPS (optional) | u-blox 7 USB (VK-172 / VK-162), `/dev/ttyACM0`, NMEA 9600, no PPS; picked up whenever it is plugged in | none: DAB and NTP time, the location from *Settings*; shown as "not fitted" (a hollow yellow ring), never as a fault |
 | Display | Waveshare 4.3" DSI 43H-800480-IPS-CT, 800×480, Goodix touch over the ribbon, sysfs backlight 0–255 (`dtoverlay=vc4-kms-dsi-7inch`) | Pimoroni HyperPixel 4.0 Touch (DPI, PWM backlight); any HDMI panel (software dimmer) |
 | Light sensor | PiicoDev VEML6030, I2C bus 1, 0x10, behind a window facing the room | VEML7700, BH1750; none (sunrise/sunset schedule) |
 | Audio | Pimoroni Audio Amp SHIM (MAX98357A, I2S, mono ~2.5 W into 4 Ω; the installer default) → Dayton PC68-4 2.5" 4 Ω full-range in a ~0.5 L sealed box | USB DAC; HiFiBerry DAC/MiniAmp; 3.5 mm jack; HDMI |
 | Inputs | touch (everything is on the screen) + Adafruit 377 bare rotary encoder with push switch (internal pull-ups) | optional big arcade button (off by default; GPIO, `gpiozero` + `lgpio`) |
 | Backup buzzer | none: the backup tone plays through the speaker and the face | optional active 3.3 V piezo buzzer on a free GPIO (`alarm_defaults.buzzer.gpio_pin`), sounding even when the speaker path cannot |
+
+### Recommended additions
+
+1. **The optional GPIO piezo buzzer** (`alarm_defaults.buzzer.gpio_pin: 26`). The speaker path (I²S → SHIM → driver)
+   is a single point of failure, and the face's backup beeps go through the same amp: the piezo is the only alarm
+   sound that does not depend on it.
+2. **A DS3231 RTC module** on I²C bus 1 (address 0x68; the light sensor at 0x10 does not clash), or a battery for the
+   Pi 5's RTC: the right time from the first second after a power cut, with or without GPS or a network. The installer
+   finds it and sets it up.
+3. **The RTL-SDR V4 outside the case**, on its short extension, in a USB 2 (black) port, away from the SHIM's speaker
+   leads: it runs warm and adds heat right next to the SoC.
+4. **Ventilation**: slots low and high for a chimney draught, and a heatsink case or a thermal pad to a metal back
+   panel. A fan is not recommended by a bed; if one is fitted, use a 5 V fan switched by a transistor on a free GPIO
+   with `dtoverlay=gpio-fan,gpiopin=<pin>,temp=70000`, so it only runs when hot.
+5. **The specified 5.1 V / 3 A supply, directly**: under-voltage is what drops the SDR off the bus and corrupts SD
+   cards. Use a high-endurance SD card, or the `--data-device` option.
+6. **Optional**: a UPS HAT, if alarms must ring through power cuts.
 
 The SHIM has no hardware volume and one channel, so Dawn does it in software: the
 PipeWire filter chain mixes left and right to mono, high-passes at 110 Hz
@@ -143,7 +160,8 @@ SDR antenna lead: the SHIM's output is unfiltered ~300 kHz PWM.
    calibration matrix (`/etc/udev/rules.d/98-dawn-touch.rules`), then reboot.
 3. The face reaches standby within about 40 s. Without a network it starts a
    setup hotspot and shows its SSID, password and a Wi-Fi QR code; join it and
-   open `http://10.42.0.1:8080/` to pick a Wi-Fi network.
+   open `http://10.42.0.1:8080/` to pick a Wi-Fi network. (Once a Wi-Fi network is saved, losing it later does not
+   take over the face; see *Wi-Fi lost* under [Troubleshooting](#troubleshooting).)
 4. Open `http://dawn.local:8080/` (core listens on port 8080; nothing answers on 80):
    - **Radio → Scan** to find DAB+ ensembles (Australian capital channels first),
      star stations as presets.
@@ -163,9 +181,14 @@ the 0–100 scale itself.
 
 ## Updating
 
-- From the UI: *Settings → Software update → Check for updates*, then *Update now* (`dawn-update`: fast-forwards
-  `/opt/dawn` to GitHub `main`, runs `install.sh --update`, restarts the services; log in `/var/log/dawn-update.log`).
-  The version shown there goes up with every merged PR.
+- From the UI: *Settings → Software update → Check for updates*, then *Update now*. It runs `dawn-update.service`
+  (its own unit, so restarting dawn-core cannot cut it short): fast-forwards `/opt/dawn` to GitHub `main`, runs
+  `install.sh --update --no-restart` (the web UI is built beside the one in use and swapped in only when complete),
+  restarts dawn-timed and the decoder, then dawn-core, waits for it to report the new version healthy, and restarts
+  the face last. If dawn-core does not come up healthy within two minutes, or any step fails, it rolls back to the
+  previous commit, web UI and Python packages and says so (*Settings*, *Diagnostics → System*, a toast on the face).
+  It will not start during an alarm, a snooze or a nap, or within `system.update_quiet_minutes` (60) of the next
+  alarm. Log in `/var/log/dawn-update.log`. The version shown there goes up with every merged PR.
 - From a laptop: `make deploy HOST=dawn.local` builds the web UI and rsyncs the repo. The files then differ from
   `/opt/dawn`'s git commit, so the UI update refuses to fast-forward until they match `main` again.
 - On the Pi: `cd /opt/dawn && sudo -u dawn git pull --ff-only && sudo ./deploy/install.sh --update`.
@@ -225,7 +248,10 @@ ringing:
 - **The radio is the alarm's while it rings or is snoozed**: retunes, decoder restarts and gain changes from the
   web wait, and the alarm has mpv players of its own, so nothing that was playing can pause it.
 - **Restarts don't drop it**: a ring or a snooze in progress is saved, and dawn-core carries on with it after a
-  crash, a watchdog restart or an update; a nap timer too. systemd's watchdog is fed only while the alarm engine
+  crash, a watchdog restart or an update; a nap timer too. A nap stays saved until its ring has started, and a ring
+  that will not start is retried and then falls back to the backup tone.
+- **Clock steps don't move it**: naps, snoozes and the sleep timer run on the monotonic clock, so chrony stepping the
+  time at boot neither shortens nor stretches them (a `clock_step` event records each step). systemd's watchdog is fed only while the alarm engine
   ticks, and never gives up restarting dawn-core.
 - **Storage failures don't stop it**: an SD card gone read-only or a full disk cannot keep an alarm from ringing
   (or make it ring twice), and one damaged alarm in the database cannot stop the others; *Diagnostics → System*
@@ -241,18 +267,26 @@ ringing:
 
 ### Keeping itself running
 
-systemd restarts whatever exits (`Restart=always`, and never gives up: `StartLimitIntervalSec=0`), the hardware
-watchdog reboots a Pi whose kernel hangs, and dawn-core's watchdog is fed only while its alarm engine ticks. On
+systemd restarts whatever exits (`Restart=always`, and never gives up: `StartLimitIntervalSec=0`; chrony and gpsd get
+the same through drop-ins), the hardware watchdog reboots a Pi whose kernel hangs, dawn-timed has a watchdog of its own,
+and dawn-core's watchdog is fed only while its alarm engine, state pump, display loop and face and timer ticks run.
+Every loop inside dawn-core is watched: one that dies is restarted in place (5 s, 30 s, 120 s apart), and if one the
+alarms or the face depend on stays dead the watchdog is held back so systemd restarts dawn-core (`/api/health` lists
+`loops_dead`; *Diagnostics → System → Background loops*). Memory pressure takes the kiosk first (`OOMScoreAdjust`). On
 top of that dawn-core **checks the programs it depends on every 15 s and restarts what systemd cannot see is
 broken** (`system.supervisor`):
 
 | What | When it is restarted |
 |---|---|
-| The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, or the page has stopped sending its 15 s heartbeat, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium |
-| The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in, unless an alarm on the radio is ringing or snoozed (its own ladder handles that) |
+| The face kiosk (`dawn-face`: cage + Chromium) | no face has connected, the page has stopped sending its 15 s heartbeat, or it still pings but has drawn no frame for a minute, for `face_absent_s` (150 s) while the unit has been active that long: a blank, "can't reach" or frozen Chromium. Also once a day at the first quiet moment after `face_recycle_at` (03:30): Standby or the sleep clock, nothing playing, no alarm within the hour |
+| chrony, gpsd when hung | chronyc has timed out on four polls in a row; gpsd is connected with a receiver fitted but has sent no position for two minutes |
+| NetworkManager (optional, `wifi_driver_recovery`) | a saved Wi-Fi network and wlan0 missing or unavailable for 10 minutes; twice at most, then Diagnostics suggests a reboot |
+| The DAB decoder (`dawn-dab`: welle-cli) | running but not answering HTTP for `welle_dead_s` (45 s) with the stick plugged in; or answering with no sync for `dab.no_sync_restart_s` (180 s) on a channel a scan found good (a stick that stopped delivering samples), with no scan running. Never while an alarm on the radio is ringing or snoozed (its own ladder handles that) |
+| The RTL-SDR stick | three "no sync" decoder restarts in a row with the stick still on the bus: re-enumerated on USB (`dawn-usb-reset`); still nothing after 3 minutes and *Diagnostics → DAB radio* asks for a replug |
 | The PipeWire session (`pipewire`, `wireplumber`, `pipewire-pulse`, user units) | `failed`, or wireplumber `inactive`; then the sink, volume and filter chain are set up again |
 | `dawn-timed` | its status file is older than `timed_stale_s` (5 min) while the unit says active |
 | Any unit left `failed` (`shairport-sync`, `nqptp`, `gpsd`, `chrony`, `bluetooth`, `avahi-daemon`, `NetworkManager`, Dawn's own) and Dawn's own units seen `inactive` for 30 s | only units that are enabled on this box; a failed unit means systemd gave up on it |
+| The setup hotspot (`network.hotspot`) | on a box with a saved Wi-Fi network: taken down every 3 minutes to look for that network, and the network joined when it is in view; never while a phone is connected to the hotspot |
 | A part of dawn-core that could not start at boot (PipeWire tools not answering yet, bluetoothd late, a busy GPIO chip) | its `start()` is tried again after 1, 2, 4… minutes (15 at most) until it works |
 
 Every restart waits until the problem has been seen for a while, is held back by a backoff that doubles while the
@@ -260,6 +294,17 @@ same thing keeps breaking (`min_backoff_s` 60 s to `max_backoff_s` 30 min; it st
 minutes), is logged as a `supervisor_repair` event in the journal, and is listed under *Diagnostics → System →
 Self-repair* with what, when and why. The privileged restarts are exactly the lines in `deploy/sudoers/dawn`.
 `system.supervisor.enabled: false` turns it all off; *Status → Hardware → Services* still shows every unit's state.
+
+### Cool mode
+
+On hot days, while nothing much is happening, the Pi runs cooler (*Display → Cool mode*, `power`): after five minutes
+without anyone using the clock (no touch, controls, playback, ringing, timers or open control UI), and in *Auto* when
+it is summer, a hot day is forecast or the SoC runs hot, it stops the DAB decoder, caps the CPU, freezes the face's
+moving background and polls less. The alarms are never affected: the radio is running again minutes before any alarm
+on DAB (and whenever you play a station, scan or open the DAB diagnostics), the CPU cap comes off when an alarm's
+preparation starts, and any use of the clock ends cool mode at once. Diagnostics shows a paused decoder as *off*, not
+as a fault. *On* cools whenever idle; *Off* never. Measure it on the device before tuning the defaults (see the
+work-package notes): log `sys.temp` for 45 minutes with cool mode off and then on, at the same room temperature.
 
 ### Sleep mode and burn-in
 
@@ -291,9 +336,9 @@ make sim       # simulators + core + dawn-timed; web UI on http://localhost:8080
 ```
 
 - Face: http://localhost:8080/face · Control UI: http://localhost:8080/
-- Sim hub (lux slider, GPS/DAB/SDR/network toggles, phone buttons for AirPlay and
+- Sim hub (lux slider, GPS/DAB/SDR/network/saved Wi-Fi/phone-on-hotspot toggles, phone buttons for AirPlay and
   Bluetooth, encoder/button/touch, and faults for *Diagnostics*: DAB SNR, GPS signal,
-  GPS unplugged, Wi-Fi level, failed services): http://localhost:8099/
+  GPS unplugged, Wi-Fi level, failed services, an SDR that stops delivering samples): http://localhost:8099/
 - Sleep mode is off in the simulator's config so the tests do not depend on the hour;
   turn it on under *Display → Sleep mode*.
 - Keyboard in the `make sim` terminal: `+`/`-` volume, Enter encoder push, `n`
@@ -321,7 +366,7 @@ deploy/      install.sh, systemd units, udev, chrony, gpsd, PipeWire/WirePlumber
 config/      config.example.yaml (generated from the schema), config.sim.yaml
 ```
 
-Time: gpsd → `SHM 0` (prefer, trust), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
+Time: gpsd → `SHM 0` (prefer; optional), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
 chrony `makestep 1 3`. The face shows a dot per source (green live, grey stale).
 Alarms are evaluated against the system clock only and remember the last
 occurrence they handled, so a clock step never double-fires or skips one.
@@ -363,9 +408,10 @@ set the tuner gain, poll the time sources, play a test tone):
 
 | Symptom | Check |
 |---|---|
-| Face stays black | `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
+| Face stays black | after a hostname change: the kiosk clears Chromium's stale lock itself (`~/.config/dawn-face`); `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
 | Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
-| No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR); `rtl_test -t` (tuner type), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; blacklist `dvb_usb_rtl28xxu` is written by the installer; antenna/Band III coverage |
+| No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR, the library welle-cli links); `sudo systemctl stop dawn-dab; rtl_test -t; sudo systemctl start dawn-dab` (tuner type: `rtl_test` needs the stick to itself), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; `ldd /usr/local/bin/welle-cli \| grep rtlsdr` must show `/usr/local/lib`; the `dvb_usb_rtl28xxu` blacklist is written by the installer; antenna/Band III coverage |
+| DAB "SDR samples" problem in Diagnostics | the stick stopped delivering samples and neither decoder restarts nor re-enumerating it helped: unplug and replug it, use the 5.1 V / 3 A supply directly (the detail says if the Pi has seen under-voltage); *Last 24 hours* lists `dab_drop` events with the SoC temperature and throttling at the time |
 | DAB drops out or bubbles | *Diagnostics → DAB radio*: SNR below ~8 dB, FIC errors, decode errors; the spectrum should be a flat block ~1.5 MHz wide, the impulse response one main peak; try a fixed tuner gain a few steps below the AGC's choice near a strong transmitter, and move the antenna away from the Pi and the panel |
 | Alarm rings the chime instead of the station | expected after 15 s without audio (SDR unplugged, no sync), or at once when the preparation minutes before found the station would not play; *Diagnostics → Audio → Alarms* says why, *Diagnostics → DAB radio → Last 24 hours* and the history graphs show the signal at that time |
 | Alarm beeps (backup tone) | neither the source nor the chime reached the speaker: mpv, the output or PipeWire; *Diagnostics → Audio*, play a test tone, `journalctl -u dawn-core \| grep -i "backup tone"` says which player worked |
@@ -379,11 +425,21 @@ set the tuner gain, poll the time sources, play a test tone):
 | Random resets, SD errors, *Status → Hardware → Power and throttling* warns | `vcgencmd get_throttled`: bit 0x10000 = under-voltage since boot; use the 5 V 3 A supply directly, no hub |
 | Time not synced | *Diagnostics → Time sync* (the first failing step in each chain); `chronyc sources -v`; `gpsd` on `/dev/gps0`; `ipcs -m` shows SHM 0 and 2 |
 | No GPS fix | *Diagnostics → GPS*: satellites heard and their signal (four or more above 30 dBHz for a reliable fix), the sky plot shows what the window or walls block |
+| GPS shows "Not fitted" (hollow yellow ring) | no GPS module is plugged in, which is fine: GPS is optional. Plug a u-blox USB receiver in and it is picked up within 30 s. "Missing" (amber) means one was there and has gone: plug it back in, or *Forget the GPS module* if it was removed on purpose |
+| The radio takes a few seconds to start, or *Diagnostics → DAB radio* says "Paused by cool mode" | cool mode stopped the decoder while nothing used it (*Display → Cool mode*); it comes back by itself for alarms, playback, scans and the diagnostics page. Set it to *Off* to keep the decoder running |
 | Brightness does not react | *Status → Hardware → Light sensor*; `i2cdetect -y 1` (0x10/0x48); without a sensor the schedule is used |
 | AirPlay missing on the phone | `systemctl status shairport-sync nqptp`; same subnet; name in *Audio → AirPlay* |
 | Bluetooth will not pair | *Audio → Bluetooth → Pair new device* (discoverable 3 min); `bluetoothctl show`; user dawn in group `bluetooth` |
-| Wi-Fi lost | the setup hotspot appears after 45 s; *Settings → Wi-Fi* |
-| Watchdog reboots | `journalctl -b -1 -u dawn-core`; the heartbeat is `/run/dawn/heartbeat` |
+| Wi-Fi lost | with a saved network the clock waits 15 minutes (`network.hotspot.configured_wait_s`), then starts the setup hotspot behind the clock: the face keeps its clock and shows a small "No Wi-Fi · setup: Dawn-XXXX" chip (tap it for the Setup screen). Every 3 minutes (`retry_every_s`) it looks for the saved network and rejoins it when it is back, never while a phone is on the hotspot (`hotspot_retry` events under *Diagnostics → System*). A box never set up shows the Setup screen after 45 s. *Settings → Wi-Fi* picks another network |
+| Watchdog reboots | `journalctl -b -1 -u dawn-core` (the journal is kept across reboots: `journalctl -b -1` shows the night that ended in one); the heartbeat is `/run/dawn/heartbeat` |
+| "Not shut down: the … alarm at … would not ring" | an alarm or nap is due within a day: Settings asks to confirm; on a Pi 5 the RTC switches the clock on 10 minutes before it |
+| A script or tool gets 403 "needs the X-Dawn-Client header" | changes to the API need `-H 'X-Dawn-Client: 1'` (against cross-site requests); reads do not |
+| The control UI answers 421 "not a name of this clock" | it was opened by a name the clock does not know (DNS rebinding protection): use its address, `<hostname>.local`, or add the name to `web.allowed_hosts` |
+| The face says "06:30 · will start on the chime: …" at night | the evening check found the alarm's source not working (no DAB signal, no output): fix it before sleeping, or the alarm starts on the chime |
+| An alarm or nap seemed to ring at the wrong time | the event list under *Diagnostics → System* (and *Time sync*): a `clock_step` event says the system clock jumped (and by how much) just before; `nap_ring_failed` says a nap's ring had to be retried |
+| *Diagnostics → System → Background tasks* warns | a background task raised; each one is in the journal with its traceback (`journalctl -u dawn-core \| grep "background task"`) |
+| *Update now* says "Not now" | an alarm, snooze or nap is on, or the next alarm is within `system.update_quiet_minutes` (60): try after it |
+| An update was rolled back | `/var/log/dawn-update.log` ends with `ROLLED BACK` and the reason (install failed, or dawn-core did not report the new version healthy in 120 s); Dawn runs the previous version; `systemctl status dawn-update` |
 | A setting in `config.yaml` is ignored | *Diagnostics → System → Configuration*: a section that fails validation falls back to its defaults so dawn-core still starts; `dawn-core --check` prints the error |
 
 Logs: `journalctl -u dawn-core -u dawn-dab -u dawn-timed -u dawn-face -f`, also

@@ -54,6 +54,36 @@ def _split_terse(line: str) -> list[str]:
     return parts
 
 
+WIFI_TYPES = ("802-11-wireless", "wifi")
+
+
+def parse_wifi_profiles(text: str, exclude: str) -> list[str]:
+    """Saved Wi-Fi connection names from `nmcli -t -f NAME,TYPE con show`, leaving out `exclude` (Dawn's own
+    hotspot, which is a Wi-Fi profile too but not a network to join)."""
+    names: list[str] = []
+    for line in text.splitlines():
+        parts = _split_terse(line)
+        if len(parts) >= 2 and parts[1] in WIFI_TYPES and parts[0] and parts[0] != exclude and parts[0] not in names:
+            names.append(parts[0])
+    return names
+
+
+def parse_ssids(text: str) -> set[str]:
+    """SSIDs in view from `nmcli -t -f SSID dev wifi list` (hidden networks print an empty line)."""
+    return {s for s in (_split_terse(line)[0] for line in text.splitlines()) if s}
+
+
+def terse_value(text: str) -> str:
+    """One value printed by `nmcli -t -g <field>` (colons and backslashes come escaped)."""
+    lines = text.strip().splitlines()
+    return _split_terse(lines[0])[0] if lines else ""
+
+
+def parse_station_dump(text: str) -> int:
+    """How many clients `iw dev <if> station dump` lists (one `Station <mac> (on <if>)` block each)."""
+    return sum(1 for line in text.splitlines() if line.startswith("Station "))
+
+
 def parse_active(text: str) -> tuple[str | None, str | None]:
     """From `nmcli -t -f NAME,TYPE,DEVICE con show --active`: (ssid/name, device) of the wifi/ethernet connection."""
     for line in text.splitlines():
@@ -67,7 +97,7 @@ async def run(*args: str, timeout: float = 15.0) -> tuple[int, str]:
     try:
         proc = await asyncio.create_subprocess_exec(*args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
     except FileNotFoundError:
-        return 127, "nmcli not found"
+        return 127, f"{args[0]} not found"
     try:
         out, _ = await asyncio.wait_for(proc.communicate(), timeout)
     except TimeoutError:

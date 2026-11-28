@@ -15,6 +15,7 @@ from ..context import DawnContext
 from ..db.models import PresetRow
 from ..services import Service
 from ..state.ui import EqState, NowPlaying, Preset, SinkInfo
+from ..tasks import spawn
 from .arbiter import LEVELS, Arbiter, Slot
 from .backend import AudioBackend, PipeWireBackend, Sink, make_backend
 from .player import MpvPlayer, Player, SimPlayer
@@ -60,8 +61,22 @@ class AudioService(Service):
         await self.backend.set_volume(self.hw_volume(self.volume))
         await self.backend.set_mute(self.muted)
         await self.apply_eq()
-        self._task = asyncio.create_task(self._loop(), name="audio-loop")
+        self._task = spawn(self._loop(), name="audio-loop")
+        self.ctx.liveness.register("audio-loop", max_age_s=60, restart=self.restart_loop)
+        self.ctx.liveness.task("audio-loop", self._task)
         self.publish()
+
+    def _cool(self) -> bool:
+        from ..power.service import cool_plan
+
+        plan = cool_plan(self.ctx)
+        return bool(plan and plan.cool)
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="audio-loop")
+        self.ctx.liveness.task("audio-loop", self._task)
 
     async def stop(self) -> None:
         if self._task:
@@ -91,11 +106,12 @@ class AudioService(Service):
         n = 0
         while True:
             await asyncio.sleep(2)
+            self.ctx.liveness.beat("audio-loop")
             n += 1
             try:
                 if n % 15 == 0:
                     await self._retry_pipewire()
-                if n % 5 == 0:
+                if n % (30 if self._cool() else 5) == 0:  # every 10 s, every minute in cool mode
                     await self.refresh_sinks()
                 self.ctx.store.state.audio.audio_flowing = await self.audio_flowing()
                 self.publish()

@@ -5,9 +5,12 @@ export class ApiError extends Error {
 }
 
 async function call<T = unknown>(method: string, path: string, body?: unknown): Promise<T> {
+  // X-Dawn-Client on every change: a page on another site cannot send it (core refuses changes without it: CSRF)
+  const headers: Record<string, string> = method === 'GET' ? {} : { 'x-dawn-client': '1' };
+  if (body !== undefined) headers['content-type'] = 'application/json';
   const res = await fetch(path, {
     method,
-    headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
   });
@@ -60,4 +63,5 @@ export const actions = {
   faceMenu: (open: boolean, page?: string) => api.post('/api/face/menu', { open, page: page ?? null }),
   menuActivity: () => api.post('/api/face/menu/activity'),
   dismissMessage: () => api.post('/api/face/dismiss'),
+  faceSetup: (open: boolean) => api.post('/api/face/setup', { open }),
 };

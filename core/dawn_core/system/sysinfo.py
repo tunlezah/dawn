@@ -10,12 +10,14 @@ import subprocess
 import time
 from pathlib import Path
 
-from .. import __version__
+from .. import __version__, tasks
 from ..context import DawnContext
 from ..services import Service
+from ..tasks import spawn
 from . import hw as hwmod
 
 log = logging.getLogger("dawn.sysinfo")
+HEARTBEAT_URL_EVERY_S = 300.0
 REPO_DIR = str(Path(__file__).resolve().parents[3])
 
 
@@ -35,13 +37,15 @@ def sd_notify(msg: str) -> None:
 
 
 def alarms_alive(ctx: DawnContext) -> bool:
-    """The alarm engine is ticking (True when there is no alarm service to ask)."""
+    """The alarm engine is ticking and every loop that gates the watchdog (the state pump, the display loop, the face
+    and timer ticks) is alive. The face's own backup alarm trusts this (`alarms.engine_alive`, `/api/health`)."""
     try:
         from ..alarms.service import AlarmService
 
-        return ctx.svc(AlarmService).alive()
+        engine = ctx.svc(AlarmService).alive()
     except (ImportError, KeyError):
-        return True
+        engine = True
+    return engine and not ctx.liveness.gating_dead()
 
 
 def git_rev(repo: str) -> str | None:
@@ -61,6 +65,9 @@ class SysInfoService(Service):
         self.hw = hwmod.HardwareInfo()
         self.booted = time.time()
         self._stall_logged = False
+        self._vcgencmd_at = 0.0
+        self._pinged_at: float | None = None
+        self._ping_task: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         cfg = self.ctx.config
@@ -77,13 +84,16 @@ class SysInfoService(Service):
         st.version = __version__
         st.git_rev = await asyncio.to_thread(lambda: git_rev(cfg.system.update_repo_dir) or git_rev(REPO_DIR))
         st.booted_at = self.ctx.store.iso()
+        from .power import can_wake
+
+        st.can_wake = can_wake(self.ctx)
         self.ctx.store.state.dab.sdr_present = self.hw.sdr_present
         self.ctx.store.state.dab.tuner = self.hw.sdr_tuner
         low = cfg.display.low_cpu
         self.ctx.store.state.display.low_cpu = (self.hw.low_power if low == "auto" else low == "on")
         self.ctx.refresh_settings_summary()
         sd_notify("READY=1")
-        self._task = asyncio.create_task(self._loop(), name="sysinfo")
+        self._task = spawn(self._loop(), name="sysinfo")
 
     async def stop(self) -> None:
         if self._task:
@@ -104,6 +114,36 @@ class SysInfoService(Service):
 
     def _alarms_alive(self) -> bool:
         return alarms_alive(self.ctx)
+
+    def heartbeat_message(self, alive: bool) -> tuple[str, str]:
+        """(status, msg) for the outside check-in: fail when the alarms are not alive or Diagnostics has a problem."""
+        st = self.ctx.store.state
+        nxt = st.alarms.next
+        problems = st.diagnostics.fail
+        msg = f"alarms_alive={'yes' if alive else 'no'}; next={nxt.at[:16] if nxt else 'none'}; problems={problems}; warnings={st.diagnostics.warn}"
+        return ("ok" if alive and not problems else "fail"), msg
+
+    def _heartbeat_url(self, alive: bool, now: float | None = None) -> None:
+        url = self.ctx.config.system.heartbeat_url
+        now = time.monotonic() if now is None else now
+        if not url or (self._pinged_at is not None and now - self._pinged_at < HEARTBEAT_URL_EVERY_S):
+            return
+        if self._ping_task is not None and not self._ping_task.done():
+            return
+        self._pinged_at = now
+        status, msg = self.heartbeat_message(alive)
+        self._ping_task = spawn(self._ping(url, status, msg), name="heartbeat-url", owner="sysinfo")
+
+    async def _ping(self, url: str, status: str, msg: str) -> None:
+        import httpx
+
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as c:
+                r = await c.get(url, params={"status": status, "msg": msg})
+            if r.status_code >= 400:
+                log.warning("heartbeat URL answered %s", r.status_code)
+        except Exception as e:  # noqa: BLE001
+            log.warning("heartbeat URL not reachable: %s", e)
 
     async def _tick(self) -> None:
         cfg = self.ctx.config
@@ -128,34 +168,57 @@ class SysInfoService(Service):
         if self.hw.is_pi:
             # under-voltage (bit 0x10000 since boot) is the first thing to check on a single 5 V supply,
             # and with a passive heatsink thermal throttling has to stay visible too
-            th = await asyncio.to_thread(hwmod.read_throttled, cfg.system.vcgencmd_binary)
+            th = hwmod.read_throttled_sysfs()
+            if th is None:
+                # no sysfs file: vcgencmd, every heartbeat (every 30 s in cool mode: it is a process each time)
+                from ..power.service import cool_plan
+
+                plan = cool_plan(self.ctx)
+                now = time.monotonic()
+                if plan and plan.cool and now - self._vcgencmd_at < 30:
+                    th = st.throttled
+                else:
+                    self._vcgencmd_at = now
+                    th = await asyncio.to_thread(hwmod.read_throttled, cfg.system.vcgencmd_binary)
             if th != st.throttled and th:
                 log.warning("vcgencmd get_throttled=0x%x (%s)", th, ", ".join(hwmod.throttle_flags(th)))
             st.throttled = th
             st.throttle_flags = hwmod.throttle_flags(th)
         st.heartbeat_at = self.ctx.store.iso()
+        st.task_failures = tasks.failures()
         # heartbeat file + systemd watchdog. The watchdog is only fed while the alarm engine ticks: an engine stuck
         # on something is a reason for systemd to restart dawn-core (a ring in progress carries on afterwards).
         try:
             (self.ctx.runtime_dir / "heartbeat").write_text(str(int(time.time())))
         except OSError:
             pass
+        # the loops inside dawn-core: a dead or stale one is restarted (5 s, 30 s, 120 s apart); one that gates the
+        # watchdog and is still dead after that holds the watchdog back, so systemd restarts dawn-core
+        lv = self.ctx.liveness
+        repairing = cfg.system.supervisor.enabled  # self-repair off: nothing is restarted, a dead gating loop starves the watchdog at once
+        if repairing:
+            await lv.repair()
+        dead = lv.check()
+        st.loops_dead = dead
         alive = self._alarms_alive()
         self.ctx.store.state.alarms.engine_alive = alive  # the face rings by itself when this stays false
+        self._heartbeat_url(alive)
+        given_up = lv.exhausted() if repairing else lv.gating_dead()
+        feed = not given_up
         if cfg.system.watchdog:
-            if alive:
+            if feed:
                 sd_notify("WATCHDOG=1")
                 self._stall_logged = False
             elif not self._stall_logged:
                 self._stall_logged = True
-                log.error("the alarm engine has stopped ticking; holding back the watchdog so systemd restarts dawn-core")
+                log.error("%s stopped and could not be restarted; holding back the watchdog so systemd restarts dawn-core", ", ".join(given_up))
         if not self.ctx.sim and st.uptime_s % 60 < cfg.system.heartbeat_interval_s:
             # re-check SDR presence once a minute (hot plug), from the USB ids only: rtl_test would open the stick,
             # and a welle-cli starting at that moment (an alarm restarting it) would find it taken
-            present, generic = await asyncio.to_thread(hwmod.sdr_on_usb)
+            present, name = await asyncio.to_thread(hwmod.sdr_on_usb)
             if present != st.sdr_present:
                 log.info("SDR presence changed: %s", present)
-            tuner = (st.sdr_tuner or generic) if present else None
+            tuner = (st.sdr_tuner or name) if present else None
             st.sdr_present, st.sdr_tuner = present, tuner
             self.ctx.store.state.dab.sdr_present = present
             self.ctx.store.state.dab.tuner = tuner

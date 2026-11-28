@@ -135,6 +135,11 @@ class Host:
     async def exists(self, path: str) -> bool:
         return os.path.exists(path)
 
+    async def gps_on_usb(self) -> bool:
+        from ..system.hw import gps_on_usb
+
+        return await asyncio.to_thread(gps_on_usb)
+
     async def usb_devices(self) -> list[dict[str, str]]:
         out = []
         for dev in glob.glob("/sys/bus/usb/devices/*"):
@@ -227,6 +232,9 @@ class SimHost(Host):
     async def usb_devices(self) -> list[dict[str, str]]:
         r = await self._get("/usb")
         return r.json() if r is not None and r.status_code == 200 else []
+
+    async def gps_on_usb(self) -> bool:
+        return any(u.get("vid") == "1546" for u in await self.usb_devices())
 
     async def process_cmdline(self, name: str) -> str | None:
         if name != "welle-cli":

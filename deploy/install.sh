@@ -16,6 +16,7 @@
 #   sudo ./deploy/install.sh --no-build      skip source builds (use whatever is installed)
 #   sudo ./deploy/install.sh --rebuild       force rebuilding rtl-sdr / welle / shairport-sync
 #   sudo ./deploy/install.sh --no-web        skip the web build (e.g. when `make deploy` ships web/dist)
+#   sudo ./deploy/install.sh --no-restart    install everything but restart nothing (dawn-update restarts in order)
 #
 # Everything it writes is marked or in its own file, so re-running is safe.
 set -euo pipefail
@@ -24,10 +25,15 @@ DAWN_DIR=/opt/dawn
 DAWN_USER=dawn
 LOG=/var/log/dawn-install.log
 SRC_DIR=/usr/local/src
-UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0
+UPDATE=0 REBUILD=0 NO_BUILD=0 NO_WEB=0 READONLY=0 NO_RESTART=0
 DATA_DEVICE="" DATA_IMAGE_MB=0 AUDIO="" PANEL=auto
 RTLSDR_REPO=https://github.com/rtlsdrblog/rtl-sdr-blog.git
 WELLE_REPO=https://github.com/AlbrechtL/welle.io.git
+# known-good releases instead of a moving master (override in the environment to try another)
+RTLSDR_REF="${RTLSDR_REF:-v1.3.6}"
+WELLE_REF="${WELLE_REF:-v2.7}"
+VERSIONS_JSON=/usr/local/share/dawn/versions.json  # what was built, shown under Diagnostics -> DAB radio
+SDR_LIB_WARNING=/var/lib/dawn/sdr-lib-warning
 SPS_REPO=https://github.com/mikebrady/shairport-sync.git
 NQPTP_REPO=https://github.com/mikebrady/nqptp.git
 DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"  # where Settings → Software update pulls from
@@ -40,12 +46,13 @@ while [ $# -gt 0 ]; do
     --rebuild) REBUILD=1;;
     --no-build) NO_BUILD=1;;
     --no-web) NO_WEB=1;;
+    --no-restart) NO_RESTART=1;;
     --readonly) READONLY=1;;
     --audio) AUDIO="$2"; shift;;
     --display) PANEL="$2"; shift;;
     --data-device) DATA_DEVICE="$2"; shift;;
     --data-image-mb) DATA_IMAGE_MB="$2"; shift;;
-    -h|--help) sed -n '2,24p' "$0"; exit 0;;
+    -h|--help) sed -n '2,25p' "$0"; exit 0;;
     *) echo "unknown option $1"; exit 2;;
   esac
   shift
@@ -100,7 +107,6 @@ echo "model: $MODEL ($ARCH, $CODENAME) low_power=$LOW_POWER panel=$PANEL_DETECTE
 # ---------------------------------------------------------------------------
 step "apt packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq
 CHROMIUM=chromium; apt-cache show chromium >/dev/null 2>&1 || CHROMIUM=chromium-browser
 PKGS=(
   git curl rsync build-essential cmake pkg-config autoconf automake libtool xxd
@@ -109,13 +115,23 @@ PKGS=(
   libpopt-dev libconfig-dev libavahi-client-dev libssl-dev libsoxr-dev libplist-dev libsodium-dev
   libavutil-dev libavcodec-dev libavformat-dev uuid-dev libgcrypt-dev libpipewire-0.3-dev libglib2.0-dev libplist-utils libswresample-dev systemd-dev
   mpv pipewire pipewire-pulse pipewire-audio wireplumber libspa-0.2-bluetooth alsa-utils
-  bluez gpsd gpsd-clients chrony avahi-daemon network-manager i2c-tools
+  bluez gpsd gpsd-clients chrony avahi-daemon network-manager iw i2c-tools
   cage "$CHROMIUM" fonts-dejavu-core logrotate
 )
-apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"
-apt-cache show python3-lgpio >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-lgpio liblgpio-dev || true
-apt-cache show python3-gpiozero >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-gpiozero || true
-apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && apt-get install -y --no-install-recommends nodejs npm || true
+# An update skips apt when the package list is the one installed last time: apt needs the network, and failing there
+# after dawn-update has moved the code would only end in a rollback for nothing
+APT_STAMP=/var/lib/dawn/apt-pkgs.sha256
+PKGS_HASH="$(printf '%s\n' "${PKGS[@]}" "web=$NO_WEB" | sha256sum | cut -d' ' -f1)"
+if [ "$UPDATE" -eq 1 ] && [ -f "$APT_STAMP" ] && [ "$(cat "$APT_STAMP" 2>/dev/null)" = "$PKGS_HASH" ]; then
+  echo "apt packages unchanged since the last install; skipping apt"
+else
+  apt-get update -qq
+  apt-get install -y --no-install-recommends "${PKGS[@]}" || apt-get install -y --no-install-recommends "${PKGS[@]/libpipewire-0.3-dev/}"
+  apt-cache show python3-lgpio >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-lgpio liblgpio-dev || true
+  apt-cache show python3-gpiozero >/dev/null 2>&1 && apt-get install -y --no-install-recommends python3-gpiozero || true
+  apt-cache show nodejs >/dev/null 2>&1 && [ "$NO_WEB" -eq 0 ] && apt-get install -y --no-install-recommends nodejs npm || true
+  mkdir -p "$(dirname "$APT_STAMP")" && echo "$PKGS_HASH" >"$APT_STAMP"
+fi
 
 # ---------------------------------------------------------------------------
 # User, directories, repository
@@ -178,7 +194,8 @@ if [ "$NO_WEB" -eq 0 ]; then
   if command -v npm >/dev/null 2>&1; then
     if [ ! -f "$DAWN_DIR/web/dist/index.html" ] || [ -n "$(find "$DAWN_DIR/web/src" "$DAWN_DIR/web/face" -newer "$DAWN_DIR/web/dist/index.html" -print -quit 2>/dev/null)" ]; then
       NPM=(sudo -u "$DAWN_USER" env npm_config_cache="$NPM_CACHE" npm)
-      (cd "$DAWN_DIR/web" && "${NPM[@]}" ci --no-audit --no-fund && "${NPM[@]}" run build)
+      # into web/dist.new, swapped in only when complete: a failed build never leaves the face without a UI
+      "$DAWN_DIR/deploy/build-web.sh" "$DAWN_DIR/web" "${NPM[@]}" || { echo "ERROR: the web UI did not build; web/dist is unchanged"; exit 1; }
     else
       echo "web/dist up to date"
     fi
@@ -190,35 +207,91 @@ fi
 # ---------------------------------------------------------------------------
 # Source builds
 # ---------------------------------------------------------------------------
+# checkout <dir> <repo> <ref>: a shallow clone of exactly that tag or commit
+checkout() {
+  local dir="$1" repo="$2" ref="$3"
+  if [ ! -d "$dir/.git" ]; then
+    rm -rf "$dir"
+    git clone --depth 1 --branch "$ref" "$repo" "$dir" 2>/dev/null || git clone "$repo" "$dir" || return 1
+  fi
+  ( cd "$dir" && { git fetch --depth 1 origin "$ref" 2>/dev/null && git checkout -q --detach FETCH_HEAD; } || git checkout -q --detach "$ref" ) || return 1
+}
+built_ref() {  # built_ref <name>: the ref recorded at the last build ("" when unknown)
+  python3 - "$VERSIONS_JSON" "$1" <<'PY' 2>/dev/null || true
+import json, sys
+try:
+    print(json.load(open(sys.argv[1])).get(sys.argv[2], {}).get("ref", ""))
+except Exception:
+    print("")
+PY
+}
+record_build() {  # record_build <name> <ref> <src dir>
+  mkdir -p "$(dirname "$VERSIONS_JSON")"
+  python3 - "$VERSIONS_JSON" "$1" "$2" "$(git -C "$3" rev-parse --short HEAD 2>/dev/null || echo '?')" <<'PY' || true
+import json, sys, time
+path, name, ref, commit = sys.argv[1:5]
+try:
+    data = json.load(open(path))
+except Exception:
+    data = {}
+data[name] = {"ref": ref, "commit": commit, "built_at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}
+json.dump(data, open(path, "w"), indent=1)
+PY
+}
+# a rebuild is due with --rebuild, when the binary is missing, or when a different ref than the one built is wanted
+# (an install from before refs were recorded keeps what it has; the link check below still runs)
+want_build() {  # want_build <name> <ref> <present?>
+  [ "$REBUILD" -eq 1 ] && return 0
+  [ "$3" -eq 0 ] && return 0
+  local was; was="$(built_ref "$1")"
+  [ -n "$was" ] && [ "$was" != "$2" ]
+}
+RTLSDR_BUILT=0
 build_rtlsdr() {
-  if [ "$REBUILD" -eq 0 ] && command -v rtl_test >/dev/null 2>&1 && [ -f /usr/local/lib/librtlsdr.so ] ; then echo "rtl-sdr-blog present"; return; fi
-  step "building rtl-sdr-blog (V4 support)"
+  local present=0
+  command -v rtl_test >/dev/null 2>&1 && [ -f /usr/local/lib/librtlsdr.so ] && present=1
+  if ! want_build rtlsdr "$RTLSDR_REF" "$present"; then echo "rtl-sdr-blog present"; return 0; fi
+  step "building rtl-sdr-blog $RTLSDR_REF (V4 support)"
   mkdir -p "$SRC_DIR"; cd "$SRC_DIR"
-  [ -d rtl-sdr-blog ] || git clone --depth 1 "$RTLSDR_REPO" rtl-sdr-blog
-  cd rtl-sdr-blog && git pull --ff-only || true
-  mkdir -p build && cd build
-  cmake .. -DINSTALL_UDEV_RULES=ON -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null
-  make -j"$(nproc)" >/dev/null && make install >/dev/null && ldconfig
-  cat >/etc/modprobe.d/blacklist-rtlsdr.conf <<'BL'
-# Dawn: keep the DVB kernel driver off the RTL-SDR stick
-blacklist dvb_usb_rtl28xxu
-blacklist rtl2832
-blacklist rtl2830
-blacklist rtl2832_sdr
-BL
-  echo "rtl-sdr-blog installed"
+  checkout rtl-sdr-blog "$RTLSDR_REPO" "$RTLSDR_REF" || return 1
+  mkdir -p rtl-sdr-blog/build && cd rtl-sdr-blog/build
+  # each step returns on failure: called as `build_rtlsdr || echo WARNING`, set -e does not apply inside it
+  cmake .. -DINSTALL_UDEV_RULES=ON -DDETACH_KERNEL_DRIVER=ON -DCMAKE_INSTALL_PREFIX=/usr/local >/dev/null || return 1
+  make -j"$(nproc)" >/dev/null || return 1
+  make install >/dev/null || return 1
+  ldconfig
+  record_build rtlsdr "$RTLSDR_REF" "$SRC_DIR/rtl-sdr-blog"
+  RTLSDR_BUILT=1
+  echo "rtl-sdr-blog $RTLSDR_REF installed"
 }
 build_welle() {
-  if [ "$REBUILD" -eq 0 ] && command -v welle-cli >/dev/null 2>&1; then echo "welle-cli present"; return; fi
-  step "building welle.io (welle-cli)"
+  local present=0 force="${1:-0}"
+  command -v welle-cli >/dev/null 2>&1 && present=1
+  # a welle-cli built before the blog library was installed links the distro librtlsdr and never gets V4 support
+  if [ "$force" -eq 0 ] && [ "$RTLSDR_BUILT" -eq 0 ] && ! want_build welle "$WELLE_REF" "$present"; then echo "welle-cli present"; return 0; fi
+  step "building welle.io $WELLE_REF (welle-cli)"
   mkdir -p "$SRC_DIR"; cd "$SRC_DIR"
-  [ -d welle.io ] || git clone --depth 1 "$WELLE_REPO" welle.io
-  cd welle.io && git pull --ff-only || true
-  mkdir -p build && cd build
-  cmake .. -DBUILD_WELLE_IO=OFF -DBUILD_WELLE_CLI=ON -DRTLSDR=ON -DAIRSPY=OFF -DSOAPYSDR=OFF -DPROFILING=OFF -DCMAKE_BUILD_TYPE=Release >/dev/null
-  make -j"$( [ "$LOW_POWER" -eq 1 ] && echo 2 || nproc )" welle-cli >/dev/null
-  install -m 0755 welle-cli /usr/local/bin/welle-cli
+  checkout welle.io "$WELLE_REPO" "$WELLE_REF" || return 1
+  rm -rf welle.io/build && mkdir -p welle.io/build && cd welle.io/build
+  cmake .. -DBUILD_WELLE_IO=OFF -DBUILD_WELLE_CLI=ON -DRTLSDR=ON -DAIRSPY=OFF -DSOAPYSDR=OFF -DPROFILING=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_PREFIX_PATH=/usr/local >/dev/null || return 1
+  make -j"$( [ "$LOW_POWER" -eq 1 ] && echo 2 || nproc )" welle-cli >/dev/null || return 1
+  install -m 0755 welle-cli /usr/local/bin/welle-cli || return 1
+  record_build welle "$WELLE_REF" "$SRC_DIR/welle.io"
   echo "welle-cli installed: $(welle-cli --help 2>&1 | head -1 || true)"
+}
+welle_links_blog_lib() { ldd /usr/local/bin/welle-cli 2>/dev/null | grep -q 'librtlsdr.* => /usr/local/lib/'; }
+check_welle_link() {
+  command -v welle-cli >/dev/null 2>&1 || return 0
+  [ -f /usr/local/lib/librtlsdr.so ] || return 0
+  if welle_links_blog_lib; then rm -f "$SDR_LIB_WARNING"; return 0; fi
+  echo "welle-cli does not use /usr/local/lib/librtlsdr (the RTL-SDR Blog library with V4 support); rebuilding it once"
+  build_welle 1 || true
+  if welle_links_blog_lib; then rm -f "$SDR_LIB_WARNING"; return 0; fi
+  local got; got="$(ldd /usr/local/bin/welle-cli 2>/dev/null | grep librtlsdr | xargs || true)"
+  echo "WARNING: welle-cli still links '${got:-no librtlsdr}', not /usr/local/lib: an RTL-SDR Blog V4 will not tune. Re-run with --rebuild."
+  mkdir -p "$(dirname "$SDR_LIB_WARNING")"
+  echo "welle-cli links ${got:-no librtlsdr} instead of the RTL-SDR Blog library in /usr/local/lib" >"$SDR_LIB_WARNING"
 }
 build_shairport() {
   if [ "$REBUILD" -eq 0 ] && command -v nqptp >/dev/null 2>&1; then echo "nqptp present"; else
@@ -238,9 +311,22 @@ build_shairport() {
   make -j"$(nproc)" >/dev/null && make install >/dev/null || return 1
   echo "shairport-sync installed: $(shairport-sync -V | head -1)"
 }
+# The DVB-T kernel driver must not claim the stick: written on every run (it used to be written only when the library
+# was built, so an install that found librtlsdr already there never got it), and unloaded now if it is loaded
+cat >/etc/modprobe.d/blacklist-rtlsdr.conf <<'BL'
+# Dawn: keep the DVB kernel driver off the RTL-SDR stick
+blacklist dvb_usb_rtl28xxu
+blacklist rtl2832
+blacklist rtl2830
+blacklist rtl2832_sdr
+blacklist r820t
+BL
+modprobe -r dvb_usb_rtl28xxu rtl2832_sdr rtl2832 r820t 2>/dev/null || true
+
 if [ "$NO_BUILD" -eq 0 ]; then
   build_rtlsdr || echo "WARNING: rtl-sdr-blog build failed (DAB will not work until fixed)"
   build_welle || echo "WARNING: welle.io build failed (DAB will not work until fixed)"
+  check_welle_link
   build_shairport || echo "WARNING: shairport-sync build failed (AirPlay unavailable)"
 fi
 
@@ -266,6 +352,16 @@ if [ "$IS_PI" -eq 1 ] && [ -f "$BOOTCFG" ]; then
     hyperpixel4)   OVERLAYS+=$'\ndtoverlay=vc4-kms-dpi-hyperpixel4';;
   esac
   [ "$LOW_POWER" -eq 1 ] && OVERLAYS+=$'\n# low-power board: smaller GPU split is fine for the kiosk\ngpu_mem=96'
+  # A DS3231 real-time clock on I2C bus 1 (0x68; the light sensor at 0x10 does not clash): the right time from the first
+  # second after a power cut, GPS or network or not. Answering on 0x68 (or already held by its driver, "UU", from an
+  # earlier run's overlay) keeps the overlay; fake-hwclock would only set the clock back to its saved time.
+  RTC=0
+  if command -v i2cdetect >/dev/null 2>&1 && [ -e /dev/i2c-1 ] && i2cdetect -y 1 0x68 0x68 2>/dev/null | grep -Eq '^60:.*(68|UU)'; then RTC=1; fi
+  if [ "$RTC" -eq 1 ]; then
+    OVERLAYS+=$'\n# DS3231 real-time clock on I2C bus 1 (0x68)\ndtoverlay=i2c-rtc,ds3231'
+    systemctl disable --now fake-hwclock >/dev/null 2>&1 || true
+    echo "DS3231 real-time clock found: overlay added, fake-hwclock disabled (the package stays)"
+  fi
   sed -i '/^# >>> dawn >>>/,/^# <<< dawn <<</d' "$BOOTCFG"
   printf '\n# >>> dawn >>>  (managed by deploy/install.sh; edit /etc/dawn/config.yaml instead)\n%s\n# <<< dawn <<<\n' "$OVERLAYS" >>"$BOOTCFG"
   grep -q '^dtoverlay=vc4-kms-v3d' "$BOOTCFG" || echo "WARNING: vc4-kms-v3d overlay not found in $BOOTCFG (needed for the DSI/DPI panel)"
@@ -324,6 +420,9 @@ install -m 0755 "$D/bin/dawn-face" /usr/local/bin/dawn-face
 install -m 0755 "$D/bin/dawn-update" /usr/local/bin/dawn-update
 install -m 0755 "$D/bin/dawn-airplay-name" /usr/local/bin/dawn-airplay-name
 install -m 0755 "$D/bin/dawn-set-hostname" /usr/local/bin/dawn-set-hostname
+install -m 0755 "$D/bin/dawn-usb-reset" /usr/local/bin/dawn-usb-reset
+# the update log: written by dawn-update.service (root), read by dawn-core for the UI
+[ -f /var/log/dawn-update.log ] || install -m 0644 /dev/null /var/log/dawn-update.log
 install -m 0440 "$D/sudoers/dawn" /etc/sudoers.d/dawn && visudo -cf /etc/sudoers.d/dawn >/dev/null
 sed -i -E 's/^(\s*name\s*=\s*)"[^"]*"/\1"'"$(grep -E '^\s*name:' /etc/dawn/config.yaml | head -1 | sed -E 's/.*name:\s*//; s/^"//; s/"$//' || echo Dawn)"'"/' /etc/shairport-sync.conf || true
 udevadm control --reload-rules && udevadm trigger || true
@@ -338,11 +437,22 @@ echo i2c-dev >/etc/modules-load.d/dawn-i2c.conf; modprobe i2c-dev || true
 # systemd units (uid substituted)
 # ---------------------------------------------------------------------------
 step "systemd units"
-for u in dawn-core dawn-dab dawn-timed dawn-face; do
+for u in dawn-core dawn-dab dawn-timed dawn-face dawn-update; do
   sed "s|@UID@|$DAWN_UID|g; s|@DAWN_DIR@|$DAWN_DIR|g" "$D/systemd/$u.service" >"/etc/systemd/system/$u.service"
 done
 mkdir -p /etc/systemd/system/shairport-sync.service.d
 sed "s|@UID@|$DAWN_UID|g" "$D/systemd/shairport-sync.service.d/dawn.conf" >/etc/systemd/system/shairport-sync.service.d/dawn.conf
+for u in chrony gpsd; do
+  install -D -m 0644 "$D/systemd/$u.service.d/dawn.conf" "/etc/systemd/system/$u.service.d/dawn.conf"
+done
+# a journal that survives a reboot, small enough for the SD card
+install -D -m 0644 "$D/journald/dawn.conf" /etc/systemd/journald.conf.d/dawn.conf
+mkdir -p /var/log/journal && systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true
+systemctl restart systemd-journald 2>/dev/null || true
+# cool mode: dawn-core may write the CPU frequency cap (group dawn)
+install -D -m 0644 "$D/tmpfiles.d/dawn-cpufreq.conf" /etc/tmpfiles.d/dawn-cpufreq.conf
+install -D -m 0644 "$D/tmpfiles.d/dawn-rtc.conf" /etc/tmpfiles.d/dawn-rtc.conf
+systemd-tmpfiles --create /etc/tmpfiles.d/dawn-cpufreq.conf /etc/tmpfiles.d/dawn-rtc.conf 2>/dev/null || true
 systemctl --global enable pipewire.socket pipewire-pulse.socket wireplumber.service >/dev/null 2>&1 || true
 systemctl daemon-reload
 systemctl disable --now getty@tty1.service >/dev/null 2>&1 || true
@@ -354,10 +464,17 @@ command -v shairport-sync >/dev/null 2>&1 && systemctl enable shairport-sync >/d
 systemctl enable dawn-core dawn-dab dawn-timed >/dev/null
 # reenable: moves an older install's graphical.target symlink to multi-user.target
 systemctl reenable dawn-face >/dev/null 2>&1
-systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
-systemctl restart dawn-core dawn-dab dawn-timed || true
-systemctl restart dawn-face >/dev/null 2>&1 || true
-command -v shairport-sync >/dev/null 2>&1 && systemctl restart nqptp shairport-sync >/dev/null 2>&1 || true
+if [ "$NO_RESTART" -eq 0 ]; then
+  systemctl restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
+  systemctl restart dawn-core dawn-dab dawn-timed || true
+  systemctl restart dawn-face >/dev/null 2>&1 || true
+  command -v shairport-sync >/dev/null 2>&1 && systemctl restart nqptp shairport-sync >/dev/null 2>&1 || true
+else
+  # dawn-update restarts dawn-timed and dawn-dab, then dawn-core (checking it is healthy), then the face; the
+  # supporting daemons pick up their new config here (none of them carries the alarms)
+  systemctl try-restart chrony gpsd avahi-daemon >/dev/null 2>&1 || true
+  command -v shairport-sync >/dev/null 2>&1 && systemctl try-restart nqptp shairport-sync >/dev/null 2>&1 || true
+fi
 
 # hostname from config
 WANT_HOST="$(grep -E '^\s*hostname:' /etc/dawn/config.yaml | head -1 | sed -E 's/.*hostname:\s*//; s/"//g' || true)"

@@ -182,7 +182,8 @@ def render_slide(sid: str, label: str, n: int) -> bytes:
 
 
 def _synced() -> bool:
-    return (STATE.sdr_present and STATE.dab_sync and STATE.channel in ENSEMBLES and STATE.dab_snr >= 3
+    # dab_zombie: welle-cli answers but the stick has stopped delivering samples, so FIG 0/0 goes stale
+    return (STATE.sdr_present and STATE.dab_sync and not STATE.dab_zombie and STATE.channel in ENSEMBLES and STATE.dab_snr >= 3
             and (time.time() - STATE.tuned_at) > TUNE_DELAY_S)
 
 
@@ -334,8 +335,8 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def _down(request: Request, call_next):
-        if not STATE.sdr_present:
-            return PlainTextResponse("no device", status_code=503)
+        if not STATE.sdr_present or STATE.dab_stopped:
+            return PlainTextResponse("no device" if not STATE.sdr_present else "stopped", status_code=503)
         return await call_next(request)
 
     @app.get("/mux.json")

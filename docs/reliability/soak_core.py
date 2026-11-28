@@ -50,7 +50,7 @@ def rss_mb() -> float:
 
 async def ok(c: httpx.AsyncClient, method: str, path: str, **kw):
     try:
-        r = await c.request(method, BASE + path, timeout=15, **kw)
+        r = await c.request(method, BASE + path, timeout=15, headers={"X-Dawn-Client": "1"}, **kw)
         return r
     except Exception as e:  # noqa: BLE001
         log("req failed", method, path, type(e).__name__, e)

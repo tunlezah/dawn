@@ -177,6 +177,7 @@ dab:
   - 10B
   scan_dwell_s: 2.5
   sync_timeout_s: 5.0
+  no_sync_restart_s: 20  # short in the simulator so the e2e test sees the "zombie" decoder restarted
   audio_timeout_s: 15.0
   gain: null
   poll_interval_s: 1.0
@@ -235,6 +236,8 @@ network:
     ssid: null
     password: dawnsetup
     wait_for_network_s: 45
+    configured_wait_s: 20  # short in the simulator so the e2e test sees the hotspot come up behind the clock
+    retry_every_s: 20
     interface: wlan0
   online_check_host: 1.1.1.1
   online_check_interval_s: 30
@@ -242,8 +245,7 @@ web:
   host: 0.0.0.0
   port: 8080
   static_dir: null
-  cors_origins:
-  - '*'
+  cors_origins: []
   auth:
     pin: null
     session_hours: 720
@@ -263,3 +265,5 @@ diagnostics:
   timed_status_file: ./var/run/dawn-timed/status.json
 sim:
   hub_url: http://127.0.0.1:8099
+power:
+  cool_mode: "off"  # the e2e tests turn it on themselves (auto depends on the month)

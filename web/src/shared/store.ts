@@ -16,11 +16,14 @@ class DawnStore {
   private started = false;
   /** Sent to core on connect ("face" for the kiosk) so Diagnostics can tell the face is up. */
   private role: string | null = null;
+  /** When requestAnimationFrame last called back (see the ping in connect()). */
+  private lastFrame = Date.now();
 
   start(role: string | null = null) {
     if (this.started) return;
     this.started = true;
     this.role = role;
+    window.setInterval(() => requestAnimationFrame(() => { this.lastFrame = Date.now(); }), 5_000);
     this.connect();
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'visible' && (!this.ws || this.ws.readyState !== WebSocket.OPEN)) this.connect();
@@ -42,9 +45,13 @@ class DawnStore {
       if (this.role) this.ws?.send(JSON.stringify({ type: 'hello', role: this.role }));
       // a ping from the page itself every 15 s: the browser answers protocol pings even for a frozen page, so
       // this is what tells core the kiosk is alive (it restarts the kiosk when the face goes quiet)
+      // The ping carries how long ago the page last drew a frame: requestAnimationFrame is asked for one every 5 s, so
+      // a JavaScript that still runs while the compositor or GPU is stuck (a frozen screen) shows as a growing age.
       this.stopHeartbeat();
       this.heartbeat = window.setInterval(() => {
-        if (this.ws?.readyState === WebSocket.OPEN) { try { this.ws.send(JSON.stringify({ type: 'ping' })); } catch { /* closing */ } }
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          try { this.ws.send(JSON.stringify({ type: 'ping', raf_age_ms: Math.round(Date.now() - this.lastFrame) })); } catch { /* closing */ }
+        }
       }, HEARTBEAT_MS);
     };
     this.ws.onmessage = (ev) => {

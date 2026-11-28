@@ -16,6 +16,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import NowPlaying
+from ..tasks import spawn
 from .metadata import AirPlayTrack, MetadataParser
 
 log = logging.getLogger("dawn.airplay")
@@ -81,7 +82,7 @@ class AirPlayService(Service):
         if not self.ctx.config.airplay.enabled:
             self.publish()
             return
-        self._task = asyncio.create_task(self._sim_loop() if self.ctx.sim else self._pipe_loop(), name="airplay-meta")
+        self._task = spawn(self._sim_loop() if self.ctx.sim else self._pipe_loop(), name="airplay-meta")
         self.publish()
 
     async def stop(self) -> None:

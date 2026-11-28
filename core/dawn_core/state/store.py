@@ -15,6 +15,7 @@ from datetime import datetime
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from ..tasks import spawn
 from .ui import UIState
 
 log = logging.getLogger("dawn.state")
@@ -32,11 +33,22 @@ class StateStore:
         self._task: asyncio.Task[None] | None = None
         self._lock = asyncio.Lock()
         self.events: list[dict[str, Any]] = []  # recent one-shot events (for /api/events)
+        self.on_beat: Callable[[], None] | None = None  # liveness: called once per pass of the pump
+        self.on_restart: Callable[[asyncio.Task[None] | None], None] | None = None  # liveness: the new pump task
 
     # ---- lifecycle -------------------------------------------------------
     async def start(self) -> None:
-        if self._task is None:
-            self._task = asyncio.create_task(self._pump(), name="state-pump")
+        if self._task is None or self._task.done():
+            self._task = spawn(self._pump(), name="state-pump")
+
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = None
+        await self.start()
+        if self.on_restart:
+            self.on_restart(self._task)
+        self._dirty.set()  # whatever changed while it was down goes out now
 
     async def stop(self) -> None:
         if self._task:
@@ -106,6 +118,8 @@ class StateStore:
             await self._dirty.wait()
             await asyncio.sleep(self.coalesce_s)
             self._dirty.clear()
+            if self.on_beat:
+                self.on_beat()
             snap = self.state
             for fn in list(self._subs):
                 try:

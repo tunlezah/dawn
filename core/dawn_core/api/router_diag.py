@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import time
 from datetime import timedelta
 from statistics import median
 from typing import Any
@@ -20,7 +21,8 @@ router = APIRouter(prefix="/api/diag", tags=["diagnostics"])
 PLOTS = ("spectrum", "nullspectrum", "impulseresponse", "constellation")
 # events worth marking on the history graphs
 TIMELINE = ["dab_restart", "dab_scan", "ring_start", "ring_fallback", "ring_restored", "alarm_fire", "alarm_missed", "hotspot_start", "hotspot_stop",
-            "diag_action", "light_wake", "sleep_mode", "reboot", "shutdown", "restore", "update_start", "wifi_connect"]
+            "diag_action", "light_wake", "sleep_mode", "reboot", "shutdown", "restore", "update_start", "wifi_connect",
+            "hotspot_retry", "gps_presence", "clock_step", "nap_ring_failed", "dab_drop", "cool_mode", "dab_pause", "dab_resume", "evening_check"]
 
 
 def diag(ctx: DawnContext = Depends(get_ctx)) -> DiagnosticsService:
@@ -64,6 +66,14 @@ async def run_now(d: DiagnosticsService = Depends(diag)) -> dict[str, Any]:
 async def live(area: str, d: DiagnosticsService = Depends(diag)) -> dict[str, Any]:
     if area not in ("dab", "gps"):
         raise HTTPException(404, "live readings exist for dab and gps")
+    if area == "dab":
+        # the antenna page open: cool mode keeps the decoder running (and starts it now if it had stopped it)
+        from ..dab.service import DabService
+
+        dab = d.ctx.svc(DabService)
+        dab.page_polled_at = time.monotonic()
+        if dab.paused:
+            dab.wake()
     return await d.live(area)
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from datetime import timedelta
 from typing import Any
@@ -12,6 +13,9 @@ from ..dab.service import DabService, snr_to_signal
 from ..dab.welle import CHANNEL_MHZ, welle_args
 from .checks import Check
 from .host import Host
+
+VERSIONS_JSON = "/usr/local/share/dawn/versions.json"  # what the installer built (rtl-sdr-blog, welle.io refs)
+LIB_WARNING = "/var/lib/dawn/sdr-lib-warning"  # the installer found welle-cli linked to the wrong librtlsdr
 
 RTL_IDS = {"0bda:2838": "RTL2838", "0bda:2832": "RTL2832U"}
 # welle's SNR estimate: above ~12 dB reception is solid, below ~8 dB audio breaks up
@@ -60,8 +64,22 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
     alarms_unknown = [a.label for a in st.alarms.items if a.enabled and a.source.startswith("dab:") and a.source[4:] not in known]
     np = st.now_playing
     since = ctx.store.now() - timedelta(hours=24)
-    events = await asyncio.to_thread(ctx.db.events_since, since, ["dab_restart", "ring_fallback"])
+    events = await asyncio.to_thread(ctx.db.events_since, since, ["dab_restart", "ring_fallback", "dab_drop"])
+    sv = None
+    try:
+        from ..system.supervisor import SupervisorService
+
+        sv = ctx.svc(SupervisorService)
+    except (ImportError, KeyError):
+        pass
+    builds = None
+    try:
+        builds = json.loads(await host.read(VERSIONS_JSON) or "null")
+    except ValueError:
+        builds = None
+    th = st.system.throttled or 0
     return {
+        "paused": dab.paused,
         "enabled": cfg.enabled,
         "sdr": {"present": st.system.sdr_present, "tuner": st.system.sdr_tuner, "usb": sticks},
         "dvb_driver_loaded": dvb_loaded,
@@ -72,8 +90,13 @@ async def collect(ctx: DawnContext, host: Host) -> dict[str, Any]:
         "playing": {"sid": np.station_sid, "label": np.station, "flowing": st.audio.audio_flowing} if np.source == "dab" else None,
         "stations": len(known), "ensembles": ensembles, "last_scan_at": st.dab.last_scan_at, "scanning": st.dab.scan.running,
         "presets_unknown": presets_unknown, "alarms_unknown": alarms_unknown,
-        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") not in ("manual", "supervisor")],
-        "supervisor_restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") == "supervisor"],
+        "restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") not in ("manual", "supervisor", "no sync")],
+        "supervisor_restarts_24h": [e["at"] for e in events if e["kind"] == "dab_restart" and e.get("reason") in ("supervisor", "no sync")],
+        "drops_24h": [e for e in events if e["kind"] == "dab_drop"],
+        "stuck": sv is not None and sv.dab_stuck_since is not None,
+        "undervoltage": bool(th & 0x10000), "throttle_flags": list(st.system.throttle_flags),
+        "lib_warning": ((await host.read(LIB_WARNING)) or "").strip() or None,
+        "builds": builds if isinstance(builds, dict) else None,
         # a DAB alarm that left the radio for the chime (not the chime's own climb to the backup tone)
         "fallbacks_24h": [e for e in events if e["kind"] == "ring_fallback" and str(e.get("source", "")).startswith("dab:") and e.get("from_tier", "source") == "source"],
         "messages": [{"at": at, "text": line.replace("\n.", ".").strip()} for at, line in list(dab.messages)[-60:]],
@@ -89,6 +112,11 @@ def checks(f: dict[str, Any]) -> list[Check]:
     if not f["enabled"]:
         add("enabled", "DAB radio", "off", "Disabled in the configuration (dab.enabled).")
         return c
+    if f.get("paused"):
+        # stopped on purpose: not a fault, and the chain below would only report its consequences
+        add("decoder", "DAB decoder (welle-cli)", "off", "Paused by cool mode: the decoder is stopped to keep the Pi cool while nothing uses the radio.",
+            "It starts again by itself before an alarm on the radio, when you play a station or scan, or when this page is open for a moment.")
+        return c
     sdr = f["sdr"]
     if sdr["present"]:
         add("sdr", "RTL-SDR stick", "ok", f"Detected: {sdr['tuner'] or 'RTL2832U'}")
@@ -100,6 +128,13 @@ def checks(f: dict[str, Any]) -> list[Check]:
         add("dvb", "Kernel TV driver", "fail", "dvb_usb_rtl28xxu is loaded and grabs the stick before welle-cli can.",
             "The installer blacklists it in /etc/modprobe.d/; re-run install.sh, or unplug and replug the stick, then restart the decoder.",
             ["dab.restart"])
+    if f.get("lib_warning"):
+        add("library", "RTL-SDR library", "warn", f"The installer found that {f['lib_warning']}.",
+            "An RTL-SDR Blog V4 needs welle-cli linked against the rtl-sdr-blog library: run `sudo /opt/dawn/deploy/install.sh --rebuild`.")
+    if f.get("stuck"):
+        uv = " The supply has dipped below 4.63 V since boot (under-voltage), which is what usually drops a stick off the bus." if f.get("undervoltage") else ""
+        add("samples", "SDR samples", "fail", "The SDR stick is not delivering samples: three decoder restarts and re-enumerating it on USB did not bring sync back." + uv,
+            "Unplug and replug the stick, and check the power supply (the 5.1 V / 3 A supply directly, no hub).", ["dab.restart"])
     unit, reachable = f["unit"], f["reachable"]
     if unit == "active" and reachable:
         add("decoder", "DAB decoder (welle-cli)", "ok", f"{f['service_name']} is running and answering on {f['welle_url']}.")
@@ -175,7 +210,10 @@ def checks(f: dict[str, Any]) -> list[Check]:
             "These alarms will fall back to the chime. Rescan, or pick another station for them.", ["dab.scan"])
     if f["presets_unknown"]:
         add("presets", "Presets", "warn", "Not in the last scan: " + ", ".join(f["presets_unknown"]) + ".", "Rescan or remove them on the Radio page.")
-    if f["fallbacks_24h"] or f["restarts_24h"] or f.get("supervisor_restarts_24h"):
+    if f.get("builds"):
+        b = f["builds"]
+        add("builds", "Built from", "info", "; ".join(f"{k} {v.get('ref', '?')} ({v.get('commit', '?')})" for k, v in sorted(b.items()) if isinstance(v, dict)) + ".")
+    if f["fallbacks_24h"] or f["restarts_24h"] or f.get("supervisor_restarts_24h") or f.get("drops_24h"):
         parts = []
         if f["fallbacks_24h"]:
             n = len(f["fallbacks_24h"])
@@ -185,7 +223,13 @@ def checks(f: dict[str, Any]) -> list[Check]:
             parts.append(f"an alarm found DAB not working and restarted the decoder{'' if n == 1 else f' ({n} times)'}")
         if f.get("supervisor_restarts_24h"):
             n = len(f["supervisor_restarts_24h"])
-            parts.append(f"the decoder stopped answering and was restarted{'' if n == 1 else f' {n} times'}")
+            parts.append(f"the decoder stopped answering or decoding and was restarted{'' if n == 1 else f' {n} times'}")
+        if f.get("drops_24h"):
+            d = f["drops_24h"]
+            last = d[0]
+            temp = f", SoC {last['temp_c']:.0f} °C" if isinstance(last.get("temp_c"), int | float) else ""
+            flags = f", {', '.join(last['flags'])}" if last.get("flags") else ""
+            parts.append(f"the radio dropped out {len(d)} time{'s' if len(d) > 1 else ''} (last at {str(last['at'])[11:16]}: {last.get('reason', '?')}{temp}{flags})")
         add("history", "Last 24 hours", "warn", parts[0][0].upper() + "; ".join(parts)[1:] + ".",
             "The DAB history graphs show the signal around those times (marked with thin vertical lines).")
     return c

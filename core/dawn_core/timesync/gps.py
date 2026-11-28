@@ -100,6 +100,7 @@ class GpsdClient:
         self._task: asyncio.Task[None] | None = None
         self.connected = False
         self.connect_error: str | None = None
+        self.on_device: Callable[[], None] | None = None  # told when gpsd reports a device change
 
     async def start(self) -> None:
         self._task = asyncio.create_task(self._run(), name="gpsd-client")
@@ -147,6 +148,13 @@ class GpsdClient:
                 self.on_fix(self.fix)
             await asyncio.sleep(delay)
             delay = min(delay * 2, 30)
+
+    def _device_changed(self) -> None:
+        if self.on_device is not None:
+            try:
+                self.on_device()
+            except Exception:  # noqa: BLE001
+                log.debug("gps device callback failed", exc_info=True)
 
     def _expire(self) -> None:
         """A fix is only as current as the last position report: an unplugged receiver just goes quiet."""
@@ -206,6 +214,7 @@ class GpsdClient:
                 f.driver = f.subtype = f.bps = f.activated = None
                 f.last_tpv_at = None
                 self._expire()
+                self._device_changed()
                 return
             if cls == "DEVICES" and not devs:
                 f.driver = f.subtype = f.bps = f.activated = None
@@ -216,6 +225,7 @@ class GpsdClient:
                     f.subtype = d.get("subtype", f.subtype)
                     f.bps = d.get("bps", f.bps)
                     f.activated = d.get("activated", f.activated)
+            self._device_changed()
         elif cls == "VERSION":
             f.gpsd_version = msg.get("release")
         elif cls == "ERROR":

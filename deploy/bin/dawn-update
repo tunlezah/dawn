@@ -1,35 +1,123 @@
 #!/usr/bin/env bash
-# Software update: git pull + install.sh --update + restart. Called by dawn-core via sudo.
-# Progress is written to /var/log/dawn-update.log which the UI tails.
+# Software update: fast-forward /opt/dawn, reinstall, restart in order, check dawn-core is healthy, and roll back if
+# not. Run by systemd as dawn-update.service, so it lives in its own cgroup: started from dawn-core (as a child of it)
+# it was killed part way through when install.sh restarted dawn-core, and the kiosk never got the new bundle.
+# dawn-core starts it with `systemctl start --no-block dawn-update.service` (the branch comes from
+# /var/lib/dawn/update.env) and tails /var/log/dawn-update.log for the UI.
+#
+#   dawn-update [branch]     (default main)
+#
+# Restart order: dawn-timed and dawn-dab, then dawn-core (and wait until /api/health reports the new version with its
+# alarm engine alive), then dawn-face last so the kiosk loads the new web bundle. Any failure after the merge puts
+# the old commit, the old web bundle and the old Python packages back, restarts dawn-core and the face, logs
+# "ROLLED BACK" and writes /var/lib/dawn/update-result.json, which dawn-core shows at its next start.
 set -uo pipefail
 DAWN_DIR="${DAWN_DIR:-/opt/dawn}"
 LOG="${DAWN_UPDATE_LOG:-/var/log/dawn-update.log}"
 BRANCH="${1:-main}"
 DAWN_REPO="${DAWN_REPO:-https://github.com/tunlezah/dawn.git}"
-{
-  echo "=== dawn-update $(date -Is) branch=$BRANCH ==="
-  cd "$DAWN_DIR" || { echo "no $DAWN_DIR"; exit 1; }
-  git config --system --add safe.directory "$DAWN_DIR" 2>/dev/null || true
-  [ -d .git ] || { echo "$DAWN_DIR is not a git checkout; reinstall from a clone of $DAWN_REPO"; exit 1; }
-  if ! git remote get-url origin >/dev/null 2>&1; then
-    sudo -u dawn git remote add origin "$DAWN_REPO" && echo "added git remote origin -> $DAWN_REPO"
+HEALTH_URL="${DAWN_HEALTH_URL:-http://127.0.0.1:8080/api/health}"
+HEALTH_WAIT_S="${DAWN_HEALTH_WAIT_S:-120}"
+RESULT="${DAWN_UPDATE_RESULT:-/var/lib/dawn/update-result.json}"
+PIP_CACHE="${PIP_CACHE:-/var/cache/dawn/pip}"
+BEFORE="" AFTER="" WANT=""
+
+# Under systemd the unit appends stdout to the log itself; run by hand (or by the tests) the script does it
+if [ -z "${DAWN_UPDATE_LOG_BY_SYSTEMD:-}" ]; then
+  mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
+  exec > >(tee -a "$LOG") 2>&1
+fi
+
+version_of() { sed -n 's/^__version__ = "\(.*\)"/\1/p' "$DAWN_DIR/core/dawn_core/__init__.py" 2>/dev/null; }
+
+write_result() {  # write_result <status> <message>
+  mkdir -p "$(dirname "$RESULT")" 2>/dev/null || true
+  python3 - "$RESULT" "$1" "$2" "$BEFORE" "$AFTER" "$WANT" <<'PY' || true
+import json, sys, time
+path, status, message, before, after, version = sys.argv[1:7]
+json.dump({"status": status, "message": message, "from": before, "to": after, "version": version,
+           "at": time.strftime("%Y-%m-%dT%H:%M:%S%z")}, open(path, "w"))
+PY
+}
+
+# healthy <version>: /api/health answers with the alarm engine alive (and, when given, that version)
+healthy() {
+  local body
+  body="$(curl -sf --max-time 3 "$HEALTH_URL" 2>/dev/null)" || return 1
+  python3 -c 'import json,sys; h=json.loads(sys.argv[1]); sys.exit(0 if h.get("alarms_alive") is True and (not sys.argv[2] or h.get("version")==sys.argv[2]) else 1)' "$body" "$1"
+}
+wait_healthy() {  # wait_healthy <version>
+  local i
+  for i in $(seq 1 "$HEALTH_WAIT_S"); do
+    healthy "$1" && return 0
+    sleep 1
+  done
+  return 1
+}
+
+rollback() {
+  echo "update failed: $1"
+  echo "rolling back to $BEFORE"
+  cd "$DAWN_DIR" || exit 1
+  sudo -u dawn git reset -q --hard "$BEFORE" || git reset -q --hard "$BEFORE"
+  if [ -d web/dist.old ]; then
+    # this run swapped a new bundle in (dist.old was removed at the start): put the one from before back
+    rm -rf web/dist && mv web/dist.old web/dist && echo "restored the previous web UI"
   fi
-  sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed (network, or no access to $(git remote get-url origin))"; exit 1; }
-  BEFORE="$(git rev-parse --short HEAD)"
-  if [ -z "$(git merge-base HEAD "origin/$BRANCH" 2>/dev/null)" ]; then
-    echo "$DAWN_DIR has its own history, unrelated to origin/$BRANCH, so it cannot be fast-forwarded."
-    echo "If it has no local work worth keeping, point it at $BRANCH once (as root), then update again:"
-    echo "  sudo -u dawn git -C $DAWN_DIR reset --hard origin/$BRANCH"
-    exit 1
+  if [ -x "$DAWN_DIR/.venv/bin/pip" ]; then
+    sudo -u dawn env PIP_CACHE_DIR="$PIP_CACHE" "$DAWN_DIR/.venv/bin/pip" install -q -e "$DAWN_DIR/core" -e "$DAWN_DIR/dawn-timed" \
+      || echo "WARNING: reinstalling the Python packages failed"
   fi
-  sudo -u dawn git merge --ff-only "origin/$BRANCH" || { echo "fast-forward failed: local commits or changed files in $DAWN_DIR (git -C $DAWN_DIR status)"; exit 1; }
-  AFTER="$(git rev-parse --short HEAD)"
-  echo "updated $BEFORE -> $AFTER (version $(sed -n 's/^__version__ = "\(.*\)"/\1/p' core/dawn_core/__init__.py))"
-  "$DAWN_DIR/deploy/install.sh" --update --no-build || { echo "install.sh failed"; exit 1; }
-  echo "restarting services"
   systemctl restart dawn-timed dawn-dab || true
+  systemctl restart dawn-core || true
+  if wait_healthy ""; then echo "dawn-core is back on $BEFORE"; else echo "WARNING: dawn-core did not report healthy after the rollback"; fi
   systemctl restart dawn-face || true
+  write_result rolled_back "$1"
+  echo "=== ROLLED BACK to $BEFORE $(date -Is) ==="
+  exit 1
+}
+
+echo "=== dawn-update $(date -Is) branch=$BRANCH ==="
+cd "$DAWN_DIR" || { echo "no $DAWN_DIR"; write_result failed "no $DAWN_DIR"; exit 1; }
+git config --system --add safe.directory "$DAWN_DIR" 2>/dev/null || true
+[ -d .git ] || { echo "$DAWN_DIR is not a git checkout; reinstall from a clone of $DAWN_REPO"; write_result failed "not a git checkout"; exit 1; }
+if ! git remote get-url origin >/dev/null 2>&1; then
+  sudo -u dawn git remote add origin "$DAWN_REPO" && echo "added git remote origin -> $DAWN_REPO"
+fi
+sudo -u dawn git fetch --quiet origin "$BRANCH" || { echo "git fetch failed (network, or no access to $(git remote get-url origin))"; write_result failed "git fetch failed"; exit 1; }
+BEFORE="$(git rev-parse --short HEAD)"
+if [ -z "$(git merge-base HEAD "origin/$BRANCH" 2>/dev/null)" ]; then
+  echo "$DAWN_DIR has its own history, unrelated to origin/$BRANCH, so it cannot be fast-forwarded."
+  echo "If it has no local work worth keeping, point it at $BRANCH once (as root), then update again:"
+  echo "  sudo -u dawn git -C $DAWN_DIR reset --hard origin/$BRANCH"
+  write_result failed "history unrelated to origin/$BRANCH"
+  exit 1
+fi
+rm -rf web/dist.old  # a dist.old after the install is then this run's, and a rollback may put it back
+sudo -u dawn git merge --ff-only "origin/$BRANCH" || {
+  echo "fast-forward failed: local commits or changed files in $DAWN_DIR (git -C $DAWN_DIR status)"
+  write_result failed "fast-forward failed"
+  exit 1
+}
+AFTER="$(git rev-parse --short HEAD)"
+WANT="$(version_of)"
+echo "updated $BEFORE -> $AFTER (version $WANT)"
+if [ "$BEFORE" = "$AFTER" ]; then
+  echo "already up to date"
+  write_result ok "already up to date"
   echo "=== done $(date -Is) ==="
-  # core restarts last so the UI sees 'done'
-  (sleep 2; systemctl restart dawn-core) &
-} 2>&1 | tee -a "$LOG"
+  exit 0
+fi
+
+# from here on, any failure rolls back
+"$DAWN_DIR/deploy/install.sh" --update --no-build --no-restart || rollback "install.sh failed"
+echo "restarting services"
+systemctl restart dawn-timed dawn-dab || true
+systemctl restart dawn-core || rollback "dawn-core would not restart"
+echo "waiting up to ${HEALTH_WAIT_S} s for dawn-core $WANT to report healthy"
+wait_healthy "$WANT" || rollback "dawn-core did not report healthy with version $WANT within ${HEALTH_WAIT_S} s"
+echo "dawn-core $WANT is healthy"
+# the face last: the kiosk loads the new bundle from the dawn-core that serves it
+systemctl restart dawn-face || true
+write_result ok "updated to $WANT"
+echo "=== done $(date -Is) ==="

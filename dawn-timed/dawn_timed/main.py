@@ -18,9 +18,10 @@ import asyncio
 import json
 import logging
 import os
+import socket
 import sys
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,54 @@ log = logging.getLogger("dawn-timed")
 
 # FIG 0/0 with CIF count low part 0 (welle's time_last_fct0_frame) arrives every ~12 s in mode I
 FCT0_STALE_MS = 30_000
+WATCHDOG_EVERY_S = 5.0  # WATCHDOG=1 at most this often (the unit's WatchdogSec is 60)
+BACKOFF_MIN_S, BACKOFF_MAX_S = 2.0, 30.0
+FAKE_HWCLOCK = Path("/etc/fake-hwclock.data")  # the time saved at the last shutdown (and every hour): "YYYY-MM-DD HH:MM:SS" UTC
+RTC_SINCE_EPOCH = Path("/sys/class/rtc/rtc0/since_epoch")
+GUARD_BEHIND = timedelta(minutes=1)  # a DAB time more than this before the last saved time cannot be right
+GUARD_AHEAD = timedelta(days=730)  # ...nor one more than two years after it (a week-number rollover, a broken ensemble)
+
+
+def reference_time(fake_hwclock: Path = FAKE_HWCLOCK, rtc: Path = RTC_SINCE_EPOCH) -> datetime | None:
+    """The latest time the box is known to have reached without DAB: what fake-hwclock saved, or the RTC. None when
+    neither is there (then there is nothing to judge DAB time against)."""
+    seen: list[datetime] = []
+    try:
+        seen.append(datetime.strptime(fake_hwclock.read_text().strip(), "%Y-%m-%d %H:%M:%S").replace(tzinfo=UTC))
+    except (OSError, ValueError):
+        pass
+    try:
+        seen.append(datetime.fromtimestamp(int(rtc.read_text().strip()), UTC))
+    except (OSError, ValueError, OverflowError):
+        pass
+    return max(seen) if seen else None
+
+
+def implausible(dab: datetime, ref: datetime | None) -> str | None:
+    """Why a DAB time sample is rejected, or None. It catches week rollovers and broken ensembles on a box with no
+    other source; an ensemble that is an hour off is not caught (an RTC is the fix for that)."""
+    if ref is None:
+        return None
+    if dab < ref - GUARD_BEHIND:
+        return f"{dab.isoformat(timespec='seconds')} is before the last saved time {ref.isoformat(timespec='seconds')}"
+    if dab > ref + GUARD_AHEAD:
+        return f"{dab.isoformat(timespec='seconds')} is more than two years after the last saved time {ref.isoformat(timespec='seconds')}"
+    return None  # welle-cli not answering: wait this long, doubling, until it answers again
+
+
+def sd_notify(msg: str) -> None:
+    """Minimal sd_notify(3) without a dependency (the same as dawn-core's)."""
+    addr = os.environ.get("NOTIFY_SOCKET")
+    if not addr:
+        return
+    if addr.startswith("@"):
+        addr = "\0" + addr[1:]
+    try:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as s:
+            s.connect(addr)
+            s.sendall(msg.encode())
+    except OSError:
+        pass
 
 
 def utctime_from_mux(j: dict) -> tuple[datetime | None, bool]:
@@ -103,6 +152,13 @@ class Timed:
         self.last_error: str | None = None
         self._status_written = 0.0
         self._attach_tried = 0.0
+        self._ready_sent = False
+        self._watchdog_at = 0.0
+        self._backoff = BACKOFF_MIN_S
+        self.rejected = 0
+        self.last_rejected: str | None = None
+        self._ref: datetime | None = None
+        self._ref_at = -1e9
 
     async def run(self) -> None:
         self._attach()
@@ -122,6 +178,23 @@ class Timed:
                 await asyncio.sleep(2)
             self._status()
             self._write_status()
+            self._notify()
+
+    async def _unreachable_wait(self) -> None:
+        """welle-cli is not answering (stopped on purpose by cool mode, restarting, or the stick is gone): back off from
+        2 s to 30 s instead of asking every 2 s for ever; the first answer puts it back to 2 s."""
+        await asyncio.sleep(self._backoff)
+        self._backoff = min(BACKOFF_MAX_S, self._backoff * 2)
+
+    def _notify(self) -> None:
+        """systemd: READY=1 after the first pass, then WATCHDOG=1 while passes keep coming (a hung daemon stops)."""
+        if not self._ready_sent:
+            sd_notify("READY=1")
+            self._ready_sent = True
+        now = time.monotonic()
+        if now - self._watchdog_at >= WATCHDOG_EVERY_S:
+            self._watchdog_at = now
+            sd_notify("WATCHDOG=1")
 
     def _attach(self) -> None:
         """Attach SHM; on failure keep running (and retry) so the failure shows up in the status file."""
@@ -136,6 +209,15 @@ class Timed:
             log.error("cannot attach SHM unit %d: %s", self.args.shm_unit, e)
 
     def _sample(self, dab: datetime, now: datetime, precision: int) -> None:
+        if time.monotonic() - self._ref_at > 60:
+            self._ref_at, self._ref = time.monotonic(), reference_time()
+        why = implausible(dab, self._ref)
+        if why:
+            self.rejected += 1
+            if self.last_rejected != why:
+                log.warning("rejecting a DAB time sample: %s", why)
+            self.last_rejected = why
+            return
         if self.shm_attached or self.args.dry_run:
             self.shm.write(dab, now, precision=precision)
             self.written += 1
@@ -157,8 +239,9 @@ class Timed:
         now = datetime.now(UTC)
         if j is None:
             self.synced = False
-            await asyncio.sleep(2)
+            await self._unreachable_wait()
             return
+        self._backoff = BACKOFF_MIN_S
         self.synced = mux_synced(j)
         if not self.synced:
             self.last_value = None
@@ -184,6 +267,8 @@ class Timed:
         try:
             async with self.client.stream("GET", f"{self.args.welle_url}/fic", timeout=httpx.Timeout(10.0, read=10.0)) as r:
                 self.welle_reachable = r.status_code == 200
+                if self.welle_reachable:
+                    self._backoff = BACKOFF_MIN_S
                 buf = b""
                 last: datetime | None = None
                 async for chunk in r.aiter_bytes():
@@ -206,11 +291,12 @@ class Timed:
                         last = t
                     self._status()
                     self._write_status()
+                    self._notify()  # a long FIC stream is one pass of the main loop
         except (httpx.HTTPError, OSError) as e:
             self.synced = False
             self.welle_reachable = False
             log.debug("fic stream problem: %s", e)
-            await asyncio.sleep(2)
+            await self._unreachable_wait()
 
     def _status(self) -> None:
         if time.monotonic() - self.last_status > 60:
@@ -228,6 +314,7 @@ class Timed:
             "fibs": self.fic_stats.get("fibs", 0), "fib_crc_errors": self.fic_stats.get("crc_bad", 0),
             "shm_unit": self.args.shm_unit, "shm_attached": self.shm_attached, "shm_error": self.shm_error,
             "dry_run": bool(self.args.dry_run), "last_error": self.last_error,
+            "rejected": self.rejected, "last_rejected": self.last_rejected,
         }
 
     def _write_status(self, force: bool = False) -> None:

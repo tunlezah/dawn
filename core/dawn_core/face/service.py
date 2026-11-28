@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import FaceMessage, UIState
+from ..tasks import spawn
 
 log = logging.getLogger("dawn.face")
 
@@ -23,12 +24,16 @@ class FaceService(Service):
         self.ctx = ctx
         self._task: asyncio.Task[None] | None = None
         self._menu_opened_at: datetime | None = None
+        self._setup_opened_at: datetime | None = None
         self._demo_mode: str | None = None
 
     async def start(self) -> None:
         if self._task is None or self._task.done():  # start() may be tried again after a failure
-            self.ctx.store.subscribe(self._on_state)
-            self._task = asyncio.create_task(self._tick(), name="face-tick")
+            if self._task is None:
+                self.ctx.store.subscribe(self._on_state)
+            self._task = spawn(self._tick(), name="face-tick")
+        self.ctx.liveness.register("face-tick", max_age_s=15, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("face-tick", self._task)
         self.recompute()
 
     async def stop(self) -> None:
@@ -55,7 +60,10 @@ class FaceService(Service):
             mode = "playing"
         elif st.timers.nap is not None:
             mode = "countdown"
-        elif st.system.network.hotspot_active and f.setup is not None:
+        elif st.system.network.hotspot_active and f.setup is not None and (not st.system.network.wifi_configured or f.setup_open):
+            # A box that was never set up shows how to set it up. One with a saved network that has lost it (a
+            # router rebooting at 3 am) keeps its clock, or its sleep clock, with a small "No Wi-Fi" chip: a
+            # full-screen white QR code all night is worse than the problem; the chip opens this screen.
             mode = "setup"
         elif f.message is not None and (f.message.until is None or datetime.fromisoformat(f.message.until) > now):
             mode = "message"
@@ -69,9 +77,16 @@ class FaceService(Service):
                 f.menu_open = False
             self.ctx.store.touch()
 
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._tick(), name="face-tick")
+        self.ctx.liveness.task("face-tick", self._task)
+
     async def _tick(self) -> None:
         while True:
             await asyncio.sleep(1)
+            self.ctx.liveness.beat("face-tick")
             try:
                 self._expire()
             except Exception:  # noqa: BLE001
@@ -94,6 +109,9 @@ class FaceService(Service):
         if f.message and f.message.until and datetime.fromisoformat(f.message.until) <= now:
             f.message = None
             changed = True
+        if f.setup_open and (not st.system.network.hotspot_active or (self._setup_opened_at and (now - self._setup_opened_at).total_seconds() > self.ctx.config.inputs.touch_menu_timeout_s)):
+            f.setup_open = False
+            changed = True
         if changed:
             self.ctx.store.touch()
         self.recompute()
@@ -110,6 +128,9 @@ class FaceService(Service):
         f = self.ctx.store.state.face
         if f.mode == "message":
             self.dismiss_message()
+            return
+        if f.mode == "setup" and f.setup_open:
+            self.open_setup(False)  # opened from the chip: a tap puts the clock back
             return
         if f.mode == "sleep":
             now = self.ctx.store.now()
@@ -153,6 +174,20 @@ class FaceService(Service):
             return False
         self._menu_opened_at = self.ctx.store.now()
         self.wake()
+        return True
+
+    def open_setup(self, open_: bool = True) -> bool:
+        """Show (or close) the full Setup screen from the face's "No Wi-Fi" chip. Only while the hotspot is up."""
+        f = self.ctx.store.state.face
+        if open_ and not (self.ctx.store.state.system.network.hotspot_active and f.setup is not None):
+            return False
+        f.setup_open = open_
+        self._setup_opened_at = self.ctx.store.now() if open_ else None
+        if open_:
+            f.menu_open, f.menu_page = False, None
+            self.wake()
+        self.ctx.store.touch()
+        self.recompute()
         return True
 
     def toast(self, title: str, body: str = "", level: str = "info", seconds: int | None = 8) -> None:

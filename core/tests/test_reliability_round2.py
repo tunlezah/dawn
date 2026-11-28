@@ -69,6 +69,7 @@ async def test_a_stamp_without_a_zone_still_rings(svc) -> None:
     with ctx.db.session() as s:  # a hand edit of the database, or a backup edited by hand: no offset on the stamp
         s.add(AlarmRow(label="Naive", time="06:30", repeat="daily", source="chime:birds", ramp_seconds=0, enabled=True, last_fired_occurrence="2026-10-01T06:30:00"))
         s.commit()
+    a._invalidate()  # written behind the service's back: the engine sees it within ROWS_FRESH_S; here, at once
     await a.tick(now=AT)
     assert a.ring is not None and a.ring.req.label == "Naive"
     assert ctx.store.state.alarms.items[0].problem is None
@@ -106,7 +107,7 @@ async def test_a_sleep_fade_overlapping_the_ring_does_not_stop_the_ramp(svc) -> 
     timers: TimerService = ctx.svc(TimerService)
     await audio.set_volume(20, overlay=False)  # listening at 20 before bed
     ctx.config.timers.sleep_fade_s = 2
-    timers._sleep_total, timers._sleep_end = 3, ctx.store.now() + timedelta(seconds=3)
+    timers._sleep_total, timers._sleep_deadline = 3, time.monotonic() + 3
     timers._sleep_task = asyncio.create_task(timers._run_sleep())  # the real fade: 1 s wait, then 2 s fading to 0
     await asyncio.sleep(2.2)  # the fade has halved the volume
     await a.test_ring(source="chime:birds", label="Ramped", volume=70, ramp_seconds=8)
@@ -115,7 +116,7 @@ async def test_a_sleep_fade_overlapping_the_ring_does_not_stop_the_ramp(svc) -> 
     assert a.ring is not None and a.ring._ramp_task is not None and not a.ring._ramp_task.done()  # the ramp carried on
     assert 25 <= audio.volume < 70  # climbing from 10 towards 70, not stuck at the bedtime volume
     assert a.ring.prev_volume == 20  # and the volume from before the fade is what comes back
-    assert timers._sleep_end is None
+    assert timers._sleep_deadline is None
     await a.stop_ringing()
     assert audio.volume == 20
 
@@ -139,7 +140,7 @@ async def test_a_hung_preparation_is_given_up_on_and_the_next_alarm_is_prepared(
     a, ctx = svc
     dab: DabService = ctx.svc(DabService)
 
-    async def hang(sid: str, *, may_retune: bool):
+    async def hang(sid: str, *, may_retune: bool, occurrence: str | None = None):
         await asyncio.sleep(3600)
 
     monkeypatch.setattr(dab, "prepare_for", hang)

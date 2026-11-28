@@ -55,6 +55,13 @@ class InputController:
         except Exception:  # noqa: BLE001
             log.exception("input %s failed", event)
 
+    async def volume_turn(self, steps: int) -> None:
+        """Several encoder detents at once (InputService adds up the ones that queued): one volume change."""
+        try:
+            await self.a.volume_step(steps)
+        except Exception:  # noqa: BLE001
+            log.exception("volume change of %+d steps failed", steps)
+
     async def _handle(self, event: str) -> None:
         if event == "encoder_cw":
             await self.a.volume_step(+1)

@@ -8,8 +8,9 @@ SUBSYSTEM=="tty", ATTRS{idVendor}=="1546", SYMLINK+="gps0", GROUP="dialout", MOD
 # RTL-SDR dongles: usable by the 'plugdev' group (welle-cli runs as user dawn)
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", GROUP="plugdev", MODE="0660", TAG+="uaccess"
 SUBSYSTEM=="usb", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", GROUP="plugdev", MODE="0660", TAG+="uaccess"
-# Hot-plug: restart the DAB decoder when the stick (re)appears
+# Hot-plug: restart the DAB decoder when the stick (re)appears (2838 is most sticks, the Blog V4 included; 2832 some)
 SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2838", TAG+="systemd", ENV{SYSTEMD_WANTS}="dawn-dab.service"
+SUBSYSTEM=="usb", ACTION=="add", ATTRS{idVendor}=="0bda", ATTRS{idProduct}=="2832", TAG+="systemd", ENV{SYSTEMD_WANTS}="dawn-dab.service"
 
 # Backlight writable by the 'video' group (dawn-core runs as user dawn)
 SUBSYSTEM=="backlight", ACTION=="add", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power", RUN+="/bin/chmod g+w /sys/class/backlight/%k/brightness /sys/class/backlight/%k/bl_power"

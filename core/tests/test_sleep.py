@@ -221,7 +221,7 @@ MANUAL_ONLY = {"enabled": True, "start_at_time": False, "start_when_dark": False
 async def client(tmp_config):
     app = create_app(ConfigManager(tmp_config, poll_s=10))
     async with app.router.lifespan_context(app):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers={"X-Dawn-Client": "1"}) as c:
             yield c
 
 

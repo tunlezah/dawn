@@ -11,6 +11,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..system.sysinfo import SysInfoService
+from ..tasks import spawn
 from .backlight import Backlight, make_backlight
 from .curve import BrightnessController, Hysteresis
 from .sensors import LuxSensor, make_sensor
@@ -58,7 +59,9 @@ class DisplayService(Service):
         st.sensor_found = self.sensor is not None
         st.backlight_driver = self.backlight.name
         self.controller.jump(self.manual_percent)
-        self._task = asyncio.create_task(self._loop(), name="display-loop")
+        self._task = spawn(self._loop(), name="display-loop")
+        self.ctx.liveness.register("display-loop", max_age_s=15, gates_watchdog=True, restart=self.restart_loop)
+        self.ctx.liveness.task("display-loop", self._task)
         log.info("display: sensor=%s backlight=%s mode=%s", st.sensor, st.backlight_driver, self.mode)
 
     async def stop(self) -> None:
@@ -110,10 +113,21 @@ class DisplayService(Service):
         return bool(self._sun) and self._sun["sunrise"] <= now < self._sun["sunset"]
 
     # ---- loop ------------------------------------------------------------
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="display-loop")
+        self.ctx.liveness.task("display-loop", self._task)
+
     async def _loop(self) -> None:
-        period = 1.0 / self.ctx.config.display.lux_sensor.sample_hz
+        from ..power.service import cool_plan
+
         while True:
+            plan = cool_plan(self.ctx)
+            # cool mode reads the light sensor less often (power.lux_sample_hz)
+            period = 1.0 / ((plan.lux_hz if plan and plan.lux_hz else None) or self.ctx.config.display.lux_sensor.sample_hz)
             t0 = time.monotonic()
+            self.ctx.liveness.beat("display-loop")
             try:
                 await self.tick()
             except Exception:  # noqa: BLE001
@@ -171,6 +185,12 @@ class DisplayService(Service):
         elif st.face.wake_until and datetime.fromisoformat(st.face.wake_until) > now and st.face.mode == "standby":
             # a tap at night (or out of sleep mode) must not be a torch in the face
             forced = sl.wake_percent if (night or st.display.sleep) else b.standby_wake_percent
+        # cool mode's optional backlight cap; never on a ring or a light wake
+        from ..power.service import cool_plan
+
+        plan = cool_plan(self.ctx)
+        cap = cfg.power.max_backlight_percent if plan and plan.cool and not ringing and not st.alarms.light_wake_active else None
+        self.controller.hi = min(cfg.display.backlight.max_percent, cap) if cap else cfg.display.backlight.max_percent
         was_forced, self._forced = self._forced, forced is not None
         if forced is not None:
             self.controller.set_target(forced, mono)

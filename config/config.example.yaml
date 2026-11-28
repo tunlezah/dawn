@@ -313,6 +313,8 @@ dab:
   gain: null
   # How often /mux.json is read for DLS/MOT.
   poll_interval_s: 1.0
+  # Restart the decoder when it answers but has had no sync for this long on a channel a scan found good (a stick that stopped delivering samples). After three such restarts the stick is re-enumerated on USB.
+  no_sync_restart_s: 180
 
 alarm_defaults:
   volume: 70
@@ -359,12 +361,17 @@ time_sources:
   # Source considered stale after this long without samples.
   stale_after_s: 600
   gps:
+    # Use a GPS receiver for time and location when one is fitted (it is optional).
     enabled: true
     source: auto
     gpsd_host: 127.0.0.1
     gpsd_port: 2947
     serial_device: /dev/ttyACM0
     serial_baud: 9600
+    # This build must have a GPS receiver: a missing one is a fault (red) instead of 'not fitted'.
+    required: false
+    # A receiver seen within this many days and now gone is 'missing' (a warning); after that it is 'not fitted'.
+    forget_after_days: 14
 
 weather:
   enabled: true
@@ -380,8 +387,12 @@ network:
     # Hotspot SSID (null = <name>-<serial4>).
     ssid: null
     password: dawnsetup
-    # Seconds without a network before the hotspot starts.
+    # Seconds without a network before the hotspot starts, on a box with no saved Wi-Fi network.
     wait_for_network_s: 45
+    # Seconds without a network before the hotspot starts when a Wi-Fi network is saved (a router rebooting at night is not a reason to go into setup).
+    configured_wait_s: 900
+    # With a saved Wi-Fi network and the hotspot up: how often to drop the hotspot briefly and look for that network (never while a phone is connected to the hotspot).
+    retry_every_s: 180
     interface: wlan0
   online_check_host: 1.1.1.1
   online_check_interval_s: 30
@@ -391,8 +402,10 @@ web:
   port: 8080
   # Built web assets (null = bundled web/dist).
   static_dir: null
-  cors_origins:
-  - '*'
+  # Other web origins allowed to call the API from a browser (e.g. http://laptop.local:5173 for UI development). '*' is ignored: it would let any page on the network change the clock.
+  cors_origins: []
+  # Extra names the clock may be reached by (a DNS name of your own). localhost, its addresses, <hostname>.local and the setup hotspot's 10.42.0.1 always work; anything else is refused (DNS rebinding).
+  allowed_hosts: []
   auth:
     # Optional PIN for the control UI (null = open on the LAN).
     pin: null
@@ -400,6 +413,8 @@ web:
 
 system:
   heartbeat_interval_s: 5
+  # Optional outside check-in (Healthchecks, Uptime Kuma push): GET every 5 minutes with ?status=ok|fail&msg=... so you are told when the clock is unhealthy or dead. Nothing is sent unless this is set.
+  heartbeat_url: null
   # Send systemd watchdog keepalives.
   watchdog: true
   supervisor:
@@ -417,12 +432,18 @@ system:
     min_backoff_s: 60
     # Longest wait between two restarts of the same thing.
     max_backoff_s: 1800
+    # Restart the face kiosk once a day at the first quiet moment after this time (null = never): Chromium grows over months. Only on Standby or the sleep clock, with nothing playing or ringing and no alarm in the next hour; skipped that day if it is not quiet within two hours.
+    face_recycle_at: 03:30
+    # With a saved Wi-Fi network: restart NetworkManager when wlan0 has been missing or 'unavailable' for 10 minutes (twice at most; then Diagnostics suggests a reboot). Never reboots.
+    wifi_driver_recovery: false
   cpu_temp_path: /sys/class/thermal/thermal_zone0/temp
   # Reads under-voltage / throttling flags on a Pi.
   vcgencmd_binary: vcgencmd
   # Git checkout used by the software updater.
   update_repo_dir: /opt/dawn
   update_branch: main
+  # No software update while an alarm, a snooze or a nap is on, or when the next alarm (or its light wake) is due within this many minutes.
+  update_quiet_minutes: 60
   sudo_binary: sudo
   allow_shutdown: true
   log_tail_lines: 200
@@ -436,6 +457,38 @@ diagnostics:
   check_interval_s: 60
   # Status file written by dawn-timed (DAB time to chrony).
   timed_status_file: /run/dawn-timed/status.json
+
+power:
+  # off: never; on: whenever idle; auto: when idle and it is summer, a hot day is forecast, or the SoC is hot.
+  cool_mode: auto
+  # auto: the SoC at or above this for hold_s counts as hot.
+  enter_temp_c: 65.0
+  # ...and below this for exit_hold_s counts as cool again (hysteresis).
+  exit_temp_c: 55.0
+  hold_s: 300
+  exit_hold_s: 900
+  # auto: December to February south of the equator, June to August north (from location.latitude); or a list of months (1-12).
+  summer: auto
+  # auto: today's forecast maximum at or above this means cool mode for the day.
+  hot_day_c: 30.0
+  # No activity (touch, controls, playing, the web UI) for this long before cool mode starts.
+  idle_after_s: 300
+  # Stop the DAB decoder while cool (the stick and its decoding are the largest load); it is back before any alarm on DAB.
+  pause_dab: true
+  # The decoder is running again this long before an alarm's preparation (alarm_defaults.prepare_minutes) starts.
+  dab_wake_lead_minutes: 3
+  # With no live NTP or GPS time, run the decoder this often for DAB time.
+  dab_time_sync_every_h: 6.0
+  # ...for this long, or until dawn-timed has written samples.
+  dab_time_sync_minutes: 10
+  # CPU frequency cap while cool (0 = leave it alone).
+  cpu_max_mhz: 1000
+  # Stop the face's moving background while cool (it does not change your low-CPU setting).
+  freeze_animations: true
+  # Light sensor reads per second while cool.
+  lux_sample_hz: 2.0
+  # Cap the backlight while cool (null = no cap).
+  max_backlight_percent: null
 
 sim:
   # Sim hub base URL (used when DAWN_SIM=1).

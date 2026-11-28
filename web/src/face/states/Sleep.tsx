@@ -5,6 +5,8 @@ import { WeatherIcon } from '../../shared/icons/weather';
 import { DEMO_WEATHER } from '../../shared/demo';
 import { IconAlarm } from '../components/icons';
 import { secondsOfDay, sleepSpot } from '../burnin';
+import { SetupChip, noWifiChip } from '../components/Ambient';
+import { eveningNote } from '../../shared/evening';
 
 const FADE_MS = 750;
 
@@ -34,16 +36,19 @@ export function Sleep() {
   const alarm = next ? (next.in_seconds < 86400 ? fmtShort(next.at, s.tz, s.settings.clock_24h)
     : `${new Intl.DateTimeFormat('en-AU', { timeZone: s.tz, weekday: 'short' }).format(new Date(next.at))} ${fmtShort(next.at, s.tz, s.settings.clock_24h)}`) : null;
   const p = sleepSpot(shown, round);
+  const noWifi = noWifiChip(s);
+  const ready = eveningNote(s);
   return (
     <div className="f-sleep" data-testid="sleep" style={{ ['--lvl' as string]: `${s.display.sleep_level}%` }}>
       <div className={`f-sleep-clock ${visible ? '' : 'out'}`} style={{ left: `${p.x}%`, top: `${p.y}%` }}>
         <div className="t tnum">{t.hm}{t.ampm && <span className="f-ampm">{t.ampm}</span>}</div>
         {(alarm || w.available) && (
           <div className="a tnum">
-            {alarm && <><IconAlarm /><span>{alarm}</span></>}
+            {alarm && <><IconAlarm /><span data-testid="sleep-alarm">{alarm}{ready ? (ready.ok ? ' ✓' : ` · ${ready.text}`) : ''}</span></>}
             {w.available && <WeatherIcon icon={w.icon} size={0} className="f-icon w" />}
           </div>
         )}
+        {noWifi && <SetupChip ssid={noWifi} inline />}
       </div>
     </div>
   );

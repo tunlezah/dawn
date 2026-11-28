@@ -67,7 +67,7 @@ jobs:
           mkdir -p var
           DAWN_SIM=1 DAWN_CONFIG=$PWD/config/config.sim.yaml DAWN_DATA_DIR=$PWD/var/dawn python -m dawn_sim --no-keyboard > var/sim.log 2>&1 &
           for i in $(seq 1 60); do curl -sf localhost:8080/api/health && break; sleep 1; done
-          curl -s -X POST localhost:8080/api/dab/scan; sleep 45
+          curl -s -X POST -H 'X-Dawn-Client: 1' localhost:8080/api/dab/scan; sleep 45
       - run: cd web && npx playwright test
       - if: failure()
         run: tail -100 var/sim.log

@@ -16,6 +16,7 @@ from ..config import DawnConfig
 from ..context import DawnContext
 from ..services import Service
 from ..state.ui import WeatherHour, WeatherState
+from ..tasks import spawn
 from .wmo import describe
 
 log = logging.getLogger("dawn.weather")
@@ -71,7 +72,9 @@ class WeatherService(Service):
     async def start(self) -> None:
         self._load_cache()
         self.publish()
-        self._task = asyncio.create_task(self._loop(), name="weather")
+        self._task = spawn(self._loop(), name="weather")
+        self.ctx.liveness.register("weather", max_age_s=2 * 60 * self.ctx.config.weather.interval_minutes + 300, restart=self.restart_loop)
+        self.ctx.liveness.task("weather", self._task)
 
     async def stop(self) -> None:
         if self._task:
@@ -81,7 +84,7 @@ class WeatherService(Service):
     async def on_config(self, old: DawnConfig, new: DawnConfig) -> None:
         if old.weather != new.weather or old.location != new.location:
             self._last_pos = None
-            asyncio.create_task(self.refresh())
+            spawn(self.refresh(), name="weather-refresh", owner="weather")
 
     def _load_cache(self) -> None:
         try:
@@ -89,8 +92,15 @@ class WeatherService(Service):
         except (OSError, ValueError):
             self.cache = None
 
+    async def restart_loop(self) -> None:
+        if self._task and not self._task.done():
+            self._task.cancel()
+        self._task = spawn(self._loop(), name="weather")
+        self.ctx.liveness.task("weather", self._task)
+
     async def _loop(self) -> None:
         while True:
+            self.ctx.liveness.beat("weather")
             try:
                 await self.refresh()
             except Exception:  # noqa: BLE001

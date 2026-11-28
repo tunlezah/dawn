@@ -9,6 +9,7 @@ const STATUS: Record<CheckStatus, { icon: string; word: string; cls: string }> =
   ok: { icon: '✓', word: 'OK', cls: 'text-ok' },
   warn: { icon: '!', word: 'Warning', cls: 'text-warn' },
   fail: { icon: '✕', word: 'Problem', cls: 'text-err' },
+  absent: { icon: '○', word: 'Not fitted', cls: 'text-absent' },
   info: { icon: 'i', word: 'Info', cls: 'text-muted' },
   off: { icon: '–', word: 'Off', cls: 'text-faint' },
 };
@@ -106,7 +107,7 @@ export function CheckList({ checks, onChanged, onGo, empty = 'Nothing to check h
   );
 }
 
-const ORDER: CheckStatus[] = ['fail', 'warn', 'info', 'ok', 'off'];
+const ORDER: CheckStatus[] = ['fail', 'warn', 'absent', 'info', 'ok', 'off'];
 export function worst(checks: Check[]): CheckStatus {
   return ORDER.find((s) => checks.some((c) => c.status === s && s !== 'info')) ?? (checks.some((c) => c.status === 'info') ? 'info' : 'ok');
 }
@@ -161,6 +162,11 @@ const EVENT_LABEL: Record<string, (e: DiagEvent) => string> = {
   diag_action: (e) => `Fix: ${String(e.action ?? '')}${e.ok === false ? ' (failed)' : ''}`,
   light_wake: () => 'Light wake', sleep_mode: (e) => `Sleep mode ${e.on ? 'on' : 'off'}${e.reason ? ` (${String(e.reason)})` : ''}`,
   reboot: () => 'Reboot', shutdown: () => 'Shutdown', restore: () => 'Settings restored', update_start: () => 'Software update', wifi_connect: () => 'Wi-Fi connect',
+  hotspot_retry: (e) => `Looked for the saved Wi-Fi${e.outcome ? `: ${String(e.outcome)}` : ''}`,
+  gps_presence: (e) => `GPS module ${e.presence === 'present' ? 'found' : e.presence === 'missing' ? 'missing' : e.presence === 'absent' ? 'not fitted' : 'off'}`,
+  clock_step: (e) => `System clock stepped ${Number(e.step_s) > 0 ? '+' : ''}${String(e.step_s ?? '')} s`,
+  nap_ring_failed: (e) => `Nap ring did not start (try ${String(e.attempt ?? '')})`,
+  dab_drop: (e) => `Radio dropped out${e.reason ? `: ${String(e.reason)}` : ''}${typeof e.temp_c === 'number' ? ` (SoC ${Math.round(e.temp_c)} °C)` : ''}`,
 };
 export const eventLabel = (e: DiagEvent) => (EVENT_LABEL[e.kind] ?? ((x: DiagEvent) => x.kind.replace(/_/g, ' ')))(e);
 
@@ -168,12 +174,12 @@ const POWER = ['reboot', 'shutdown'];
 const action = (e: DiagEvent, ...prefixes: string[]) => e.kind === 'diag_action' && prefixes.some((p) => String(e.action ?? '').startsWith(p));
 /** Which events each area's history marks (the rest belong to other areas). */
 export const EVENTS: Record<string, (e: DiagEvent) => boolean> = {
-  dab: (e) => ['dab_restart', 'dab_scan', 'ring_start', 'ring_fallback', ...POWER].includes(e.kind) || action(e, 'dab.'),
-  gps: (e) => POWER.includes(e.kind) || action(e, 'gps.'),
-  time: (e) => POWER.includes(e.kind) || action(e, 'time.', 'gps.'),
-  network: (e) => ['hotspot_start', 'hotspot_stop', 'wifi_connect', ...POWER].includes(e.kind),
-  devices: (e) => ['ring_start', 'ring_fallback', 'ring_restored', 'light_wake', 'sleep_mode', ...POWER].includes(e.kind) || action(e, 'audio.', 'airplay.', 'display.'),
-  system: (e) => [...POWER, 'update_start', 'restore', 'alarm_missed', 'ring_restored'].includes(e.kind) || e.kind === 'diag_action',
+  dab: (e) => ['dab_restart', 'dab_scan', 'dab_drop', 'ring_start', 'ring_fallback', ...POWER].includes(e.kind) || action(e, 'dab.'),
+  gps: (e) => ['gps_presence', ...POWER].includes(e.kind) || action(e, 'gps.'),
+  time: (e) => ['clock_step', ...POWER].includes(e.kind) || action(e, 'time.', 'gps.'),
+  network: (e) => ['hotspot_start', 'hotspot_stop', 'hotspot_retry', 'wifi_connect', ...POWER].includes(e.kind),
+  devices: (e) => ['ring_start', 'ring_fallback', 'ring_restored', 'light_wake', 'sleep_mode', 'nap_ring_failed', ...POWER].includes(e.kind) || action(e, 'audio.', 'airplay.', 'display.'),
+  system: (e) => [...POWER, 'update_start', 'restore', 'alarm_missed', 'ring_restored', 'clock_step', 'nap_ring_failed'].includes(e.kind) || e.kind === 'diag_action',
 };
 
 export interface ChartSpec {

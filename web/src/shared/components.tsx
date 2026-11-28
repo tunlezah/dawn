@@ -43,8 +43,8 @@ export function Slider({ value, min = 0, max = 100, step = 1, onChange, onCommit
   );
 }
 
-export function Dot({ state }: { state: 'ok' | 'off' | 'warn' | 'err' }) {
-  return <span className={`dot dot-${state}`} />;
+export function Dot({ state, title }: { state: 'ok' | 'off' | 'warn' | 'err' | 'absent'; title?: string }) {
+  return <span className={`dot dot-${state}`} title={title} />;
 }
 
 export function Sheet({ open, onClose, title, children }: { open: boolean; onClose: () => void; title: string; children: ReactNode }) {

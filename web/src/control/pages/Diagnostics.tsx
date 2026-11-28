@@ -98,10 +98,10 @@ function Overview({ report, onGo, onChanged }: { report: Report; onGo: (t: strin
     <>
       <Card>
         <div className="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm">
-          {(['fail', 'warn', 'ok', 'info'] as CheckStatus[]).map((k) => (
+          {(['fail', 'warn', 'ok', 'info', 'absent'] as CheckStatus[]).filter((k) => k !== 'absent' || (n[k] ?? 0) > 0).map((k) => (
             <span key={k} className="inline-flex items-center gap-2">
               <StatusIcon status={k} /><b className="tnum">{n[k] ?? 0}</b>
-              <span className="text-muted">{k === 'fail' ? 'problems' : k === 'warn' ? 'warnings' : k === 'ok' ? 'fine' : 'notes'}</span>
+              <span className="text-muted">{k === 'fail' ? 'problems' : k === 'warn' ? 'warnings' : k === 'ok' ? 'fine' : k === 'absent' ? 'not fitted' : 'notes'}</span>
             </span>
           ))}
         </div>
@@ -123,7 +123,7 @@ function Overview({ report, onGo, onChanged }: { report: Report; onGo: (t: strin
               <button key={a} type="button" onClick={() => onGo(a)} className="w-full flex items-center gap-3 py-2.5 text-left hover:bg-elev-2/40 rounded-lg px-1">
                 <StatusIcon status={worst(list)} />
                 <span className="flex-1">{AREA_TITLE[a] ?? a}</span>
-                <span className="text-xs text-muted">{bad ? `${bad} to look at` : `${list.length} check${list.length === 1 ? '' : 's'} fine`}</span>
+                <span className="text-xs text-muted">{bad ? `${bad} to look at` : worst(list) === 'absent' ? 'not fitted' : `${list.length} check${list.length === 1 ? '' : 's'} fine`}</span>
                 <span className="text-muted" aria-hidden="true">›</span>
               </button>
             );
