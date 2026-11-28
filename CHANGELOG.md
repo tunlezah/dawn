@@ -38,6 +38,9 @@ All notable changes to Dawn are recorded here. The format follows
 ### Fixed
 - The core tests no longer read the status file of a dawn-timed running on the machine: on the clock itself the
   supervisor tests judged the real `/run/dawn-timed/status.json` stale against their jumping clock and failed.
+- CI was red on main since 0.2.12: a dawn-timed test fed a 2026-10-05 sample that the new gross-error guard
+  rejected against the CI runner's own RTC (set to today), and Playwright has no Chromium for `ubuntu-latest`
+  (now 26.04), so the e2e job runs on `ubuntu-24.04`.
 
 ## [0.2.12] - 2026-11-22
 
