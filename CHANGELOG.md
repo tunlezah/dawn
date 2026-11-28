@@ -35,6 +35,10 @@ All notable changes to Dawn are recorded here. The format follows
   only re-checked once a minute and the old stick's name stayed on show. A decoder that cool mode has stopped is
   left stopped (it opens the new stick when it starts).
 
+### Fixed
+- The core tests no longer read the status file of a dawn-timed running on the machine: on the clock itself the
+  supervisor tests judged the real `/run/dawn-timed/status.json` stale against their jumping clock and failed.
+
 ## [0.2.12] - 2026-11-22
 
 Other hardening (robustness plan WP-H, H1 to H8). Each part stands alone.

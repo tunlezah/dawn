@@ -19,7 +19,10 @@ def tmp_config(tmp_path: Path) -> Path:
         "power:\n  cool_mode: \"off\"\n"  # auto depends on the month; tests turn it on themselves
         # nothing here may reach a simulator left running by `make sim` (its long polls outlive a test's event loop)
         "sim:\n  hub_url: http://127.0.0.1:9\ndab:\n  welle_url: http://127.0.0.1:9\n"
-        % (tmp_path / "data", tmp_path / "run")
+        # nor a dawn-timed running on the machine (on the clock itself, its status file is real and the supervisor
+        # would judge it stale against a test's jumping clock)
+        "diagnostics:\n  timed_status_file: %s\n"
+        % (tmp_path / "data", tmp_path / "run", tmp_path / "run" / "dawn-timed-status.json")
     )
     os.environ["DAWN_DATA_DIR"] = str(tmp_path / "data")
     os.environ["DAWN_RUNTIME_DIR"] = str(tmp_path / "run")
