@@ -5,6 +5,43 @@ All notable changes to Dawn are recorded here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-11-28
+
+### Changed
+- Time: NTP is now the primary source, GPS the fallback and DAB the last resort (GPS was `prefer trust`).
+  Measured on the device, four NTP servers agreed to within a few ms while the u-blox 7 (NMEA, no PPS) read
+  69–73 ms late, so the clock ran ~70 ms slow and chrony rejected the servers that were right. The pool
+  carries `prefer` and `maxpoll 7`, so a dead network hands over to GPS within minutes. GPS SHM 0 gets
+  `offset 0.070` (NMEA's lateness, measured against NTP) so the handover does not move the clock.
+  **Takes effect after `install.sh` (it installs `deploy/chrony/chrony.conf`) and a chrony restart.**
+- The simulator's fake chrony follows the same order (NTP, then GPS, then DAB).
+
+### Added
+- Diagnostics → Time: "GPS agrees with NTP" shows how far GPS reads from NTP with the configured `offset`
+  applied, and spells out the `offset` to set when it is more than 20 ms out.
+- Diagnostics → DAB radio:
+  - "Interfering carrier": a single carrier inside the ensemble's block (≥ 30 dB above it) from welle's
+    spectrum. A generic R820T stick was found putting one 64–100 dB high at 199.888 MHz on 8D (Canberra),
+    where welle-cli could not find the frame and decoded nothing.
+  - "Stick model": a generic RTL2832U TV stick is named as such (Dawn is built around the RTL-SDR Blog V4).
+  - "Tuner frequency offset" also reports ppm and warns above 10 ppm (no TCXO; it drifts as the stick warms).
+  - "Stick model" warns about an R828D stick whose EEPROM does not say RTLSDRBlog / Blog V4 (a clone): the
+    rtl-sdr-blog driver only switches on its V4 handling for those strings.
+- RTL-SDR Blog V4 support checked end to end (driver: the rtl-sdr-blog fork already installed; same USB id and
+  gain table as before). Merged with 0.2.9's naming: the stick is named from its USB descriptors ("RTL-SDR Blog
+  V4 (R828D)"), and the "Stick model" note uses the same rule (`hw.is_blog_v4`) as the name.
+- Swapping or replugging the SDR stick restarts welle-cli within one heartbeat. Before, a welle-cli left running
+  when its stick went away kept answering with no samples and DAB stayed dead until a reboot; presence was also
+  only re-checked once a minute and the old stick's name stayed on show. A decoder that cool mode has stopped is
+  left stopped (it opens the new stick when it starts).
+
+### Fixed
+- The core tests no longer read the status file of a dawn-timed running on the machine: on the clock itself the
+  supervisor tests judged the real `/run/dawn-timed/status.json` stale against their jumping clock and failed.
+- CI was red on main since 0.2.12: a dawn-timed test fed a 2026-10-05 sample that the new gross-error guard
+  rejected against the CI runner's own RTC (set to today), and Playwright has no Chromium for `ubuntu-latest`
+  (now 26.04), so the e2e job runs on `ubuntu-24.04`.
+
 ## [0.2.12] - 2026-11-22
 
 Other hardening (robustness plan WP-H, H1 to H8). Each part stands alone.

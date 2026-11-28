@@ -366,7 +366,8 @@ deploy/      install.sh, systemd units, udev, chrony, gpsd, PipeWire/WirePlumber
 config/      config.example.yaml (generated from the schema), config.sim.yaml
 ```
 
-Time: gpsd → `SHM 0` (prefer; optional), dawn-timed → `SHM 2` (DAB), `au.pool.ntp.org`;
+Time: `au.pool.ntp.org` (prefer) first, then gpsd → `SHM 0` (GPS, optional; NMEA lateness calibrated
+with `offset`), then dawn-timed → `SHM 2` (DAB);
 chrony `makestep 1 3`. The face shows a dot per source (green live, grey stale).
 Alarms are evaluated against the system clock only and remember the last
 occurrence they handled, so a clock step never double-fires or skips one.
@@ -410,6 +411,7 @@ set the tuner gain, poll the time sources, play a test tone):
 |---|---|
 | Face stays black | after a hostname change: the kiosk clears Chromium's stale lock itself (`~/.config/dawn-face`); `journalctl -u dawn-face -f`; `systemctl status dawn-core`; HDMI panels need `--display hdmi`; DSI needs `dtoverlay=vc4-kms-v3d` and, for the 43H panel, `dtoverlay=vc4-kms-dsi-7inch` (not `vc4-kms-dsi-waveshare-panel`) |
 | Touch is offset or mirrored | `display.rotation` matches the case and the installer was re-run (`/etc/udev/rules.d/98-dawn-touch.rules`) |
+| Swapped the SDR stick | Nothing to do: Dawn sees the new stick within one heartbeat and restarts the decoder (unless cool mode has it stopped: it opens the new stick when it starts). *Diagnostics → DAB radio* should then show "RTL-SDR Blog V4 (R828D)" and no "Stick model" note; a "Stick model" warning on an R828D stick means its EEPROM does not say Blog V4 (a clone), so the driver will not use its V4 handling |
 | No DAB stations after a scan | *Diagnostics → DAB radio* (stick, TV driver, decoder, sync, SNR, the library welle-cli links); `sudo systemctl stop dawn-dab; rtl_test -t; sudo systemctl start dawn-dab` (tuner type: `rtl_test` needs the stick to itself), `systemctl status dawn-dab`, `curl localhost:8000/mux.json`; `ldd /usr/local/bin/welle-cli \| grep rtlsdr` must show `/usr/local/lib`; the `dvb_usb_rtl28xxu` blacklist is written by the installer; antenna/Band III coverage |
 | DAB "SDR samples" problem in Diagnostics | the stick stopped delivering samples and neither decoder restarts nor re-enumerating it helped: unplug and replug it, use the 5.1 V / 3 A supply directly (the detail says if the Pi has seen under-voltage); *Last 24 hours* lists `dab_drop` events with the SoC temperature and throttling at the time |
 | DAB drops out or bubbles | *Diagnostics → DAB radio*: SNR below ~8 dB, FIC errors, decode errors; the spectrum should be a flat block ~1.5 MHz wide, the impulse response one main peak; try a fixed tuner gain a few steps below the AGC's choice near a strong transmitter, and move the antenna away from the Pi and the panel |

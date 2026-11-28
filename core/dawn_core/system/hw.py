@@ -110,6 +110,7 @@ _RTL_IDS = {
 
 V4_MANUFACTURER = "RTLSDRBlog"  # what an RTL-SDR Blog V4 reports over USB (rtlsdr_get_usb_strings, sysfs)
 V4_PRODUCT = "Blog V4"
+USB_DEVICES = "/sys/bus/usb/devices"
 
 
 def sdr_name(vidpid: str, manufacturer: str = "", product: str = "") -> str:
@@ -124,14 +125,35 @@ def sdr_name(vidpid: str, manufacturer: str = "", product: str = "") -> str:
     return f"{label} ({generic})" if label else generic
 
 
-def sdr_identity(root: str = "/sys/bus/usb/devices") -> tuple[bool, str | None, str | None]:
-    """(present, name, vid:pid) of the first RTL-SDR stick, from sysfs (idVendor, idProduct, manufacturer, product)."""
+def is_blog_v4(u: dict[str, str]) -> bool:
+    """The RTL-SDR Blog V4 says so in its EEPROM (manufacturer "RTLSDRBlog", product "Blog V4"). The rtl-sdr-blog
+    driver goes by the same strings to switch on its V4 handling (R828D input switching), so a stick without them
+    is treated as a generic one whatever is printed on its case. Same rule as sdr_name()."""
+    return (u.get("manufacturer") or "").strip() == V4_MANUFACTURER and "V4" in (u.get("product") or "")
+
+
+def sdr_usb(root: str = USB_DEVICES) -> dict[str, str] | None:
+    """The first RTL-SDR stick's USB descriptors from sysfs, without opening it: vidpid, path, busnum, devnum,
+    manufacturer, product, serial. busnum/devnum change whenever the stick is unplugged and plugged back."""
     for dev in sorted(glob.glob(os.path.join(root, "*"))):
-        vid, pid = _read(os.path.join(dev, "idVendor")), _read(os.path.join(dev, "idProduct"))
+        vid, pid = (_read(os.path.join(dev, "idVendor")) or "").strip(), (_read(os.path.join(dev, "idProduct")) or "").strip()
         if vid and pid and f"{vid}:{pid}" in _RTL_IDS:
-            vidpid = f"{vid}:{pid}"
-            return True, sdr_name(vidpid, _read(os.path.join(dev, "manufacturer")) or "", _read(os.path.join(dev, "product")) or ""), vidpid
-    return False, None, None
+            return {"vidpid": f"{vid}:{pid}", "path": os.path.basename(dev),
+                    **{k: (_read(os.path.join(dev, k)) or "").strip() for k in ("busnum", "devnum", "manufacturer", "product", "serial")}}
+    return None
+
+
+def sdr_identity(root: str = USB_DEVICES) -> tuple[bool, str | None, str | None]:
+    """(present, name, vid:pid) of the first RTL-SDR stick, from sysfs (idVendor, idProduct, manufacturer, product)."""
+    u = sdr_usb(root)
+    if u is None:
+        return False, None, None
+    return True, sdr_name(u["vidpid"], u.get("manufacturer", ""), u.get("product", "")), u["vidpid"]
+
+
+def sdr_fingerprint(u: dict[str, str] | None) -> tuple[str, ...] | None:
+    """What changes when a stick is swapped or replugged (a new bus address, or another stick)."""
+    return None if u is None else (u["path"], u.get("busnum", ""), u.get("devnum", ""), u.get("serial", ""), u.get("product", ""))
 
 
 def name_from_welle(hardware: str | None) -> str | None:

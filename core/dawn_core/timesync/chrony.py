@@ -65,7 +65,7 @@ class ChronySelect:
     state: str
     name: str
     authenticated: bool
-    options: str  # configured selection options, e.g. "PT" (prefer, trust)
+    options: str  # configured selection options, e.g. "P" (prefer)
     effective: str
     last_sample_s: int
     score: float
@@ -110,7 +110,7 @@ SELECT_STATES: dict[str, tuple[str, str]] = {
     "w": ("waiting", "waits for other sources to collect enough measurements"),
     "S": ("stale", "its measurements are older than the other sources'"),
     "O": ("orphan", "its stratum is at or above the orphan stratum"),
-    "T": ("disagrees with trusted", "does not fully agree with the sources marked trust (GPS)"),
+    "T": ("disagrees with trusted", "does not fully agree with the sources marked trust"),
     "x": ("falseticker", "does not agree with the other sources"),
     "W": ("waiting for others", "selectable, but waits for other sources (minsources or require)"),
     "P": ("not preferred", "selectable, but a source with the prefer option is used instead"),

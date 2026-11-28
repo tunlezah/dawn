@@ -56,6 +56,10 @@ def git_rev(repo: str) -> str | None:
         return None
 
 
+# a stick that has just appeared: udev sets its permissions a moment after sysfs shows it
+REPLUG_SETTLE_S = 2.0
+
+
 class SysInfoService(Service):
     name = "sysinfo"
 
@@ -68,6 +72,8 @@ class SysInfoService(Service):
         self._vcgencmd_at = 0.0
         self._pinged_at: float | None = None
         self._ping_task: asyncio.Task[None] | None = None
+        self._sdr_id: tuple[str, ...] | None = None
+        self._sdr_restart: asyncio.Task[None] | None = None
 
     async def start(self) -> None:
         cfg = self.ctx.config
@@ -75,6 +81,7 @@ class SysInfoService(Service):
             self.hw = hwmod.HardwareInfo(model="simulator", panel="hdmi", i2c_buses=[])
         else:
             self.hw = await asyncio.to_thread(hwmod.detect, cfg.display.panel, cfg.display.backlight.sysfs_path)
+            self._sdr_id = hwmod.sdr_fingerprint(await asyncio.to_thread(hwmod.sdr_usb))
         st = self.ctx.store.state.system
         st.model = self.hw.model
         st.panel = self.hw.panel
@@ -111,6 +118,40 @@ class SysInfoService(Service):
             except Exception:  # noqa: BLE001
                 log.exception("sysinfo tick failed")
             await asyncio.sleep(self.ctx.config.system.heartbeat_interval_s)
+
+    async def _check_sdr(self, st) -> None:
+        """Hot plug, from sysfs only (rtl_test would open the stick, and a welle-cli starting at that moment would find
+        it taken). A stick that is swapped or replugged gets a fresh welle-cli: one left running when its stick went
+        away keeps answering on its web port with no samples, so neither systemd nor the supervisor would restart it."""
+        u = await asyncio.to_thread(hwmod.sdr_usb)
+        ident = hwmod.sdr_fingerprint(u)
+        if ident == self._sdr_id:
+            return
+        prev, self._sdr_id = self._sdr_id, ident
+        present = u is not None
+        log.info("SDR %s: %s", "plugged in" if present else "unplugged",
+                 f"{u['manufacturer']} {u['product']} at {u['path']} (#{u['devnum']})" if u else (prev[0] if prev else "-"))
+        # rtl_test's name was for the stick that was there at boot; welle-cli names the new one once it has it open
+        tuner = hwmod.sdr_name(u["vidpid"], u.get("manufacturer", ""), u.get("product", "")) if u else None
+        st.sdr_present, st.sdr_tuner = present, tuner
+        self.ctx.store.state.dab.sdr_present = present
+        self.ctx.store.state.dab.tuner = tuner
+        if present and self.ctx.config.dab.enabled and not (self._sdr_restart and not self._sdr_restart.done()):
+            self._sdr_restart = spawn(self._restart_dab_for_new_stick(), name="sdr-replug", owner="sysinfo")
+
+    async def _restart_dab_for_new_stick(self) -> None:
+        from ..dab.service import DabService  # dab imports system: keep the cycle out of module load
+
+        await asyncio.sleep(REPLUG_SETTLE_S)  # let udev apply the plugdev permissions first
+        try:
+            dab = self.ctx.svc(DabService)
+        except KeyError:
+            return
+        if dab.paused:
+            return  # cool mode stopped the decoder: it opens the new stick when it starts again
+        if not await dab.restart_welle(force=True, reason="replugged"):
+            await asyncio.sleep(REPLUG_SETTLE_S * 3)  # restarted moments ago (forced restarts are 5 s apart): once more for this stick
+            await dab.restart_welle(force=True, reason="replugged")
 
     def _alarms_alive(self) -> bool:
         return alarms_alive(self.ctx)
@@ -212,14 +253,6 @@ class SysInfoService(Service):
             elif not self._stall_logged:
                 self._stall_logged = True
                 log.error("%s stopped and could not be restarted; holding back the watchdog so systemd restarts dawn-core", ", ".join(given_up))
-        if not self.ctx.sim and st.uptime_s % 60 < cfg.system.heartbeat_interval_s:
-            # re-check SDR presence once a minute (hot plug), from the USB ids only: rtl_test would open the stick,
-            # and a welle-cli starting at that moment (an alarm restarting it) would find it taken
-            present, name = await asyncio.to_thread(hwmod.sdr_on_usb)
-            if present != st.sdr_present:
-                log.info("SDR presence changed: %s", present)
-            tuner = (st.sdr_tuner or name) if present else None
-            st.sdr_present, st.sdr_tuner = present, tuner
-            self.ctx.store.state.dab.sdr_present = present
-            self.ctx.store.state.dab.tuner = tuner
+        if not self.ctx.sim:
+            await self._check_sdr(st)
         self.ctx.store.touch()

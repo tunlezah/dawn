@@ -74,6 +74,8 @@ def test_status_file_and_shm_failure(tmp_path, monkeypatch) -> None:
         raise OSError(13, "Permission denied")
 
     monkeypatch.setattr(m.ChronyShm, "attach", fail)
+    # no reference time: the machine's own RTC (a CI runner has one, set to today) would reject the 2026-10-05 sample
+    monkeypatch.setattr(m, "reference_time", lambda: None)
     args = argparse.Namespace(shm_unit=2, dry_run=False, time_t_bytes="auto", status_file=str(tmp_path / "s" / "status.json"),
                               welle_url="http://127.0.0.1:1", poll_hz=5.0, fic_fallback="auto")
     t = m.Timed(args)

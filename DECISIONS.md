@@ -125,6 +125,17 @@ each section. Every entry says what was decided and why, so it can be revisited.
 
 ## DAB+
 
+- **The stick is identified from its USB descriptors, and a swap restarts welle-cli** (0.3.0). `rtl_test -t`
+  cannot open a stick that welle-cli already holds (dawn-dab starts first at boot), so it runs only when dawn-dab
+  is not running (0.2.9) and the name otherwise comes from the EEPROM strings (`hw.sdr_name`, and welle-cli's own
+  `receiver.hardware.name` once it has the stick open): "RTLSDRBlog" / "Blog V4" is the RTL-SDR Blog V4 (R828D),
+  and the rtl-sdr-blog driver goes by the same strings to switch on its V4 handling, so a stick without them is
+  treated as generic whatever its case says (`hw.is_blog_v4`, the same rule). sysinfo reads sysfs every heartbeat
+  (never opening the stick); a new bus address or
+  another stick restarts dawn-dab (`reason="replugged"`, not counted as a decoder failure). welle-cli left running
+  when its stick goes away keeps answering on its web port with no samples, so neither the supervisor (which
+  restarts only an unreachable decoder) nor the udev rule (which only starts a stopped unit) would recover it.
+  A decoder that cool mode stopped is left stopped: it opens the new stick when it starts.
 - **welle-cli runs as its own unit (`dawn-dab`)** and core talks to it over HTTP
   only. Core writes `/var/lib/dawn/dab.env` (`DAWN_DAB_CHANNEL`, `DAWN_WELLE_ARGS`)
   so a restart, by us or by systemd, comes back on the last-used channel. The
@@ -441,11 +452,23 @@ each section. Every entry says what was decided and why, so it can be revisited.
   can run unprivileged as user `dawn`; the segment layout follows ntpd's
   `struct shmTime`, with the `time_t` width chosen for the platform (64-bit, or
   32-bit builds older than Debian 13) and overridable with `--time-t-bytes`.
-- **GPS SHM 0 is `prefer` with `delay 0.2`, not `trust`**: NMEA-only receivers deliver the sentence tens of ms after
-  the second; the fixed delay bounds the error and chrony still steps the clock with `makestep 1 3` on boot. `trust`
-  was dropped once GPS became optional: on a box that has NTP and DAB too, a receiver reporting a bad week or date
-  (week-number rollover, a cold start) must be outvoted, not believed. The `refclock SHM 0` line stays, harmless
-  without a receiver.
+- **NTP is the primary source, GPS the fallback, DAB the last resort** (0.3.0;
+  GPS was `prefer trust` before, then `prefer` in 0.2.6). The pool carries
+  `prefer`; GPS SHM 0 has neither `prefer` nor `trust`. Measured on the device:
+  four NTP servers agreed with each other to within a few ms while GPS (u-blox 7,
+  NMEA only, no PPS) read 69-73 ms late, so with GPS trusted the clock itself ran
+  ~70 ms slow and chrony rejected the servers that were right. NTP over home
+  broadband is good to a few ms. When NTP's samples go stale or unreachable
+  chrony falls back to GPS; `maxpoll 7` (128 s) makes that minutes, not the
+  default ~17 min per poll. No `trust` anywhere: a receiver reporting a bad week
+  or date (week-number rollover, a cold start) must be outvoted, not believed.
+  The `refclock SHM 0` line stays, harmless without a receiver.
+- **GPS SHM 0 carries `offset 0.070` and `delay 0.2`**: the offset is NMEA's
+  fixed lateness for this receiver, measured against NTP, so GPS takes over
+  without the clock moving by 70 ms. It depends on the receiver and its message
+  set; Diagnostics → Time → "GPS agrees with NTP" shows GPS against NTP (with the
+  configured offset applied) and spells out the new value when it is off by more
+  than 20 ms. chrony still steps the clock with `makestep 1 3` on boot.
 - **GPS is optional, and "not fitted" is a state, not a fault.** `presence` is present / missing / absent / off,
   worked out by a pure function (`timesync/presence.py`) from a u-blox vendor id on USB, `/dev/gps0`, a device gpsd
   has activated, or NMEA the serial reader parsed in the last 30 s. A bare `/dev/ttyACM0` is not counted (any CDC
